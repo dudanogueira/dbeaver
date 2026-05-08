@@ -72,4 +72,23 @@ public class WeaviateConnectionUrlTest extends DBeaverUnitTest {
     public void defaultHttpPort() {
         Assert.assertEquals(8080, WeaviateConstants.DEFAULT_HTTP_PORT);
     }
+
+    @Test
+    public void cloudUrlIsReturnedForCloudConnection() {
+        DBPConnectionConfiguration cfg = new DBPConnectionConfiguration();
+        cfg.setProviderProperty(WeaviateConstants.PROP_CONNECTION_TYPE, WeaviateConstants.CONN_TYPE_CLOUD);
+        cfg.setProviderProperty(WeaviateConstants.PROP_CLOUD_URL, "https://my-cluster.weaviate.cloud");
+        String url = provider.getConnectionURL(null, cfg);
+        Assert.assertEquals("https://my-cluster.weaviate.cloud", url);
+    }
+
+    @Test
+    public void customConnectionTypeUsesHostPort() {
+        DBPConnectionConfiguration cfg = new DBPConnectionConfiguration();
+        cfg.setProviderProperty(WeaviateConstants.PROP_CONNECTION_TYPE, WeaviateConstants.CONN_TYPE_CUSTOM);
+        cfg.setHostName("myhost");
+        cfg.setHostPort("9999");
+        String url = provider.getConnectionURL(null, cfg);
+        Assert.assertEquals("http://myhost:9999", url);
+    }
 }

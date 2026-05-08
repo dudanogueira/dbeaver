@@ -154,7 +154,36 @@ public class WeaviateDataSource extends AbstractDataSource
     @Override
     public void initialize(@NotNull DBRProgressMonitor monitor) throws DBException {
         final DBPConnectionConfiguration cfg = container.getActualConnectionConfiguration();
+        final String connType = cfg.getProviderProperty(WeaviateConstants.PROP_CONNECTION_TYPE);
+        try {
+            if (WeaviateConstants.CONN_TYPE_CLOUD.equals(connType)) {
+                connectToCloud(cfg);
+            } else {
+                connectToCustom(cfg);
+            }
+            if (!client.isReady()) {
+                throw new DBException("Weaviate server is not ready");
+            }
+        } catch (DBException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new DBException("Failed to connect to Weaviate: " + e.getMessage(), e);
+        }
+    }
 
+    private void connectToCloud(@NotNull DBPConnectionConfiguration cfg) throws DBException {
+        String cloudUrl = cfg.getProviderProperty(WeaviateConstants.PROP_CLOUD_URL);
+        if (cloudUrl == null || cloudUrl.isEmpty()) {
+            throw new DBException("Weaviate Cloud URL is required");
+        }
+        String apiKey = cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY);
+        if (apiKey == null || apiKey.isEmpty()) {
+            throw new DBException("API Key is required for Weaviate Cloud connections");
+        }
+        client = WeaviateClient.connectToWeaviateCloud(cloudUrl, apiKey);
+    }
+
+    private void connectToCustom(@NotNull DBPConnectionConfiguration cfg) {
         String scheme = cfg.getProviderProperty(WeaviateConstants.PROP_SCHEME);
         if (scheme == null || scheme.isEmpty()) scheme = WeaviateConstants.DEFAULT_SCHEME;
 
@@ -178,34 +207,51 @@ public class WeaviateDataSource extends AbstractDataSource
         } catch (NumberFormatException ignored) {
         }
 
-        final String apiKey = cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY);
+        final Authentication auth = buildAuthentication(cfg);
+
         final String finalScheme = scheme;
         final String finalHttpHost = httpHost;
         final int finalHttpPort = httpPort;
         final String finalGrpcHost = grpcHost;
         final int finalGrpcPort = grpcPort;
 
-        try {
-            client = WeaviateClient.connectToCustom(c -> {
-                c.scheme(finalScheme);
-                c.httpHost(finalHttpHost);
-                c.httpPort(finalHttpPort);
-                c.grpcHost(finalGrpcHost);
-                c.grpcPort(finalGrpcPort);
-                if (apiKey != null && !apiKey.isEmpty()) {
-                    c.authentication(Authentication.apiKey(apiKey));
-                }
-                return c;
-            });
-            if (!client.isReady()) {
-                throw new DBException(
-                    "Weaviate is not ready at " + finalScheme + "://" + finalHttpHost + ":" + finalHttpPort);
+        client = WeaviateClient.connectToCustom(c -> {
+            c.scheme(finalScheme);
+            c.httpHost(finalHttpHost);
+            c.httpPort(finalHttpPort);
+            c.grpcHost(finalGrpcHost);
+            c.grpcPort(finalGrpcPort);
+            if (auth != null) {
+                c.authentication(auth);
             }
-        } catch (DBException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new DBException(
-                "Failed to connect to Weaviate at " + finalScheme + "://" + finalHttpHost + ":" + finalHttpPort, e);
+            return c;
+        });
+    }
+
+    @Nullable
+    private Authentication buildAuthentication(@NotNull DBPConnectionConfiguration cfg) {
+        String authType = cfg.getProviderProperty(WeaviateConstants.PROP_AUTH_TYPE);
+        if (authType == null || authType.isEmpty()) {
+            // Backwards-compatible: if API key is set, use API key auth
+            String apiKey = cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY);
+            return (apiKey != null && !apiKey.isEmpty()) ? Authentication.apiKey(apiKey) : null;
+        }
+        switch (authType) {
+            case WeaviateConstants.AUTH_API_KEY: {
+                String apiKey = cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY);
+                return (apiKey != null && !apiKey.isEmpty()) ? Authentication.apiKey(apiKey) : null;
+            }
+            case WeaviateConstants.AUTH_USER_PASSWORD: {
+                String user = cfg.getUserName();
+                String password = cfg.getUserPassword();
+                if (user != null && !user.isEmpty() && password != null && !password.isEmpty()) {
+                    return Authentication.resourceOwnerPassword(user, password, null);
+                }
+                return null;
+            }
+            case WeaviateConstants.AUTH_NONE:
+            default:
+                return null;
         }
     }
 

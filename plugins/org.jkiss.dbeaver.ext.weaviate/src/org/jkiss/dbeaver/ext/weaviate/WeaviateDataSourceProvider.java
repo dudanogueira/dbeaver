@@ -38,6 +38,11 @@ public class WeaviateDataSourceProvider extends AbstractDataSourceProvider<Weavi
 
     @Override
     public String getConnectionURL(DBPDriver driver, DBPConnectionConfiguration connectionInfo) {
+        String connType = connectionInfo.getProviderProperty(WeaviateConstants.PROP_CONNECTION_TYPE);
+        if (WeaviateConstants.CONN_TYPE_CLOUD.equals(connType)) {
+            String cloudUrl = connectionInfo.getProviderProperty(WeaviateConstants.PROP_CLOUD_URL);
+            return (cloudUrl == null || cloudUrl.isEmpty()) ? "weaviate://cloud" : cloudUrl;
+        }
         String scheme = connectionInfo.getProviderProperty(WeaviateConstants.PROP_SCHEME);
         if (scheme == null || scheme.isEmpty()) scheme = WeaviateConstants.DEFAULT_SCHEME;
         String host = connectionInfo.getHostName();

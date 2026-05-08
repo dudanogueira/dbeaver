@@ -24,8 +24,18 @@ public class WeaviateConstants {
     public static final int DEFAULT_GRPC_PORT = 50051;
     public static final String DEFAULT_SCHEME = "http";
 
+    public static final String PROP_CONNECTION_TYPE = "connectionType";
     public static final String PROP_GRPC_HOST = "grpcHost";
     public static final String PROP_GRPC_PORT = "grpcPort";
     public static final String PROP_SCHEME = "scheme";
+    public static final String PROP_CLOUD_URL = "cloudUrl";
+    public static final String PROP_AUTH_TYPE = "authType";
     public static final String PROP_API_KEY = "apiKey";
+
+    public static final String CONN_TYPE_CUSTOM = "custom";
+    public static final String CONN_TYPE_CLOUD = "cloud";
+
+    public static final String AUTH_NONE = "none";
+    public static final String AUTH_API_KEY = "apiKey";
+    public static final String AUTH_USER_PASSWORD = "userPassword";
 }

@@ -1,0 +1,15 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: DBeaver Weaviate UI
+Bundle-SymbolicName: org.jkiss.dbeaver.ext.weaviate.ui;singleton:=true
+Bundle-Version: 1.0.0.qualifier
+Bundle-Vendor: DBeaver Corp
+Bundle-RequiredExecutionEnvironment: JavaSE-21
+Bundle-ActivationPolicy: lazy
+Require-Bundle: org.jkiss.dbeaver.model,
+ org.jkiss.dbeaver.ext.weaviate,
+ org.jkiss.dbeaver.ui.editors.connection,
+ org.eclipse.ui,
+ org.eclipse.ui.workbench,
+ org.eclipse.jface
+Automatic-Module-Name: org.jkiss.dbeaver.ext.weaviate.ui
