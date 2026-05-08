@@ -2,16 +2,22 @@
 <?eclipse version="3.2"?>
 <plugin>
 
+    <extension point="org.jkiss.dbeaver.driverManager">
+        <category id="vector" name="Vector Databases" description="Vector and embedding databases" icon="#folder_database" rank="6" promoted="true"/>
+    </extension>
+
     <extension point="org.jkiss.dbeaver.dataSourceProvider">
         <datasource
             class="org.jkiss.dbeaver.ext.weaviate.WeaviateDataSourceProvider"
             description="Weaviate vector database connector"
             id="weaviate"
             label="Weaviate"
+            icon="icons/weaviate.png"
             dialect="weaviate">
             <tree
                   label="Weaviate data source"
-                  path="weaviate">
+                  path="weaviate"
+                  icon="icons/weaviate.png">
                 <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
                         label="Server Metadata"
                         icon="#folder_info"
@@ -119,8 +125,10 @@
                     label="Weaviate"
                     description="Weaviate vector database"
                     class="io.weaviate.client6.v1.api.WeaviateClient"
+                    icon="icons/weaviate.png"
+                    iconBig="icons/weaviate_big.png"
                     customDriverLoader="true"
-                    categories="nosql">
+                    categories="vector">
                 </driver>
             </drivers>
         </datasource>

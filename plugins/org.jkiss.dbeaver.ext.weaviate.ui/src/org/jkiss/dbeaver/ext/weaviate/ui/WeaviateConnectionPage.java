@@ -16,6 +16,7 @@
  */
 package org.jkiss.dbeaver.ext.weaviate.ui;
 
+import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.StackLayout;
 import org.eclipse.swt.events.SelectionAdapter;
@@ -35,9 +36,22 @@ import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ui.dialogs.connection.ConnectionPageAbstract;
 import org.jkiss.utils.CommonUtils;
 
+import java.net.URL;
+
 import java.util.Locale;
 
 public class WeaviateConnectionPage extends ConnectionPageAbstract {
+
+    private static final ImageDescriptor LOGO = createLogo();
+
+    private static ImageDescriptor createLogo() {
+        try {
+            return ImageDescriptor.createFromURL(
+                new URL("platform:/plugin/org.jkiss.dbeaver.ext.weaviate/icons/weaviate_big.png"));
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     private Button cloudRadio;
     private Button customRadio;
@@ -67,6 +81,9 @@ public class WeaviateConnectionPage extends ConnectionPageAbstract {
 
     @Override
     public void createControl(Composite composite) {
+        if (LOGO != null) {
+            setImageDescriptor(LOGO);
+        }
         Composite control = new Composite(composite, SWT.NONE);
         control.setLayout(new GridLayout(1, false));
         control.setLayoutData(new GridData(GridData.FILL_BOTH));
