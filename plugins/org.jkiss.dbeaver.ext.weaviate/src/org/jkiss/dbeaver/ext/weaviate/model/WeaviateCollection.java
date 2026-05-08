@@ -20,13 +20,29 @@ import io.weaviate.client6.v1.api.collections.CollectionConfig;
 import io.weaviate.client6.v1.api.collections.Property;
 import io.weaviate.client6.v1.api.collections.Reranker;
 import io.weaviate.client6.v1.api.collections.VectorConfig;
+import io.weaviate.client6.v1.api.collections.WeaviateObject;
+import io.weaviate.client6.v1.api.collections.aggregate.AggregateResponse;
+import io.weaviate.client6.v1.api.collections.query.Filter;
+import io.weaviate.client6.v1.api.collections.query.QueryResponse;
+import io.weaviate.client6.v1.api.collections.query.SortBy;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
+import org.jkiss.dbeaver.model.DBPDataKind;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBUtils;
+import org.jkiss.dbeaver.model.data.DBDAttributeConstraint;
+import org.jkiss.dbeaver.model.data.DBDDataFilter;
+import org.jkiss.dbeaver.model.data.DBDDataReceiver;
+import org.jkiss.dbeaver.model.exec.DBCException;
+import org.jkiss.dbeaver.model.exec.DBCExecutionSource;
+import org.jkiss.dbeaver.model.exec.DBCSession;
+import org.jkiss.dbeaver.model.exec.DBCStatistics;
+import org.jkiss.dbeaver.model.impl.local.LocalResultSet;
+import org.jkiss.dbeaver.model.impl.local.LocalStatement;
 import org.jkiss.dbeaver.model.meta.Association;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
+import org.jkiss.dbeaver.model.struct.DBSDataContainer;
 import org.jkiss.dbeaver.model.struct.DBSEntity;
 import org.jkiss.dbeaver.model.struct.DBSEntityAssociation;
 import org.jkiss.dbeaver.model.struct.DBSEntityConstraint;
@@ -40,7 +56,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-public class WeaviateCollection implements DBSEntity {
+public class WeaviateCollection implements DBSEntity, DBSDataContainer {
+
+    private static final String[] SUPPORTED_FEATURES = new String[]{
+        FEATURE_DATA_SELECT,
+        FEATURE_DATA_COUNT,
+        FEATURE_DATA_FILTER,
+    };
 
     private final WeaviateDataSource dataSource;
     private final CollectionConfig config;
@@ -193,5 +215,167 @@ public class WeaviateCollection implements DBSEntity {
             result.add(new WeaviateReranker(this, i, rerankers.get(i)));
         }
         return result;
+    }
+
+    // ---- DBSDataContainer ------------------------------------------------------------------
+
+    @NotNull
+    @Override
+    public String[] getSupportedFeatures() {
+        return SUPPORTED_FEATURES;
+    }
+
+    @NotNull
+    @Override
+    public DBCStatistics readData(
+        @Nullable DBCExecutionSource source,
+        @NotNull DBCSession session,
+        @NotNull DBDDataReceiver dataReceiver,
+        @Nullable DBDDataFilter dataFilter,
+        long firstRow,
+        long maxRows,
+        long flags,
+        int fetchSize
+    ) throws DBException {
+        DBCStatistics statistics = new DBCStatistics();
+        DBRProgressMonitor monitor = session.getProgressMonitor();
+
+        List<WeaviateProperty> attributes = getAttributes(monitor);
+        List<String> columnNames = new ArrayList<>(attributes.size() + 3);
+        columnNames.add(WeaviateColumns.UUID);
+        for (WeaviateProperty p : attributes) {
+            columnNames.add(p.getName());
+        }
+        columnNames.add(WeaviateColumns.SCORE);
+        columnNames.add(WeaviateColumns.DISTANCE);
+
+        Filter filter = WeaviateFilterTranslator.translate(dataFilter);
+        List<SortBy> sortBy = buildSortBy(dataFilter, attributes);
+        int limit = maxRows > 0 ? (int) Math.min(maxRows, Integer.MAX_VALUE) : 0;
+        int offset = firstRow > 0 ? (int) Math.min(firstRow, Integer.MAX_VALUE) : 0;
+
+        String queryText = describeFetch(filter, sortBy, limit, offset);
+        statistics.setQueryText(queryText);
+
+        long startTime = System.currentTimeMillis();
+        QueryResponse<Map<String, Object>> response;
+        try {
+            response = dataSource.getClient().collections.use(getName())
+                .query.fetchObjects(b -> {
+                    if (limit > 0) b.limit(limit);
+                    if (offset > 0) b.offset(offset);
+                    if (filter != null) b.filters(filter);
+                    if (!sortBy.isEmpty()) b.sort(sortBy);
+                    return b;
+                });
+        } catch (Exception e) {
+            throw new DBCException("Failed to fetch objects from collection " + getName(), e, session.getExecutionContext());
+        }
+        statistics.setExecuteTime(System.currentTimeMillis() - startTime);
+        if (monitor.isCanceled()) {
+            return statistics;
+        }
+
+        try (LocalStatement statement = new LocalStatement(session, queryText)) {
+            statement.setStatementSource(source);
+            LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
+            populateColumns(resultSet, attributes);
+            for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
+                resultSet.addRow(WeaviateRowMapper.toRow(columnNames, obj));
+            }
+            DBDDataReceiver.startFetchWorkflow(dataReceiver, session, resultSet, firstRow, maxRows);
+            DBDDataReceiver.fetchRowsWithStatistics(dataReceiver, session, resultSet, statistics);
+        }
+        return statistics;
+    }
+
+    @Override
+    public long countData(
+        @NotNull DBCExecutionSource source,
+        @NotNull DBCSession session,
+        @Nullable DBDDataFilter dataFilter,
+        long flags
+    ) throws DBException {
+        Filter filter = WeaviateFilterTranslator.translate(dataFilter);
+        try {
+            AggregateResponse response = dataSource.getClient().collections.use(getName())
+                .aggregate.overAll(b -> {
+                    b.includeTotalCount(true);
+                    if (filter != null) b.filters(filter);
+                    return b;
+                });
+            Long total = response.totalCount();
+            return total == null ? -1 : total;
+        } catch (Exception e) {
+            throw new DBCException("Failed to count objects in collection " + getName(), e, session.getExecutionContext());
+        }
+    }
+
+    private static void populateColumns(
+        @NotNull LocalResultSet<LocalStatement> rs,
+        @NotNull List<WeaviateProperty> attributes
+    ) {
+        rs.addColumn(WeaviateColumns.UUID, DBPDataKind.STRING);
+        for (WeaviateProperty p : attributes) {
+            rs.addColumn(p.getName(), p.getDataKind());
+        }
+        rs.addColumn(WeaviateColumns.SCORE, DBPDataKind.NUMERIC);
+        rs.addColumn(WeaviateColumns.DISTANCE, DBPDataKind.NUMERIC);
+    }
+
+    @NotNull
+    private static List<SortBy> buildSortBy(
+        @Nullable DBDDataFilter dataFilter,
+        @NotNull List<WeaviateProperty> attributes
+    ) {
+        if (dataFilter == null) {
+            return Collections.emptyList();
+        }
+        List<DBDAttributeConstraint> ordered = new ArrayList<>();
+        for (DBDAttributeConstraint c : dataFilter.getConstraints()) {
+            if (c.getOrderPosition() > 0) {
+                ordered.add(c);
+            }
+        }
+        if (ordered.isEmpty()) {
+            return Collections.emptyList();
+        }
+        ordered.sort((a, b) -> Integer.compare(a.getOrderPosition(), b.getOrderPosition()));
+        List<SortBy> out = new ArrayList<>(ordered.size());
+        for (DBDAttributeConstraint c : ordered) {
+            String name = c.getAttribute() != null ? c.getAttribute().getName() : c.getAttributeName();
+            if (name == null || name.isEmpty()) continue;
+            SortBy sort = mapSortBy(name);
+            out.add(c.isOrderDescending() ? sort.desc() : sort.asc());
+        }
+        return out;
+    }
+
+    @NotNull
+    private static SortBy mapSortBy(@NotNull String name) {
+        if (WeaviateColumns.UUID.equalsIgnoreCase(name)) {
+            return SortBy.uuid();
+        }
+        return SortBy.property(name);
+    }
+
+    @NotNull
+    private static String describeFetch(
+        @Nullable Filter filter,
+        @NotNull List<SortBy> sortBy,
+        int limit,
+        int offset
+    ) {
+        StringBuilder sb = new StringBuilder("fetchObjects");
+        sb.append("(");
+        if (limit > 0) sb.append("limit=").append(limit).append(", ");
+        if (offset > 0) sb.append("offset=").append(offset).append(", ");
+        if (filter != null) sb.append("filter=").append(filter).append(", ");
+        if (!sortBy.isEmpty()) sb.append("sort=").append(sortBy).append(", ");
+        if (sb.charAt(sb.length() - 1) == ' ') {
+            sb.setLength(sb.length() - 2);
+        }
+        sb.append(")");
+        return sb.toString();
     }
 }

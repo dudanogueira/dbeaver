@@ -44,6 +44,11 @@ public class WeaviateProperty implements DBSEntityAttribute {
     }
 
     @NotNull
+    public Property getRawProperty() {
+        return property;
+    }
+
+    @NotNull
     @Override
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 1)
     public String getName() {
