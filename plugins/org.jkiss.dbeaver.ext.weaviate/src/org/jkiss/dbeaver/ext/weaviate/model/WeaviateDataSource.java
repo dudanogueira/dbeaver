@@ -17,7 +17,10 @@
 package org.jkiss.dbeaver.ext.weaviate.model;
 
 import io.weaviate.client6.v1.api.Authentication;
+import io.weaviate.client6.v1.api.InstanceMetadata;
 import io.weaviate.client6.v1.api.WeaviateClient;
+import io.weaviate.client6.v1.api.cluster.Node;
+import io.weaviate.client6.v1.api.cluster.NodeVerbosity;
 import io.weaviate.client6.v1.api.collections.CollectionConfig;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
@@ -56,6 +59,10 @@ public class WeaviateDataSource extends AbstractDataSource
 
     private WeaviateClient client;
     private volatile List<WeaviateCollection> collections;
+    private volatile List<WeaviateNode> nodes;
+    private volatile InstanceMetadata cachedMetadata;
+    private volatile List<WeaviateMetadataField> metadataFields;
+    private volatile List<WeaviateModule> modules;
     private final long id;
     private final DBPExclusiveResource exclusiveLock = new SimpleExclusiveLock();
 
@@ -258,6 +265,10 @@ public class WeaviateDataSource extends AbstractDataSource
     @Override
     public void close() {
         collections = null;
+        nodes = null;
+        cachedMetadata = null;
+        metadataFields = null;
+        modules = null;
         if (client != null) {
             try {
                 client.close();
@@ -315,6 +326,88 @@ public class WeaviateDataSource extends AbstractDataSource
         } catch (IOException e) {
             throw new DBException("Failed to list Weaviate collections", e);
         }
+    }
+
+    @Association
+    public List<WeaviateNode> getNodes(@NotNull DBRProgressMonitor monitor) throws DBException {
+        if (nodes == null) {
+            synchronized (this) {
+                if (nodes == null) {
+                    nodes = loadNodes();
+                }
+            }
+        }
+        return nodes;
+    }
+
+    private List<WeaviateNode> loadNodes() throws DBException {
+        try {
+            List<Node> rawNodes = client.cluster.listNodes(b -> b.verbosity(NodeVerbosity.VERBOSE));
+            List<WeaviateNode> result = new ArrayList<>(rawNodes.size());
+            for (Node n : rawNodes) {
+                result.add(new WeaviateNode(this, n));
+            }
+            DBUtils.orderObjects(result);
+            return result;
+        } catch (IOException e) {
+            throw new DBException("Failed to list Weaviate cluster nodes", e);
+        }
+    }
+
+    private InstanceMetadata getInstanceMetadata() throws DBException {
+        if (cachedMetadata == null) {
+            synchronized (this) {
+                if (cachedMetadata == null) {
+                    try {
+                        cachedMetadata = client.meta();
+                    } catch (IOException e) {
+                        throw new DBException("Failed to fetch Weaviate server metadata", e);
+                    }
+                }
+            }
+        }
+        return cachedMetadata;
+    }
+
+    @Association
+    public List<WeaviateMetadataField> getMetadataFields(@NotNull DBRProgressMonitor monitor) throws DBException {
+        if (metadataFields == null) {
+            synchronized (this) {
+                if (metadataFields == null) {
+                    InstanceMetadata m = getInstanceMetadata();
+                    List<WeaviateMetadataField> result = new ArrayList<>();
+                    if (m != null) {
+                        if (m.hostName() != null) result.add(new WeaviateMetadataField(this, "Hostname", m.hostName()));
+                        if (m.version() != null) result.add(new WeaviateMetadataField(this, "Version", m.version()));
+                        if (m.grpcMaxMessageSize() != null) {
+                            result.add(new WeaviateMetadataField(this, "grpcMaxMessageSize", String.valueOf(m.grpcMaxMessageSize())));
+                        }
+                    }
+                    metadataFields = result;
+                }
+            }
+        }
+        return metadataFields;
+    }
+
+    @Association
+    public List<WeaviateModule> getModules(@NotNull DBRProgressMonitor monitor) throws DBException {
+        if (modules == null) {
+            synchronized (this) {
+                if (modules == null) {
+                    InstanceMetadata m = getInstanceMetadata();
+                    List<WeaviateModule> result = new ArrayList<>();
+                    if (m != null && m.modules() != null) {
+                        java.util.Map<String, Object> sorted = new java.util.TreeMap<>(m.modules());
+                        for (java.util.Map.Entry<String, Object> e : sorted.entrySet()) {
+                            result.add(new WeaviateModule(this, e.getKey(), e.getValue()));
+                        }
+                    }
+                    modules = result;
+                }
+            }
+        }
+        return modules;
     }
 
     public WeaviateClient getClient() {

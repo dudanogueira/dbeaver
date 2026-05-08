@@ -12,6 +12,35 @@
             <tree
                   label="Weaviate data source"
                   path="weaviate">
+                <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
+                        label="Server Metadata"
+                        icon="#folder_info"
+                        description="Weaviate server metadata">
+                    <items label="Field" itemLabel="Field"
+                           path="metadataField" property="metadataFields" icon="#info"/>
+                    <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateModule"
+                            label="Modules"
+                            icon="#folder_admin"
+                            description="Server modules">
+                        <items label="Module" itemLabel="Module"
+                               path="module" property="modules"/>
+                    </folder>
+                </folder>
+                <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateNode"
+                        label="Cluster Nodes"
+                        icon="#folder_admin"
+                        description="Weaviate cluster nodes">
+                    <items label="Cluster Nodes" itemLabel="Node"
+                           path="node" property="nodes" icon="#folder_admin">
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateShard"
+                                label="Shards"
+                                icon="#folder_partitions"
+                                description="Node shards">
+                            <items label="Shards" itemLabel="Shard"
+                                   path="shard" property="shards"/>
+                        </folder>
+                    </items>
+                </folder>
                 <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"
                         label="Collections"
                         icon="#folder_table"
