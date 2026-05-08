@@ -135,4 +135,9 @@
         </dialect>
     </extension>
 
+    <extension point="org.jkiss.dbeaver.objectManager">
+        <manager class="org.jkiss.dbeaver.ext.weaviate.edit.WeaviateCollectionManager"
+                 objectType="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"/>
+    </extension>
+
 </plugin>

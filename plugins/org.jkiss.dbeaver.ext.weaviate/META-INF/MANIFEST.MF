@@ -13,4 +13,5 @@ Require-Bundle: org.jkiss.dbeaver.model,
 Bundle-ClassPath: .,
  lib/client6-6.2.0-all.jar
 Export-Package: org.jkiss.dbeaver.ext.weaviate,
+ org.jkiss.dbeaver.ext.weaviate.edit,
  org.jkiss.dbeaver.ext.weaviate.model

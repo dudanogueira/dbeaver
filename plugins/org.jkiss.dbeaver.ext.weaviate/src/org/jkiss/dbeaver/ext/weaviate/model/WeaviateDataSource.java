@@ -415,6 +415,12 @@ public class WeaviateDataSource extends AbstractDataSource
         return client;
     }
 
+    public void invalidateCollections() {
+        synchronized (this) {
+            collections = null;
+        }
+    }
+
     // DBSObjectContainer
 
     @NotNull
