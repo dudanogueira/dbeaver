@@ -19,4 +19,16 @@
         </view>
     </extension>
 
+    <extension point="org.jkiss.dbeaver.resultset.panel">
+        <panel
+                id="weaviate-query"
+                label="Weaviate Query"
+                description="Run BM25, near text, near vector or hybrid queries against the active Weaviate collection."
+                icon="platform:/plugin/org.jkiss.dbeaver.ext.weaviate/icons/weaviate.png"
+                default="true"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.WeaviateQueryPanel">
+            <datasource id="weaviate"/>
+        </panel>
+    </extension>
+
 </plugin>

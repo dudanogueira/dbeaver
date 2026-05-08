@@ -9,6 +9,7 @@ Bundle-ActivationPolicy: lazy
 Require-Bundle: org.jkiss.dbeaver.model,
  org.jkiss.dbeaver.ext.weaviate,
  org.jkiss.dbeaver.ui.editors.connection,
+ org.jkiss.dbeaver.ui.editors.data,
  org.eclipse.ui,
  org.eclipse.ui.workbench,
  org.eclipse.jface

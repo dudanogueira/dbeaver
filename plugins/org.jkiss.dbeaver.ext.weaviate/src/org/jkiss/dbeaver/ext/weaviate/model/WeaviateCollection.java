@@ -23,8 +23,10 @@ import io.weaviate.client6.v1.api.collections.VectorConfig;
 import io.weaviate.client6.v1.api.collections.WeaviateObject;
 import io.weaviate.client6.v1.api.collections.aggregate.AggregateResponse;
 import io.weaviate.client6.v1.api.collections.query.Filter;
+import io.weaviate.client6.v1.api.collections.query.Metadata;
 import io.weaviate.client6.v1.api.collections.query.QueryResponse;
 import io.weaviate.client6.v1.api.collections.query.SortBy;
+import io.weaviate.client6.v1.api.collections.query.WeaviateQueryClient;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
@@ -64,9 +66,13 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         FEATURE_DATA_FILTER,
     };
 
+    private static final org.jkiss.dbeaver.Log queryLog = org.jkiss.dbeaver.Log.getLog(WeaviateCollection.class);
+
     private final WeaviateDataSource dataSource;
     private final CollectionConfig config;
     private volatile List<WeaviateProperty> attributes;
+    private volatile WeaviateQuerySpec querySpec;
+    private volatile String lastQueryError;
 
     public WeaviateCollection(@NotNull WeaviateDataSource dataSource, @NotNull CollectionConfig config) {
         this.dataSource = dataSource;
@@ -249,27 +255,26 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         columnNames.add(WeaviateColumns.SCORE);
         columnNames.add(WeaviateColumns.DISTANCE);
 
+        WeaviateQuerySpec spec = getQuerySpec();
         Filter filter = WeaviateFilterTranslator.translate(dataFilter);
-        List<SortBy> sortBy = buildSortBy(dataFilter, attributes);
+        List<SortBy> sortBy = spec.rankedResults() ? Collections.emptyList() : buildSortBy(dataFilter, attributes);
         int limit = maxRows > 0 ? (int) Math.min(maxRows, Integer.MAX_VALUE) : 0;
         int offset = firstRow > 0 ? (int) Math.min(firstRow, Integer.MAX_VALUE) : 0;
 
-        String queryText = describeFetch(filter, sortBy, limit, offset);
+        String queryText = describeQuery(spec, filter, sortBy, limit, offset);
         statistics.setQueryText(queryText);
 
         long startTime = System.currentTimeMillis();
-        QueryResponse<Map<String, Object>> response;
+        QueryResponse<Map<String, Object>> response = null;
         try {
-            response = dataSource.getClient().collections.use(getName())
-                .query.fetchObjects(b -> {
-                    if (limit > 0) b.limit(limit);
-                    if (offset > 0) b.offset(offset);
-                    if (filter != null) b.filters(filter);
-                    if (!sortBy.isEmpty()) b.sort(sortBy);
-                    return b;
-                });
+            response = executeQuery(spec, filter, sortBy, limit, offset);
+            lastQueryError = null;
         } catch (Exception e) {
-            throw new DBCException("Failed to fetch objects from collection " + getName(), e, session.getExecutionContext());
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            lastQueryError = "Query failed: " + msg;
+            queryLog.warn("Weaviate query failed for collection " + getName() + ": " + msg, e);
+            queryText = queryText + " — ERROR: " + msg;
+            statistics.setQueryText(queryText);
         }
         statistics.setExecuteTime(System.currentTimeMillis() - startTime);
         if (monitor.isCanceled()) {
@@ -280,13 +285,97 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
             statement.setStatementSource(source);
             LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
             populateColumns(resultSet, attributes);
-            for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
-                resultSet.addRow(WeaviateRowMapper.toRow(columnNames, obj));
+            if (response != null) {
+                for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
+                    resultSet.addRow(WeaviateRowMapper.toRow(columnNames, obj));
+                }
             }
             DBDDataReceiver.startFetchWorkflow(dataReceiver, session, resultSet, firstRow, maxRows);
             DBDDataReceiver.fetchRowsWithStatistics(dataReceiver, session, resultSet, statistics);
         }
         return statistics;
+    }
+
+    @NotNull
+    private QueryResponse<Map<String, Object>> executeQuery(
+        @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter,
+        @NotNull List<SortBy> sortBy,
+        int limit,
+        int offset
+    ) {
+        WeaviateQueryClient<Map<String, Object>> query =
+            dataSource.getClient().collections.use(getName()).query;
+        switch (spec.getMode()) {
+            case BM25: {
+                String text = requireQuery(spec, "BM25");
+                List<String> queryProperties = spec.getQueryProperties();
+                return query.bm25(text, b -> {
+                    applyCommon(b, filter, limit, offset);
+                    b.returnMetadata(Metadata.SCORE);
+                    if (!queryProperties.isEmpty()) b.queryProperties(queryProperties);
+                    return b;
+                });
+            }
+            case NEAR_TEXT: {
+                String text = requireQuery(spec, "Near Text");
+                Float distance = spec.getDistance();
+                return query.nearText(text, b -> {
+                    applyCommon(b, filter, limit, offset);
+                    b.returnMetadata(Metadata.DISTANCE);
+                    if (distance != null) b.distance(distance);
+                    return b;
+                });
+            }
+            case NEAR_VECTOR: {
+                float[] vector = spec.getVector();
+                if (vector == null || vector.length == 0) {
+                    throw new IllegalStateException("Near Vector mode requires a non-empty vector");
+                }
+                Float distance = spec.getDistance();
+                return query.nearVector(vector, b -> {
+                    applyCommon(b, filter, limit, offset);
+                    b.returnMetadata(Metadata.DISTANCE);
+                    if (distance != null) b.distance(distance);
+                    return b;
+                });
+            }
+            case HYBRID: {
+                String text = requireQuery(spec, "Hybrid");
+                Float alpha = spec.getAlpha();
+                WeaviateHybridFusion fusion = spec.getFusionType();
+                return query.hybrid(text, b -> {
+                    applyCommon(b, filter, limit, offset);
+                    b.returnMetadata(Metadata.SCORE, Metadata.DISTANCE);
+                    if (alpha != null) b.alpha(alpha);
+                    if (fusion != null) b.fusionType(fusion.toClientType());
+                    return b;
+                });
+            }
+            case FETCH:
+            default:
+                return query.fetchObjects(b -> {
+                    applyCommon(b, filter, limit, offset);
+                    if (!sortBy.isEmpty()) b.sort(sortBy);
+                    return b;
+                });
+        }
+    }
+
+    private static <B extends io.weaviate.client6.v1.api.collections.query.BaseQueryOptions.Builder<B, ?>>
+    void applyCommon(@NotNull B b, @Nullable Filter filter, int limit, int offset) {
+        if (limit > 0) b.limit(limit);
+        if (offset > 0) b.offset(offset);
+        if (filter != null) b.filters(filter);
+    }
+
+    @NotNull
+    private static String requireQuery(@NotNull WeaviateQuerySpec spec, @NotNull String modeLabel) {
+        String text = spec.getQuery();
+        if (text == null || text.isBlank()) {
+            throw new IllegalStateException(modeLabel + " mode requires a query string");
+        }
+        return text;
     }
 
     @Override
@@ -360,22 +449,59 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
     }
 
     @NotNull
-    private static String describeFetch(
+    private static String describeQuery(
+        @NotNull WeaviateQuerySpec spec,
         @Nullable Filter filter,
         @NotNull List<SortBy> sortBy,
         int limit,
         int offset
     ) {
-        StringBuilder sb = new StringBuilder("fetchObjects");
-        sb.append("(");
+        StringBuilder sb = new StringBuilder();
+        switch (spec.getMode()) {
+            case BM25: sb.append("bm25(query=").append(quote(spec.getQuery())); break;
+            case NEAR_TEXT: sb.append("nearText(query=").append(quote(spec.getQuery())); break;
+            case NEAR_VECTOR: sb.append("nearVector(dim=")
+                .append(spec.getVector() == null ? 0 : spec.getVector().length); break;
+            case HYBRID:
+                sb.append("hybrid(query=").append(quote(spec.getQuery()));
+                if (spec.getAlpha() != null) sb.append(", alpha=").append(spec.getAlpha());
+                break;
+            case FETCH:
+            default: sb.append("fetchObjects(");
+        }
+        if (sb.charAt(sb.length() - 1) != '(') sb.append(", ");
         if (limit > 0) sb.append("limit=").append(limit).append(", ");
         if (offset > 0) sb.append("offset=").append(offset).append(", ");
         if (filter != null) sb.append("filter=").append(filter).append(", ");
         if (!sortBy.isEmpty()) sb.append("sort=").append(sortBy).append(", ");
-        if (sb.charAt(sb.length() - 1) == ' ') {
-            sb.setLength(sb.length() - 2);
-        }
-        sb.append(")");
+        if (sb.charAt(sb.length() - 1) == ' ') sb.setLength(sb.length() - 2);
+        if (sb.charAt(sb.length() - 1) == '(') sb.setLength(sb.length() - 1);
+        else sb.append(")");
+        if (sb.charAt(sb.length() - 1) != ')') sb.append(")");
         return sb.toString();
+    }
+
+    @NotNull
+    private static String quote(@Nullable String s) {
+        return s == null ? "null" : "\"" + s.replace("\"", "\\\"") + "\"";
+    }
+
+    @NotNull
+    public WeaviateQuerySpec getQuerySpec() {
+        WeaviateQuerySpec s = querySpec;
+        return s == null ? WeaviateQuerySpec.fetch() : s;
+    }
+
+    public void setQuerySpec(@Nullable WeaviateQuerySpec spec) {
+        this.querySpec = spec;
+    }
+
+    @Nullable
+    public String getLastQueryError() {
+        return lastQueryError;
+    }
+
+    public void clearLastQueryError() {
+        this.lastQueryError = null;
     }
 }
