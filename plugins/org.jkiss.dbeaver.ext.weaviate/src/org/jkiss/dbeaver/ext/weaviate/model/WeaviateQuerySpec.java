@@ -33,6 +33,8 @@ public final class WeaviateQuerySpec {
     private final List<String> queryProperties;
     private final Float distance;
     private final WeaviateHybridFusion fusionType;
+    private final List<WeaviateFilterRow> filterRows;
+    private final boolean anyFilter;
 
     public WeaviateQuerySpec(@NotNull Builder b) {
         this.mode = b.mode;
@@ -42,6 +44,8 @@ public final class WeaviateQuerySpec {
         this.queryProperties = b.queryProperties == null ? Collections.emptyList() : List.copyOf(b.queryProperties);
         this.distance = b.distance;
         this.fusionType = b.fusionType;
+        this.filterRows = b.filterRows == null ? Collections.emptyList() : List.copyOf(b.filterRows);
+        this.anyFilter = b.anyFilter;
     }
 
     @NotNull
@@ -109,6 +113,15 @@ public final class WeaviateQuerySpec {
         return fusionType;
     }
 
+    @NotNull
+    public List<WeaviateFilterRow> getFilterRows() {
+        return filterRows;
+    }
+
+    public boolean isAnyFilter() {
+        return anyFilter;
+    }
+
     public boolean rankedResults() {
         return mode != WeaviateQueryMode.FETCH;
     }
@@ -121,6 +134,8 @@ public final class WeaviateQuerySpec {
         private List<String> queryProperties;
         private Float distance;
         private WeaviateHybridFusion fusionType;
+        private List<WeaviateFilterRow> filterRows;
+        private boolean anyFilter;
 
         private Builder(@NotNull WeaviateQueryMode mode) {
             this.mode = mode;
@@ -153,6 +168,16 @@ public final class WeaviateQuerySpec {
 
         public Builder fusionType(@Nullable WeaviateHybridFusion fusionType) {
             this.fusionType = fusionType;
+            return this;
+        }
+
+        public Builder filterRows(@Nullable List<WeaviateFilterRow> rows) {
+            this.filterRows = rows;
+            return this;
+        }
+
+        public Builder anyFilter(boolean any) {
+            this.anyFilter = any;
             return this;
         }
 

@@ -38,12 +38,18 @@ import org.eclipse.swt.widgets.Spinner;
 import org.eclipse.swt.widgets.Text;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
+import org.eclipse.swt.widgets.Group;
+import org.jkiss.code.NotNull;
+import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterRow;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateHybridFusion;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQueryMode;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQuerySpec;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorParser;
+import org.jkiss.dbeaver.model.DBPDataKind;
+import org.jkiss.dbeaver.model.exec.DBCLogicalOperator;
 import org.jkiss.dbeaver.model.runtime.VoidProgressMonitor;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.ui.controls.resultset.IResultSetPresentation;
@@ -84,6 +90,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Color errorBg;
     private Color infoBg;
     private Font bannerFont;
+    private Group filtersGroup;
+    private Composite filterRowsHolder;
+    private Button filterAndRadio;
+    private Button filterOrRadio;
+    private final java.util.List<FilterRowUi> filterRowUis = new java.util.ArrayList<>();
 
     public WeaviateQueryPanel() {
     }
@@ -143,7 +154,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         banner = createBanner(root);
 
         fieldsHolder = new Composite(root, SWT.NONE);
-        fieldsHolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        GridData fhGd = new GridData(SWT.FILL, SWT.TOP, true, false);
+        fhGd.heightHint = 100;
+        fieldsHolder.setLayoutData(fhGd);
         fieldsLayout = new StackLayout();
         fieldsHolder.setLayout(fieldsLayout);
 
@@ -152,6 +165,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         nearTextComposite = createNearTextFields(fieldsHolder);
         nearVectorComposite = createNearVectorFields(fieldsHolder);
         hybridComposite = createHybridFields(fieldsHolder);
+
+        createFilterSection(root);
 
         loadSpecIntoUi();
         updateFieldVisibility();
@@ -335,11 +350,102 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
     }
 
+    private void createFilterSection(Composite parent) {
+        filtersGroup = new Group(parent, SWT.NONE);
+        filtersGroup.setText("Filters");
+        GridLayout gl = new GridLayout(1, false);
+        gl.marginWidth = 6;
+        gl.marginHeight = 6;
+        filtersGroup.setLayout(gl);
+        filtersGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+
+        Composite header = new Composite(filtersGroup, SWT.NONE);
+        GridLayout hl = new GridLayout(4, false);
+        hl.marginWidth = 0;
+        hl.marginHeight = 0;
+        header.setLayout(hl);
+        header.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        new Label(header, SWT.NONE).setText("Match:");
+        filterAndRadio = new Button(header, SWT.RADIO);
+        filterAndRadio.setText("All (AND)");
+        filterAndRadio.setSelection(true);
+        filterOrRadio = new Button(header, SWT.RADIO);
+        filterOrRadio.setText("Any (OR)");
+
+        Button addRow = new Button(header, SWT.PUSH);
+        addRow.setText("+ Add filter");
+        addRow.setLayoutData(new GridData(SWT.RIGHT, SWT.CENTER, true, false));
+        addRow.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                addFilterRow(null);
+            }
+        });
+
+        filterRowsHolder = new Composite(filtersGroup, SWT.NONE);
+        GridLayout rl = new GridLayout(1, false);
+        rl.marginWidth = 0;
+        rl.marginHeight = 0;
+        rl.verticalSpacing = 3;
+        filterRowsHolder.setLayout(rl);
+        filterRowsHolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+    }
+
+    private void addFilterRow(@Nullable WeaviateFilterRow seed) {
+        if (filterRowsHolder == null || filterRowsHolder.isDisposed()) return;
+        FilterRowUi ui = new FilterRowUi(filterRowsHolder, currentPropertyNames(), seed);
+        filterRowUis.add(ui);
+        filterRowsHolder.layout(true, true);
+        filtersGroup.layout(true, true);
+    }
+
+    private void clearFilterRows() {
+        for (FilterRowUi ui : new ArrayList<>(filterRowUis)) {
+            ui.dispose();
+        }
+        filterRowUis.clear();
+    }
+
+    private List<WeaviateFilterRow> collectFilterRows() {
+        List<WeaviateFilterRow> rows = new ArrayList<>(filterRowUis.size());
+        for (FilterRowUi ui : filterRowUis) {
+            WeaviateFilterRow row = ui.toRow();
+            if (row != null) rows.add(row);
+        }
+        return rows;
+    }
+
+    private DBPDataKind dataKindForProperty(@NotNull String propertyName) {
+        WeaviateCollection collection = currentCollection();
+        if (collection == null) return DBPDataKind.STRING;
+        try {
+            for (WeaviateProperty p : collection.getAttributes(new VoidProgressMonitor())) {
+                if (p.getName().equals(propertyName)) return p.getDataKind();
+            }
+        } catch (DBException ignored) {
+            // fall through
+        }
+        return DBPDataKind.STRING;
+    }
+
     private void loadSpecIntoUi() {
         WeaviateCollection collection = currentCollection();
         if (collection == null) return;
         WeaviateQuerySpec spec = collection.getQuerySpec();
         modeCombo.select(spec.getMode().ordinal());
+
+        // Filter rows
+        if (filterRowsHolder != null && !filterRowsHolder.isDisposed()) {
+            clearFilterRows();
+            for (WeaviateFilterRow row : spec.getFilterRows()) {
+                addFilterRow(row);
+            }
+            if (filterAndRadio != null) {
+                filterAndRadio.setSelection(!spec.isAnyFilter());
+                filterOrRadio.setSelection(spec.isAnyFilter());
+            }
+        }
 
         switch (spec.getMode()) {
             case BM25:
@@ -414,22 +520,25 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
 
     private WeaviateQuerySpec buildSpec() {
         WeaviateQueryMode mode = currentMode();
+        List<WeaviateFilterRow> rows = collectFilterRows();
+        boolean any = filterOrRadio != null && filterOrRadio.getSelection();
+        WeaviateQuerySpec.Builder builder;
         switch (mode) {
             case BM25: {
                 String q = requireNonBlank(bm25QueryField.getText(), "BM25 query is required.");
                 List<String> props = List.of(bm25PropertiesList.getSelection());
-                return WeaviateQuerySpec.builder(WeaviateQueryMode.BM25)
+                builder = WeaviateQuerySpec.builder(WeaviateQueryMode.BM25)
                     .query(q)
-                    .queryProperties(props)
-                    .build();
+                    .queryProperties(props);
+                break;
             }
             case NEAR_TEXT: {
                 String q = requireNonBlank(nearTextQueryField.getText(), "Near Text query is required.");
                 Float distance = parseOptionalFloat(nearTextDistanceField.getText(), "distance");
-                return WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_TEXT)
+                builder = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_TEXT)
                     .query(q)
-                    .distance(distance)
-                    .build();
+                    .distance(distance);
+                break;
             }
             case NEAR_VECTOR: {
                 String raw = nearVectorField.getText();
@@ -443,25 +552,26 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                     throw new IllegalArgumentException("Near Vector requires a non-empty vector.");
                 }
                 Float distance = parseOptionalFloat(nearVectorDistanceField.getText(), "distance");
-                return WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_VECTOR)
+                builder = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_VECTOR)
                     .vector(vec)
-                    .distance(distance)
-                    .build();
+                    .distance(distance);
+                break;
             }
             case HYBRID: {
                 String q = requireNonBlank(hybridQueryField.getText(), "Hybrid query is required.");
                 float alpha = hybridAlphaSpinner.getSelection() / 100.0f;
                 WeaviateHybridFusion fusionType = readFusionType();
-                return WeaviateQuerySpec.builder(WeaviateQueryMode.HYBRID)
+                builder = WeaviateQuerySpec.builder(WeaviateQueryMode.HYBRID)
                     .query(q)
                     .alpha(alpha)
-                    .fusionType(fusionType)
-                    .build();
+                    .fusionType(fusionType);
+                break;
             }
             case FETCH:
             default:
-                return WeaviateQuerySpec.fetch();
+                builder = WeaviateQuerySpec.builder(WeaviateQueryMode.FETCH);
         }
+        return builder.filterRows(rows).anyFilter(any).build();
     }
 
     private WeaviateHybridFusion readFusionType() {
@@ -644,5 +754,111 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     @Override
     public void contributeActions(IContributionManager manager) {
         // No toolbar actions for now.
+    }
+
+    /**
+     * SWT controls for a single filter row. Owns its container Composite so disposing it
+     * cleanly removes the row from the layout.
+     */
+    private final class FilterRowUi {
+        private final Composite container;
+        private final Combo propertyCombo;
+        private final Combo opCombo;
+        private final Text valueField;
+
+        FilterRowUi(@NotNull Composite parent, @NotNull List<String> propertyNames, @Nullable WeaviateFilterRow seed) {
+            container = new Composite(parent, SWT.NONE);
+            GridLayout gl = new GridLayout(4, false);
+            gl.marginWidth = 0;
+            gl.marginHeight = 0;
+            container.setLayout(gl);
+            container.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+            propertyCombo = new Combo(container, SWT.READ_ONLY);
+            for (String name : propertyNames) propertyCombo.add(name);
+            GridData pcGd = new GridData(SWT.LEFT, SWT.CENTER, false, false);
+            pcGd.widthHint = 140;
+            propertyCombo.setLayoutData(pcGd);
+
+            opCombo = new Combo(container, SWT.READ_ONLY);
+            for (DBCLogicalOperator op : WeaviateFilterRow.SUPPORTED_OPERATORS) {
+                opCombo.add(operatorLabel(op));
+            }
+            opCombo.select(0);
+            opCombo.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetSelected(SelectionEvent e) {
+                    syncValueEnabled();
+                }
+            });
+
+            valueField = new Text(container, SWT.BORDER);
+            valueField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+            valueField.setMessage("value");
+
+            Button remove = new Button(container, SWT.PUSH | SWT.FLAT);
+            remove.setText("✕");
+            remove.setToolTipText("Remove filter");
+            remove.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetSelected(SelectionEvent e) {
+                    dispose();
+                    filterRowUis.remove(FilterRowUi.this);
+                    filterRowsHolder.layout(true, true);
+                    filtersGroup.layout(true, true);
+                }
+            });
+
+            if (seed != null) {
+                propertyCombo.setText(seed.property());
+                int idx = WeaviateFilterRow.SUPPORTED_OPERATORS.indexOf(seed.operator());
+                opCombo.select(Math.max(0, idx));
+                if (seed.rawValue() != null) valueField.setText(seed.rawValue());
+            } else if (!propertyNames.isEmpty()) {
+                propertyCombo.select(0);
+            }
+            syncValueEnabled();
+        }
+
+        private void syncValueEnabled() {
+            valueField.setEnabled(WeaviateFilterRow.takesValue(currentOperator()));
+        }
+
+        private DBCLogicalOperator currentOperator() {
+            int idx = opCombo.getSelectionIndex();
+            if (idx < 0) idx = 0;
+            return WeaviateFilterRow.SUPPORTED_OPERATORS.get(idx);
+        }
+
+        @Nullable
+        WeaviateFilterRow toRow() {
+            String property = propertyCombo.getText();
+            if (property == null || property.isBlank()) return null;
+            DBCLogicalOperator op = currentOperator();
+            String raw = valueField.getText();
+            DBPDataKind kind = dataKindForProperty(property);
+            return new WeaviateFilterRow(property, op, raw, kind);
+        }
+
+        void dispose() {
+            if (!container.isDisposed()) container.dispose();
+        }
+    }
+
+    @NotNull
+    private static String operatorLabel(@NotNull DBCLogicalOperator op) {
+        switch (op) {
+            case EQUALS: return "=";
+            case NOT_EQUALS: return "≠";
+            case GREATER: return ">";
+            case GREATER_EQUALS: return "≥";
+            case LESS: return "<";
+            case LESS_EQUALS: return "≤";
+            case LIKE: return "LIKE";
+            case IS_NULL: return "IS NULL";
+            case IS_NOT_NULL: return "IS NOT NULL";
+            case IN: return "IN";
+            default: return op.name();
+        }
     }
 }

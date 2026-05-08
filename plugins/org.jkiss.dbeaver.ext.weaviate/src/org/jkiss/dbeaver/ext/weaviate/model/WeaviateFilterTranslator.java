@@ -56,6 +56,42 @@ public final class WeaviateFilterTranslator {
         return dataFilter.isAnyConstraint() ? Filter.or(operands) : Filter.and(operands);
     }
 
+    /**
+     * Translate user-built filter rows from the panel into a single {@link Filter}.
+     * Returns {@code null} if the row list is empty or every row is a no-op.
+     */
+    @Nullable
+    public static Filter translateRows(@Nullable List<WeaviateFilterRow> rows, boolean anyConstraint) {
+        if (rows == null || rows.isEmpty()) {
+            return null;
+        }
+        List<FilterOperand> operands = new ArrayList<>(rows.size());
+        for (WeaviateFilterRow row : rows) {
+            Filter f = applyOperator(row.property(), row.operator(), row.coercedValue());
+            if (f != null) {
+                operands.add(f);
+            }
+        }
+        if (operands.isEmpty()) {
+            return null;
+        }
+        if (operands.size() == 1 && operands.get(0) instanceof Filter f) {
+            return f;
+        }
+        return anyConstraint ? Filter.or(operands) : Filter.and(operands);
+    }
+
+    /**
+     * AND-combine two optional filters. Returns {@code null} if both are null,
+     * the non-null one if exactly one is present, or {@code Filter.and(a, b)} otherwise.
+     */
+    @Nullable
+    public static Filter and(@Nullable Filter a, @Nullable Filter b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        return Filter.and(a, b);
+    }
+
     @Nullable
     private static FilterOperand constraintToOperand(@NotNull DBDAttributeConstraint c) {
         if (!c.hasCondition()) {

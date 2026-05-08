@@ -256,7 +256,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         columnNames.add(WeaviateColumns.DISTANCE);
 
         WeaviateQuerySpec spec = getQuerySpec();
-        Filter filter = WeaviateFilterTranslator.translate(dataFilter);
+        Filter columnHeaderFilter = WeaviateFilterTranslator.translate(dataFilter);
+        Filter customFilter = WeaviateFilterTranslator.translateRows(spec.getFilterRows(), spec.isAnyFilter());
+        Filter filter = WeaviateFilterTranslator.and(columnHeaderFilter, customFilter);
         List<SortBy> sortBy = spec.rankedResults() ? Collections.emptyList() : buildSortBy(dataFilter, attributes);
         int limit = maxRows > 0 ? (int) Math.min(maxRows, Integer.MAX_VALUE) : 0;
         int offset = firstRow > 0 ? (int) Math.min(firstRow, Integer.MAX_VALUE) : 0;
