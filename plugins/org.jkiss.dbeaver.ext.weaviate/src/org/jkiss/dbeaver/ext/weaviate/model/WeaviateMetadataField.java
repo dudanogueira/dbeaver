@@ -23,12 +23,12 @@ import org.jkiss.dbeaver.model.struct.DBSObject;
 
 public class WeaviateMetadataField implements DBSObject {
 
-    private final WeaviateDataSource dataSource;
+    private final DBSObject parent;
     private final String name;
     private final String value;
 
-    public WeaviateMetadataField(@NotNull WeaviateDataSource dataSource, @NotNull String name, @Nullable String value) {
-        this.dataSource = dataSource;
+    public WeaviateMetadataField(@NotNull DBSObject parent, @NotNull String name, @Nullable String value) {
+        this.parent = parent;
         this.name = name;
         this.value = value;
     }
@@ -61,13 +61,13 @@ public class WeaviateMetadataField implements DBSObject {
     @NotNull
     @Override
     public DBSObject getParentObject() {
-        return dataSource;
+        return parent;
     }
 
     @NotNull
     @Override
     public DBPDataSource getDataSource() {
-        return dataSource;
+        return parent.getDataSource();
     }
 
     @Override

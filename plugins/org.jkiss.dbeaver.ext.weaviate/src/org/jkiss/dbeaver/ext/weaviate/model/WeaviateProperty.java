@@ -68,6 +68,47 @@ public class WeaviateProperty implements DBSEntityAttribute {
         return String.join("|", dataTypes);
     }
 
+    @Nullable
+    @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 10)
+    public String getTokenization() {
+        return property.tokenization() == null ? null : property.tokenization().name();
+    }
+
+    @Nullable
+    @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 11)
+    public Boolean isIndexFilterable() {
+        return property.indexFilterable();
+    }
+
+    @Nullable
+    @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 12)
+    public Boolean isIndexRangeFilters() {
+        return property.indexRangeFilters();
+    }
+
+    @Nullable
+    @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 13)
+    public Boolean isIndexSearchable() {
+        return property.indexSearchable();
+    }
+
+    @Nullable
+    @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 14)
+    public Boolean isSkipVectorization() {
+        return property.skipVectorization();
+    }
+
+    @Nullable
+    @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 15)
+    public Boolean isVectorizePropertyName() {
+        return property.vectorizePropertyName();
+    }
+
+    @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 16)
+    public int getNestedPropertyCount() {
+        return property.nestedProperties() == null ? 0 : property.nestedProperties().size();
+    }
+
     @NotNull
     @Override
     public String getFullTypeName() {

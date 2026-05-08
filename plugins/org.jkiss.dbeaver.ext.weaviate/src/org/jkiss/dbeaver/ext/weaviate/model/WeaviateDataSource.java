@@ -375,15 +375,16 @@ public class WeaviateDataSource extends AbstractDataSource
             synchronized (this) {
                 if (metadataFields == null) {
                     InstanceMetadata m = getInstanceMetadata();
-                    List<WeaviateMetadataField> result = new ArrayList<>();
-                    if (m != null) {
-                        if (m.hostName() != null) result.add(new WeaviateMetadataField(this, "Hostname", m.hostName()));
-                        if (m.version() != null) result.add(new WeaviateMetadataField(this, "Version", m.version()));
-                        if (m.grpcMaxMessageSize() != null) {
-                            result.add(new WeaviateMetadataField(this, "grpcMaxMessageSize", String.valueOf(m.grpcMaxMessageSize())));
+                    // Reflection-based extraction picks up future InstanceMetadata fields automatically.
+                    // We exclude `modules` here because it has its own folder.
+                    List<WeaviateMetadataField> all = WeaviateRecordIntrospect.toFields(this, m);
+                    List<WeaviateMetadataField> filtered = new ArrayList<>(all.size());
+                    for (WeaviateMetadataField f : all) {
+                        if (!f.getFieldName().startsWith("modules")) {
+                            filtered.add(f);
                         }
                     }
-                    metadataFields = result;
+                    metadataFields = filtered;
                 }
             }
         }

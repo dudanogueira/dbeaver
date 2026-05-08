@@ -18,11 +18,14 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 
 import io.weaviate.client6.v1.api.collections.CollectionConfig;
 import io.weaviate.client6.v1.api.collections.Property;
+import io.weaviate.client6.v1.api.collections.Reranker;
+import io.weaviate.client6.v1.api.collections.VectorConfig;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBUtils;
+import org.jkiss.dbeaver.model.meta.Association;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.struct.DBSEntity;
 import org.jkiss.dbeaver.model.struct.DBSEntityAssociation;
@@ -34,6 +37,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 public class WeaviateCollection implements DBSEntity {
 
@@ -128,5 +133,65 @@ public class WeaviateCollection implements DBSEntity {
 
     public CollectionConfig getConfig() {
         return config;
+    }
+
+    // ---- Config sub-folders ----------------------------------------------------------------
+    // Each method uses reflection on the underlying record so future-added fields show up.
+
+    @Association
+    public List<WeaviateMetadataField> getReplicationFields(@NotNull DBRProgressMonitor monitor) {
+        return WeaviateRecordIntrospect.toFields(this, config.replication());
+    }
+
+    @Association
+    public List<WeaviateMetadataField> getShardingFields(@NotNull DBRProgressMonitor monitor) {
+        return WeaviateRecordIntrospect.toFields(this, config.sharding());
+    }
+
+    @Association
+    public List<WeaviateMetadataField> getMultiTenancyFields(@NotNull DBRProgressMonitor monitor) {
+        return WeaviateRecordIntrospect.toFields(this, config.multiTenancy());
+    }
+
+    @Association
+    public List<WeaviateMetadataField> getInvertedIndexFields(@NotNull DBRProgressMonitor monitor) {
+        return WeaviateRecordIntrospect.toFields(this, config.invertedIndex());
+    }
+
+    @Association
+    public List<WeaviateMetadataField> getObjectTtlFields(@NotNull DBRProgressMonitor monitor) {
+        return WeaviateRecordIntrospect.toFields(this, config.objectTtl());
+    }
+
+    @Association
+    public List<WeaviateMetadataField> getGenerativeFields(@NotNull DBRProgressMonitor monitor) {
+        return WeaviateRecordIntrospect.toFields(this, config.generativeModule());
+    }
+
+    @Association
+    public List<WeaviateVectorizer> getVectorizers(@NotNull DBRProgressMonitor monitor) {
+        Map<String, VectorConfig> vectors = config.vectors();
+        if (vectors == null || vectors.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Map<String, VectorConfig> sorted = new TreeMap<>(vectors);
+        List<WeaviateVectorizer> result = new ArrayList<>(sorted.size());
+        for (Map.Entry<String, VectorConfig> e : sorted.entrySet()) {
+            result.add(new WeaviateVectorizer(this, e.getKey(), e.getValue()));
+        }
+        return result;
+    }
+
+    @Association
+    public List<WeaviateReranker> getRerankers(@NotNull DBRProgressMonitor monitor) {
+        List<Reranker> rerankers = config.rerankerModules();
+        if (rerankers == null || rerankers.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<WeaviateReranker> result = new ArrayList<>(rerankers.size());
+        for (int i = 0; i < rerankers.size(); i++) {
+            result.add(new WeaviateReranker(this, i, rerankers.get(i)));
+        }
+        return result;
     }
 }
