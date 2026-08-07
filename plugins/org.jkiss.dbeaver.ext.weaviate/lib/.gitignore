@@ -1,0 +1,7 @@
+# The Weaviate Java client is not committed - see ../README.md for how to obtain it.
+#
+# It is a ~30 MB shaded jar, and how it should be distributed is an open question for
+# this plugin (a p2-published org.jkiss.bundle.* wrapper would match how DBeaver handles
+# other non-JDBC libraries). Keeping it out of git leaves that decision open, since a jar
+# committed once stays in history for good.
+*.jar

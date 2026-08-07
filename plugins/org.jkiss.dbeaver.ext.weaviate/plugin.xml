@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.2"?>
+<plugin>
+
+    <extension point="org.jkiss.dbeaver.driverManager">
+        <category id="vector" name="Vector Databases" description="Vector and embedding databases" icon="#folder_database" rank="6" promoted="true"/>
+    </extension>
+
+    <extension point="org.jkiss.dbeaver.dataSourceProvider">
+        <datasource
+            class="org.jkiss.dbeaver.ext.weaviate.WeaviateDataSourceProvider"
+            description="Weaviate vector database connector"
+            id="weaviate"
+            label="Weaviate"
+            icon="icons/weaviate.png"
+            dialect="weaviate">
+            <tree
+                  label="Weaviate data source"
+                  path="weaviate"
+                  icon="icons/weaviate.png">
+                <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
+                        label="Server Metadata"
+                        icon="#folder_info"
+                        description="Weaviate server metadata">
+                    <items label="Field" itemLabel="Field"
+                           path="metadataField" property="metadataFields" icon="#info"/>
+                    <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateModule"
+                            label="Modules"
+                            icon="#folder_admin"
+                            description="Server modules">
+                        <items label="Module" itemLabel="Module"
+                               path="module" property="modules"/>
+                    </folder>
+                </folder>
+                <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateNode"
+                        label="Cluster Nodes"
+                        icon="#folder_admin"
+                        description="Weaviate cluster nodes">
+                    <items label="Cluster Nodes" itemLabel="Node"
+                           path="node" property="nodes" icon="#folder_admin">
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateShard"
+                                label="Shards"
+                                icon="#folder_partitions"
+                                description="Node shards">
+                            <items label="Shards" itemLabel="Shard"
+                                   path="shard" property="shards"/>
+                        </folder>
+                    </items>
+                </folder>
+                <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"
+                        label="Collections"
+                        icon="#folder_table"
+                        description="Weaviate collections">
+                    <items label="Collections" itemLabel="Collection"
+                           path="collection" property="collections" icon="#folder_table">
+                        <!-- The complete definition as the server reports it. The typed folders
+                             below are limited to what the bundled client can model; this one is
+                             built from the raw JSON, so nothing is hidden. -->
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateJsonNode"
+                                label="Definition"
+                                icon="#folder_info"
+                                description="Full collection definition as stored by the server">
+                            <items label="Entry" itemLabel="Entry"
+                                   path="definitionEntry" property="definitionNodes" icon="#info">
+                                <items label="Entry" itemLabel="Entry"
+                                       path="definitionChild" property="children" icon="#info"
+                                       recursive=".."/>
+                            </items>
+                        </folder>
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty"
+                                label="Properties"
+                                icon="#columns"
+                                description="Collection properties">
+                            <items label="Property" itemLabel="Property"
+                                   path="property" property="attributes"/>
+                        </folder>
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorizer"
+                                label="Vectorizers"
+                                icon="#folder_admin"
+                                description="Named vector configurations">
+                            <items label="Vectorizer" itemLabel="Vectorizer"
+                                   path="vectorizer" property="vectorizers">
+                                <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
+                                        label="Fields" icon="#info" description="Vectorizer fields">
+                                    <items label="Field" itemLabel="Field"
+                                           path="vectorizerField" property="fields"/>
+                                </folder>
+                            </items>
+                        </folder>
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateReranker"
+                                label="Rerankers"
+                                icon="#folder_admin"
+                                description="Reranker modules">
+                            <items label="Reranker" itemLabel="Reranker"
+                                   path="reranker" property="rerankers">
+                                <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
+                                        label="Fields" icon="#info" description="Reranker fields">
+                                    <items label="Field" itemLabel="Field"
+                                           path="rerankerField" property="fields"/>
+                                </folder>
+                            </items>
+                        </folder>
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
+                                label="Generative" icon="#folder_admin" description="Generative module">
+                            <items label="Field" itemLabel="Field"
+                                   path="generativeField" property="generativeFields"/>
+                        </folder>
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
+                                label="Replication" icon="#folder_info" description="Replication settings">
+                            <items label="Field" itemLabel="Field"
+                                   path="replicationField" property="replicationFields"/>
+                        </folder>
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
+                                label="Sharding" icon="#folder_info" description="Sharding settings">
+                            <items label="Field" itemLabel="Field"
+                                   path="shardingField" property="shardingFields"/>
+                        </folder>
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
+                                label="Multi-Tenancy" icon="#folder_info" description="Multi-tenancy settings">
+                            <items label="Field" itemLabel="Field"
+                                   path="multiTenancyField" property="multiTenancyFields"/>
+                        </folder>
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
+                                label="Inverted Index" icon="#folder_info" description="Inverted index settings">
+                            <items label="Field" itemLabel="Field"
+                                   path="invertedIndexField" property="invertedIndexFields"/>
+                        </folder>
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
+                                label="Object TTL" icon="#folder_info" description="Object TTL settings">
+                            <items label="Field" itemLabel="Field"
+                                   path="objectTtlField" property="objectTtlFields"/>
+                        </folder>
+                    </items>
+                </folder>
+            </tree>
+            <drivers managable="false">
+                <driver
+                    id="weaviate"
+                    label="Weaviate"
+                    description="Weaviate vector database"
+                    class="io.weaviate.client6.v1.api.WeaviateClient"
+                    icon="icons/weaviate.png"
+                    iconBig="icons/weaviate_big.png"
+                    customDriverLoader="true"
+                    categories="vector">
+                </driver>
+            </drivers>
+        </datasource>
+    </extension>
+
+    <extension point="org.jkiss.dbeaver.sqlDialect">
+        <dialect id="weaviate"
+                 parent="basic"
+                 class="org.jkiss.dbeaver.ext.weaviate.model.WeaviateDialect"
+                 label="Weaviate"
+                 description="Weaviate dialect">
+        </dialect>
+    </extension>
+
+    <extension point="org.jkiss.dbeaver.objectManager">
+        <manager class="org.jkiss.dbeaver.ext.weaviate.edit.WeaviateCollectionManager"
+                 objectType="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"/>
+    </extension>
+
+</plugin>
