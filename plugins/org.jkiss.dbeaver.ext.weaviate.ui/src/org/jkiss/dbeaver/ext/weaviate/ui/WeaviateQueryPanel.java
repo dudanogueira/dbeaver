@@ -861,19 +861,28 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
     }
 
+    /**
+     * Label for the operator dropdown.
+     * <p>
+     * Spelled out rather than using bare symbols: a lone "≠" is easy to misread as "=" at
+     * combo size, and ILIKE/NOT_LIKE previously fell through to the raw enum name, so the
+     * list mixed "LIKE" with "NOT_LIKE". Every entry now names what it does.
+     */
     @NotNull
     private static String operatorLabel(@NotNull DBCLogicalOperator op) {
         switch (op) {
-            case EQUALS: return "=";
-            case NOT_EQUALS: return "≠";
-            case GREATER: return ">";
-            case GREATER_EQUALS: return "≥";
-            case LESS: return "<";
-            case LESS_EQUALS: return "≤";
+            case EQUALS: return "= (equals)";
+            case NOT_EQUALS: return "!= (not equals)";
+            case GREATER: return "> (greater)";
+            case GREATER_EQUALS: return ">= (greater or equal)";
+            case LESS: return "< (less)";
+            case LESS_EQUALS: return "<= (less or equal)";
             case LIKE: return "LIKE";
+            case ILIKE: return "ILIKE (case-insensitive)";
+            case NOT_LIKE: return "NOT LIKE";
             case IS_NULL: return "IS NULL";
             case IS_NOT_NULL: return "IS NOT NULL";
-            case IN: return "IN";
+            case IN: return "IN (comma-separated)";
             default: return op.name();
         }
     }

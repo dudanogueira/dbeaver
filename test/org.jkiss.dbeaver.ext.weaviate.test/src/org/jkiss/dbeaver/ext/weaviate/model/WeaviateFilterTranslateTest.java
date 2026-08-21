@@ -19,6 +19,7 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 import io.weaviate.client6.v1.api.collections.query.Filter;
 import org.jkiss.dbeaver.model.data.DBDAttributeConstraint;
 import org.jkiss.dbeaver.model.data.DBDDataFilter;
+import org.jkiss.dbeaver.model.DBPDataKind;
 import org.jkiss.dbeaver.model.exec.DBCLogicalOperator;
 import org.jkiss.junit.DBeaverUnitTest;
 import org.junit.jupiter.api.Assertions;
@@ -112,6 +113,75 @@ public class WeaviateFilterTranslateTest extends DBeaverUnitTest {
         Filter filter = WeaviateFilterTranslator.translate(f);
         Assertions.assertNotNull(filter);
         Assertions.assertFalse(filter.isEmpty());
+    }
+
+    @Test
+    public void notEqualsProducesNotEqualOperator() {
+        DBDDataFilter f = filter(constraint("answer", DBCLogicalOperator.NOT_EQUALS, "Yucatan"));
+        Filter filter = WeaviateFilterTranslator.translate(f);
+        Assertions.assertNotNull(filter);
+        Assertions.assertTrue(filter.toString().contains("NotEqual"),
+            "expected a NotEqual operand, got: " + filter);
+    }
+
+    @Test
+    public void notEqualsWithNullValueBecomesIsNotNull() {
+        DBDDataFilter f = filter(constraint("answer", DBCLogicalOperator.NOT_EQUALS, null));
+        Filter filter = WeaviateFilterTranslator.translate(f);
+        Assertions.assertNotNull(filter);
+        Assertions.assertTrue(filter.toString().contains("IsNull"),
+            "null-valued != should test for presence, got: " + filter);
+    }
+
+    /**
+     * The shape from the Weaviate Python client's docs:
+     * round == "Double Jeopardy!" AND points &lt; 600 AND NOT(answer == "Yucatan").
+     * Built through the Query panel's filter rows, which is the path users hit.
+     */
+    @Test
+    public void panelRowsBuildAndedFilterWithNegation() {
+        List<WeaviateFilterRow> rows = List.of(
+            new WeaviateFilterRow("round", DBCLogicalOperator.EQUALS, "Double Jeopardy!", DBPDataKind.STRING),
+            new WeaviateFilterRow("points", DBCLogicalOperator.LESS, "600", DBPDataKind.NUMERIC),
+            new WeaviateFilterRow("answer", DBCLogicalOperator.NOT_EQUALS, "Yucatan", DBPDataKind.STRING));
+        Filter filter = WeaviateFilterTranslator.translateRows(rows, false);
+        Assertions.assertNotNull(filter);
+        String s = filter.toString();
+        Assertions.assertTrue(s.contains("And"), "rows should be ANDed: " + s);
+        Assertions.assertTrue(s.contains("NotEqual"), "negation should survive: " + s);
+        Assertions.assertTrue(s.contains("LessThan"), "numeric compare should survive: " + s);
+    }
+
+    @Test
+    public void panelRowsHonourMatchAnyForOr() {
+        List<WeaviateFilterRow> rows = List.of(
+            new WeaviateFilterRow("round", DBCLogicalOperator.EQUALS, "Jeopardy!", DBPDataKind.STRING),
+            new WeaviateFilterRow("answer", DBCLogicalOperator.NOT_EQUALS, "Yucatan", DBPDataKind.STRING));
+        Filter filter = WeaviateFilterTranslator.translateRows(rows, true);
+        Assertions.assertNotNull(filter);
+        Assertions.assertTrue(filter.toString().contains("Or"),
+            "Match=any should OR the rows: " + filter);
+    }
+
+    /**
+     * A typed filter expression has no SQL engine behind it. Dropping it silently would
+     * widen the result set, so it must fail loudly instead.
+     */
+    @Test
+    public void customWhereExpressionIsRejectedNotIgnored() {
+        DBDDataFilter f = filter(constraint("answer", DBCLogicalOperator.EQUALS, "x"));
+        f.setWhere("answer != 'Yucatan'");
+        WeaviateUnsupportedFilterException e = Assertions.assertThrows(
+            WeaviateUnsupportedFilterException.class,
+            () -> WeaviateFilterTranslator.translate(f));
+        Assertions.assertTrue(e.getMessage().contains("Yucatan"), e.getMessage());
+    }
+
+    @Test
+    public void blankCustomWhereIsIgnored() {
+        DBDDataFilter f = filter(constraint("answer", DBCLogicalOperator.EQUALS, "x"));
+        f.setWhere("   ");
+        Assertions.assertNotNull(WeaviateFilterTranslator.translate(f));
     }
 
     private static DBDDataFilter filter(DBDAttributeConstraint... constraints) {

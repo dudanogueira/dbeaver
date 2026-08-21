@@ -40,6 +40,16 @@ public final class WeaviateFilterTranslator {
         if (dataFilter == null) {
             return null;
         }
+        // A custom WHERE expression typed into the grid's filter box is not translatable:
+        // there is no SQL engine behind Weaviate to hand it to. Dropping it silently would
+        // run the query unfiltered and return rows the user asked to exclude, so refuse it
+        // outright -- same contract as an untranslatable operator.
+        String where = dataFilter.getWhere();
+        if (where != null && !where.isBlank()) {
+            throw new WeaviateUnsupportedFilterException(
+                "Weaviate cannot evaluate the custom filter expression \"" + where.strip()
+                    + "\". Use the column filters or the Weaviate Query panel's filter rows instead.");
+        }
         List<FilterOperand> operands = new ArrayList<>();
         for (DBDAttributeConstraint c : dataFilter.getConstraints()) {
             FilterOperand op = constraintToOperand(c);
