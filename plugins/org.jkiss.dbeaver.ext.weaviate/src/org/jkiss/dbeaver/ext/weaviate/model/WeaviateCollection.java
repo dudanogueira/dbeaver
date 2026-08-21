@@ -39,7 +39,6 @@ import org.jkiss.dbeaver.model.DBUtils;
 import org.jkiss.dbeaver.model.data.DBDAttributeConstraint;
 import org.jkiss.dbeaver.model.data.DBDDataFilter;
 import org.jkiss.dbeaver.model.data.DBDDataReceiver;
-import org.jkiss.dbeaver.model.exec.DBCException;
 import org.jkiss.dbeaver.model.exec.DBCExecutionSource;
 import org.jkiss.dbeaver.model.exec.DBCSession;
 import org.jkiss.dbeaver.model.exec.DBCStatistics;
@@ -398,9 +397,20 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         columnNames.add(WeaviateColumns.SCORE);
         columnNames.add(WeaviateColumns.DISTANCE);
 
-        Filter columnHeaderFilter = WeaviateFilterTranslator.translate(dataFilter);
-        Filter customFilter = WeaviateFilterTranslator.translateRows(spec.getFilterRows(), spec.isAnyFilter());
-        Filter filter = WeaviateFilterTranslator.and(columnHeaderFilter, customFilter);
+        // Filter translation rejects anything it cannot express rather than widening the result
+        // set. That rejection is a RuntimeException, so it has to be caught here: letting it
+        // escape would tear down the result tab and take the Query panel with it, exactly like
+        // a failed query used to.
+        Filter filter;
+        try {
+            Filter columnHeaderFilter = WeaviateFilterTranslator.translate(dataFilter);
+            Filter customFilter = WeaviateFilterTranslator.translateRows(spec.getFilterRows(), spec.isAnyFilter());
+            filter = WeaviateFilterTranslator.and(columnHeaderFilter, customFilter);
+        } catch (WeaviateUnsupportedFilterException e) {
+            lastQueryError = e.getMessage();
+            statistics.setQueryText("Filter not applied — " + e.getMessage());
+            return statistics;
+        }
         List<SortBy> sortBy = spec.rankedResults() ? Collections.emptyList() : buildSortBy(dataFilter, attributes);
         int limit = maxRows > 0 ? (int) Math.min(maxRows, Integer.MAX_VALUE) : 0;
         int offset = firstRow > 0 ? (int) Math.min(firstRow, Integer.MAX_VALUE) : 0;
@@ -432,16 +442,18 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
             statistics.setQueryText(queryText + " — " + msg);
             return statistics;
         } catch (Exception e) {
-            // A real failure (transport, auth, rejected filter, bad property). Previously this
-            // was swallowed and the grid rendered empty, which is indistinguishable from
-            // "no matching rows". Surface it through DBeaver's normal error path instead.
+            // A real failure (transport, auth, rejected filter, mismatched vector length).
+            //
+            // Deliberately reported without throwing DBCException: that makes DBeaver discard
+            // the result tab, and the Weaviate Query panel goes with it -- so a bad query
+            // destroys the very controls needed to correct it and retry. The failure is still
+            // loud rather than swallowed: a red banner in the panel, a workbench warning
+            // notification, "ERROR" in the query text, and a logged warning.
             String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             lastQueryError = "Query failed: " + msg;
             queryLog.warn("Weaviate query failed for collection " + getName() + ": " + msg, e);
             statistics.setQueryText(queryText + " — ERROR: " + msg);
-            throw new DBCException(
-                "Weaviate query failed for collection " + getName() + ": " + msg,
-                e, session.getExecutionContext());
+            return statistics;
         }
         statistics.setExecuteTime(System.currentTimeMillis() - startTime);
         if (monitor.isCanceled()) {
@@ -511,16 +523,16 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
                     resultSet.addRow(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName));
                     fetched++;
                 }
+                lastQueryError = null;
             } catch (Exception e) {
+                // Same reasoning as readData: report, do not throw. Falling through also
+                // delivers the rows that did arrive before the cursor failed, instead of
+                // discarding a partial page the user could still use.
                 String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
                 lastQueryError = "Query failed: " + msg;
                 queryLog.warn("Weaviate cursor read failed for collection " + getName() + ": " + msg, e);
                 statistics.setQueryText(queryText + " — ERROR: " + msg);
-                throw new DBCException(
-                    "Weaviate read failed for collection " + getName() + ": " + msg,
-                    e, session.getExecutionContext());
             }
-            lastQueryError = null;
             statistics.setExecuteTime(System.currentTimeMillis() - startTime);
             DBDDataReceiver.startFetchWorkflow(dataReceiver, session, resultSet, firstRow, fetched);
             DBDDataReceiver.fetchRowsWithStatistics(dataReceiver, session, resultSet, statistics);
@@ -633,10 +645,10 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         }
         // Must mirror readData: both the column-header filter and the query-panel rows,
         // otherwise the count disagrees with the rows on screen.
-        Filter columnHeaderFilter = WeaviateFilterTranslator.translate(dataFilter);
-        Filter customFilter = WeaviateFilterTranslator.translateRows(spec.getFilterRows(), spec.isAnyFilter());
-        Filter filter = WeaviateFilterTranslator.and(columnHeaderFilter, customFilter);
         try {
+            Filter columnHeaderFilter = WeaviateFilterTranslator.translate(dataFilter);
+            Filter customFilter = WeaviateFilterTranslator.translateRows(spec.getFilterRows(), spec.isAnyFilter());
+            Filter filter = WeaviateFilterTranslator.and(columnHeaderFilter, customFilter);
             AggregateResponse response = dataSource.getClient().collections.use(getName())
                 .aggregate.overAll(b -> {
                     b.includeTotalCount(true);
@@ -645,10 +657,11 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
                 });
             Long total = response.totalCount();
             return total == null ? -1 : total;
-        } catch (WeaviateUnsupportedFilterException e) {
-            throw new DBCException(e.getMessage(), e, session.getExecutionContext());
         } catch (Exception e) {
-            throw new DBCException("Failed to count objects in collection " + getName(), e, session.getExecutionContext());
+            // -1 is this method's existing "unknown" signal. Throwing would discard the result
+            // tab over a row count, and readData reports the same underlying failure anyway.
+            queryLog.warn("Weaviate count failed for collection " + getName() + ": " + e.getMessage(), e);
+            return -1;
         }
     }
 
