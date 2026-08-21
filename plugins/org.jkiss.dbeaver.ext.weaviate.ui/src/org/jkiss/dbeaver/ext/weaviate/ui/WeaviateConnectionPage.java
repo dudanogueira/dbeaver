@@ -147,8 +147,14 @@ public class WeaviateConnectionPage extends ConnectionPageAbstract {
     }
 
     private Composite createCloudPanel(Composite parent, SelectionListener updater) {
+        // StackLayout only shows a child it finds by identity in getChildren(), and
+        // createTitledComposite() returns the client nested inside its own host --
+        // a grandchild. So the stacked panel is this plain container, not the client.
+        Composite panel = new Composite(parent, SWT.NONE);
+        panel.setLayout(new GridLayout(1, false));
+
         Composite group = UIUtils.createTitledComposite(
-            parent, WeaviateUIMessages.connection_type_cloud, 2, GridData.FILL_HORIZONTAL, 0);
+            panel, WeaviateUIMessages.connection_type_cloud, 2, GridData.FILL_HORIZONTAL, 0);
 
         cloudUrlText = UIUtils.createLabelText(group, WeaviateUIMessages.connection_cluster_url, "");
         cloudUrlText.setMessage("https://my-cluster.weaviate.cloud");
@@ -157,7 +163,7 @@ public class WeaviateConnectionPage extends ConnectionPageAbstract {
         cloudApiKeyText = UIUtils.createLabelText(group, WeaviateUIMessages.connection_api_key, "", SWT.BORDER | SWT.PASSWORD);
         cloudApiKeyText.addModifyListener(e -> site.updateButtons());
 
-        return group;
+        return panel;
     }
 
     private Composite createCustomPanel(Composite parent, SelectionListener updater) {
@@ -242,13 +248,14 @@ public class WeaviateConnectionPage extends ConnectionPageAbstract {
         authNonePanel = new Composite(authStackParent, SWT.NONE);
         authNonePanel.setLayout(new GridLayout(1, false));
 
-        authApiKeyPanel = UIUtils.createTitledComposite(
-            authStackParent, "", 2, GridData.FILL_HORIZONTAL, 0);
+        // Plain composites, for the same identity reason as the cloud panel above.
+        authApiKeyPanel = new Composite(authStackParent, SWT.NONE);
+        authApiKeyPanel.setLayout(new GridLayout(2, false));
         customApiKeyText = UIUtils.createLabelText(authApiKeyPanel, WeaviateUIMessages.connection_api_key, "", SWT.BORDER | SWT.PASSWORD);
         customApiKeyText.addModifyListener(e -> site.updateButtons());
 
-        authUserPasswordPanel = UIUtils.createTitledComposite(
-            authStackParent, "", 2, GridData.FILL_HORIZONTAL, 0);
+        authUserPasswordPanel = new Composite(authStackParent, SWT.NONE);
+        authUserPasswordPanel.setLayout(new GridLayout(2, false));
         usernameText = UIUtils.createLabelText(authUserPasswordPanel, WeaviateUIMessages.connection_username, "");
         usernameText.addModifyListener(e -> site.updateButtons());
         passwordText = UIUtils.createLabelText(authUserPasswordPanel, WeaviateUIMessages.connection_password, "", SWT.BORDER | SWT.PASSWORD);
