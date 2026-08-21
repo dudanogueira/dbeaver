@@ -69,7 +69,36 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.exportSchema">
                 <visibleWhen checkEnabled="true"/>
             </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.readDocs">
+                <visibleWhen checkEnabled="true"/>
+            </command>
         </menuContribution>
+    </extension>
+
+    <extension point="org.eclipse.ui.commands">
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.readDocs"
+                name="Read Docs"
+                description="Open the Weaviate documentation for this item"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commandImages">
+        <!-- The driver icon is already a 16x16 PNG in the model bundle, which this
+             bundle requires, so the docs link is marked as going to Weaviate's docs
+             without shipping another asset. -->
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.readDocs"
+               icon="platform:/plugin/org.jkiss.dbeaver.ext.weaviate/icons/weaviate.png"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <!-- No <enabledWhen>: the condition depends on the navigator folder's meta id,
+             which no built-in property tester exposes, and a tester shipped from this
+             lazy bundle would evaluate as NOT_LOADED before the bundle is activated.
+             WeaviateReadDocsHandler.setEnabled() computes it instead. -->
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.readDocs"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateReadDocsHandler"/>
     </extension>
 
 </plugin>

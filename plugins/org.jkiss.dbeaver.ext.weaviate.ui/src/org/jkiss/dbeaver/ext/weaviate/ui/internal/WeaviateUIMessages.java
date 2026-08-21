@@ -89,6 +89,10 @@ public final class WeaviateUIMessages extends NLS {
     public static String export_schema_title;
     public static String export_schema_error;
 
+    // Documentation links
+    public static String docs_read_docs_on;
+
+
     private WeaviateUIMessages() {
     }
 }

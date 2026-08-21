@@ -15,5 +15,6 @@ Require-Bundle: org.jkiss.dbeaver.model,
  org.eclipse.ui,
  org.eclipse.ui.workbench,
  org.eclipse.jface,
- org.eclipse.core.commands
+ org.eclipse.core.commands,
+ org.eclipse.core.expressions
 Automatic-Module-Name: org.jkiss.dbeaver.ext.weaviate.ui

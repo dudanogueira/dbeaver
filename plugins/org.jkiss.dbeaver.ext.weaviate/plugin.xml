@@ -57,7 +57,7 @@
                              below are limited to what the bundled client can model; this one is
                              built from the raw JSON, so nothing is hidden. -->
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateJsonNode"
-                                label="Definition"
+                                id="definition" label="Definition"
                                 icon="#folder_info"
                                 description="Full collection definition as stored by the server">
                             <items label="Entry" itemLabel="Entry"
@@ -68,14 +68,14 @@
                             </items>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty"
-                                label="Properties"
+                                id="properties" label="Properties"
                                 icon="#columns"
                                 description="Collection properties">
                             <items label="Property" itemLabel="Property"
                                    path="property" property="attributes"/>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorizer"
-                                label="Vectorizers"
+                                id="vectorizers" label="Vectorizers"
                                 icon="#folder_admin"
                                 description="Named vector configurations">
                             <items label="Vectorizer" itemLabel="Vectorizer"
@@ -88,7 +88,7 @@
                             </items>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateReranker"
-                                label="Rerankers"
+                                id="rerankers" label="Rerankers"
                                 icon="#folder_admin"
                                 description="Reranker modules">
                             <items label="Reranker" itemLabel="Reranker"
@@ -101,32 +101,32 @@
                             </items>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
-                                label="Generative" icon="#folder_admin" description="Generative module">
+                                id="generative" label="Generative" icon="#folder_admin" description="Generative module">
                             <items label="Field" itemLabel="Field"
                                    path="generativeField" property="generativeFields"/>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
-                                label="Replication" icon="#folder_info" description="Replication settings">
+                                id="replication" label="Replication" icon="#folder_info" description="Replication settings">
                             <items label="Field" itemLabel="Field"
                                    path="replicationField" property="replicationFields"/>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
-                                label="Sharding" icon="#folder_info" description="Sharding settings">
+                                id="sharding" label="Sharding" icon="#folder_info" description="Sharding settings">
                             <items label="Field" itemLabel="Field"
                                    path="shardingField" property="shardingFields"/>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
-                                label="Multi-Tenancy" icon="#folder_info" description="Multi-tenancy settings">
+                                id="multiTenancy" label="Multi-Tenancy" icon="#folder_info" description="Multi-tenancy settings">
                             <items label="Field" itemLabel="Field"
                                    path="multiTenancyField" property="multiTenancyFields"/>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
-                                label="Inverted Index" icon="#folder_info" description="Inverted index settings">
+                                id="invertedIndex" label="Inverted Index" icon="#folder_info" description="Inverted index settings">
                             <items label="Field" itemLabel="Field"
                                    path="invertedIndexField" property="invertedIndexFields"/>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
-                                label="Object TTL" icon="#folder_info" description="Object TTL settings">
+                                id="objectTtl" label="Object TTL" icon="#folder_info" description="Object TTL settings">
                             <items label="Field" itemLabel="Field"
                                    path="objectTtlField" property="objectTtlFields"/>
                         </folder>
