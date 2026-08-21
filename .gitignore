@@ -65,3 +65,8 @@ $RECYCLE.BIN/
 # Mac crap
 .DS_Store
 test/**/workspace/
+
+# Claude Code local working directory. Not just settings: it holds the DBeaver
+# dev workspace (connection configs and credentials-config.json) that the local
+# build is launched against, so the whole directory stays out of the repo.
+/.claude/
