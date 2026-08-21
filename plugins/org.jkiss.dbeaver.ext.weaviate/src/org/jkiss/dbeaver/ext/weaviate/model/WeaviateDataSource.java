@@ -202,11 +202,17 @@ public class WeaviateDataSource extends AbstractDataSource
         if (cloudUrl == null || cloudUrl.isEmpty()) {
             throw new DBException("Weaviate Cloud URL is required");
         }
-        String apiKey = cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY);
+        String apiKey = readApiKey(cfg);
         if (apiKey == null || apiKey.isEmpty()) {
             throw new DBException("API Key is required for Weaviate Cloud connections");
         }
-        client = WeaviateClient.connectToWeaviateCloud(cloudUrl, apiKey);
+        Map<String, String> modelHeaders = WeaviateModelHeaders.resolve(cfg);
+        client = WeaviateClient.connectToWeaviateCloud(cloudUrl, apiKey, c -> {
+            if (!modelHeaders.isEmpty()) {
+                c.setHeaders(modelHeaders);
+            }
+            return c;
+        });
     }
 
     private void connectToCustom(@NotNull DBPConnectionConfiguration cfg) throws DBException {
@@ -233,6 +239,8 @@ public class WeaviateDataSource extends AbstractDataSource
         final String finalGrpcHost = grpcHost;
         final int finalGrpcPort = grpcPort;
 
+        final Map<String, String> modelHeaders = WeaviateModelHeaders.resolve(cfg);
+
         client = WeaviateClient.connectToCustom(c -> {
             c.scheme(finalScheme);
             c.httpHost(finalHttpHost);
@@ -241,6 +249,9 @@ public class WeaviateDataSource extends AbstractDataSource
             c.grpcPort(finalGrpcPort);
             if (auth != null) {
                 c.authentication(auth);
+            }
+            if (!modelHeaders.isEmpty()) {
+                c.setHeaders(modelHeaders);
             }
             return c;
         });
@@ -270,17 +281,34 @@ public class WeaviateDataSource extends AbstractDataSource
         return port;
     }
 
+    /**
+     * Read the Weaviate API key, preferring the secrets store.
+     * <p>
+     * The key used to live in a provider property, which is serialized in clear text into
+     * {@code data-sources.json}. It now lives in an auth property (secrets), but connections
+     * saved by an older build still carry the plaintext one, so that location stays readable.
+     * It is rewritten to the secure location the next time the connection is saved.
+     */
+    @Nullable
+    static String readApiKey(@NotNull DBPConnectionConfiguration cfg) {
+        String secure = cfg.getAuthProperty(WeaviateConstants.PROP_API_KEY);
+        if (secure != null && !secure.isEmpty()) {
+            return secure;
+        }
+        return cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY);
+    }
+
     @Nullable
     private Authentication buildAuthentication(@NotNull DBPConnectionConfiguration cfg) {
         String authType = cfg.getProviderProperty(WeaviateConstants.PROP_AUTH_TYPE);
         if (authType == null || authType.isEmpty()) {
             // Backwards-compatible: if API key is set, use API key auth
-            String apiKey = cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY);
+            String apiKey = readApiKey(cfg);
             return (apiKey != null && !apiKey.isEmpty()) ? Authentication.apiKey(apiKey) : null;
         }
         switch (authType) {
             case WeaviateConstants.AUTH_API_KEY: {
-                String apiKey = cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY);
+                String apiKey = readApiKey(cfg);
                 return (apiKey != null && !apiKey.isEmpty()) ? Authentication.apiKey(apiKey) : null;
             }
             case WeaviateConstants.AUTH_USER_PASSWORD: {
@@ -437,7 +465,7 @@ public class WeaviateDataSource extends AbstractDataSource
         String authType = cfg.getProviderProperty(WeaviateConstants.PROP_AUTH_TYPE);
         boolean cloud = WeaviateConstants.CONN_TYPE_CLOUD.equals(
             cfg.getProviderProperty(WeaviateConstants.PROP_CONNECTION_TYPE));
-        String apiKey = cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY);
+        String apiKey = readApiKey(cfg);
 
         if (cloud || WeaviateConstants.AUTH_API_KEY.equals(authType)
             || (authType == null && apiKey != null && !apiKey.isEmpty())) {

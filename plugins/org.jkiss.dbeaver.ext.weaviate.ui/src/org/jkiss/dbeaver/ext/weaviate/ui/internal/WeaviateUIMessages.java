@@ -92,6 +92,20 @@ public final class WeaviateUIMessages extends NLS {
     // Documentation links
     public static String docs_read_docs_on;
 
+    // Model provider API keys
+    public static String model_keys_title;
+    public static String model_keys_description;
+    public static String model_keys_providers_group;
+    public static String model_keys_custom_group;
+    public static String model_keys_header_column;
+    public static String model_keys_value_column;
+    public static String model_keys_add;
+    public static String model_keys_remove;
+    public static String model_keys_tooltip_header;
+    public static String model_keys_tooltip_env;
+    public static String model_keys_tooltip_env_active;
+    public static String model_keys_tooltip_env_none;
+    public static String model_keys_env_hint;
 
     private WeaviateUIMessages() {
     }

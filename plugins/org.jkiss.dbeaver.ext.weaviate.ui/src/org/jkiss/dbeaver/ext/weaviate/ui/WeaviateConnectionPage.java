@@ -16,6 +16,7 @@
  */
 package org.jkiss.dbeaver.ext.weaviate.ui;
 
+import org.eclipse.jface.dialogs.IDialogPage;
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.StackLayout;
@@ -31,8 +32,11 @@ import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Text;
 import org.jkiss.dbeaver.ext.weaviate.WeaviateConstants;
 import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
+import org.jkiss.code.NotNull;
+import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.model.DBPDataSourceContainer;
 import org.jkiss.dbeaver.model.connection.DBPConnectionConfiguration;
+import org.jkiss.dbeaver.ui.IDialogPageProvider;
 import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ui.dialogs.connection.ConnectionPageAbstract;
 import org.jkiss.utils.CommonUtils;
@@ -41,7 +45,7 @@ import java.net.URL;
 
 import java.util.Locale;
 
-public class WeaviateConnectionPage extends ConnectionPageAbstract {
+public class WeaviateConnectionPage extends ConnectionPageAbstract implements IDialogPageProvider {
 
     private static final ImageDescriptor LOGO = createLogo();
 
@@ -336,7 +340,7 @@ public class WeaviateConnectionPage extends ConnectionPageAbstract {
         authTypeCombo.select(authIndex);
         showAuthPanel(authIndex);
 
-        String apiKey = CommonUtils.notEmpty(cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY));
+        String apiKey = CommonUtils.notEmpty(readApiKey(cfg));
         cloudApiKeyText.setText(isCloud ? apiKey : "");
         customApiKeyText.setText(isCloud ? "" : apiKey);
 
@@ -344,6 +348,39 @@ public class WeaviateConnectionPage extends ConnectionPageAbstract {
         passwordText.setText(CommonUtils.notEmpty(cfg.getUserPassword()));
 
         if (isCloud) showCloudPanel(); else showCustomPanel();
+    }
+
+    @Nullable
+    @Override
+    public IDialogPage[] getDialogPages(boolean extrasOnly, boolean forceCreate) {
+        return new IDialogPage[]{
+            new WeaviateModelKeysPage()
+        };
+    }
+
+    /**
+     * Read the API key, preferring the secrets store over the legacy provider property.
+     * Connections saved by an older build still have it in clear text; see {@link #writeApiKey}.
+     */
+    @Nullable
+    private static String readApiKey(@NotNull DBPConnectionConfiguration cfg) {
+        String secure = cfg.getAuthProperty(WeaviateConstants.PROP_API_KEY);
+        if (!CommonUtils.isEmpty(secure)) {
+            return secure;
+        }
+        return cfg.getProviderProperty(WeaviateConstants.PROP_API_KEY);
+    }
+
+    /**
+     * Write the API key to the secrets store and clear the legacy plaintext copy.
+     * <p>
+     * Provider properties are serialized verbatim into {@code data-sources.json}, so leaving a
+     * copy behind would keep the key on disk in clear text even after this migration. Saving
+     * an existing connection is what performs the migration.
+     */
+    private static void writeApiKey(@NotNull DBPConnectionConfiguration cfg, @Nullable String value) {
+        cfg.setAuthProperty(WeaviateConstants.PROP_API_KEY, CommonUtils.isEmpty(value) ? null : value);
+        cfg.setProviderProperty(WeaviateConstants.PROP_API_KEY, null);
     }
 
     @Override
@@ -362,7 +399,7 @@ public class WeaviateConnectionPage extends ConnectionPageAbstract {
 
         if (isCloud) {
             cfg.setProviderProperty(WeaviateConstants.PROP_CLOUD_URL, cloudUrlText.getText().trim());
-            cfg.setProviderProperty(WeaviateConstants.PROP_API_KEY, cloudApiKeyText.getText());
+            writeApiKey(cfg, cloudApiKeyText.getText());
             cfg.setProviderProperty(WeaviateConstants.PROP_AUTH_TYPE, WeaviateConstants.AUTH_API_KEY);
         } else {
             cfg.setProviderProperty(WeaviateConstants.PROP_CLOUD_URL, "");
@@ -382,15 +419,15 @@ public class WeaviateConnectionPage extends ConnectionPageAbstract {
             cfg.setProviderProperty(WeaviateConstants.PROP_AUTH_TYPE, authType);
 
             if (authIndex == 1) {
-                cfg.setProviderProperty(WeaviateConstants.PROP_API_KEY, customApiKeyText.getText());
+                writeApiKey(cfg, customApiKeyText.getText());
                 cfg.setUserName("");
                 cfg.setUserPassword("");
             } else if (authIndex == 2) {
-                cfg.setProviderProperty(WeaviateConstants.PROP_API_KEY, "");
+                writeApiKey(cfg, null);
                 cfg.setUserName(usernameText.getText().trim());
                 cfg.setUserPassword(passwordText.getText());
             } else {
-                cfg.setProviderProperty(WeaviateConstants.PROP_API_KEY, "");
+                writeApiKey(cfg, null);
                 cfg.setUserName("");
                 cfg.setUserPassword("");
             }
