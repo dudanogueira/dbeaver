@@ -1434,6 +1434,14 @@ public class ResultSetViewer extends Viewer
         settings.activePanelId = panelId;
         PanelInfo panel = activePanels.get(panelId);
         if (panel != null) {
+            // Bring the tab to the front as well. activatePanel() already does this on the path
+            // where the panel exists, but the path that creates one only recorded the active id,
+            // so a freshly created panel was activated behind whatever tab was selected. Callers
+            // that arrive from a tab click are unaffected: the tab is already selected.
+            CTabItem panelTab = getPanelTab(panelId);
+            if (panelTab != null && panelFolder.getSelection() != panelTab) {
+                panelFolder.setSelection(panelTab);
+            }
             panel.panel.activatePanel();
             updatePanelActions();
             savePresentationSettings();
