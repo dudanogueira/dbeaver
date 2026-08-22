@@ -17,12 +17,16 @@
 package org.jkiss.dbeaver.ext.weaviate.model;
 
 public enum WeaviateQueryMode {
+    // Declaration order is the order of the mode dropdown: the panel populates it from values()
+    // and maps the selected index straight back. Ordered by how often they are reached for --
+    // plain fetch, then hybrid as the usual first search, then the text-driven ones -- rather
+    // than alphabetically or by internal grouping.
     FETCH("Fetch"),
-    BM25("BM25"),
+    HYBRID("Hybrid"),
     NEAR_TEXT("Near Text"),
+    BM25("BM25"),
     NEAR_VECTOR("Near Vector"),
-    NEAR_OBJECT("Near Object"),
-    HYBRID("Hybrid");
+    NEAR_OBJECT("Near Object");
 
     private final String label;
 
