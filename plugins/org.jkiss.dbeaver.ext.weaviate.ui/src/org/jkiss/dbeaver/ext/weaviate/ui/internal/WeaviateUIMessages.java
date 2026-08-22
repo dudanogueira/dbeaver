@@ -138,6 +138,10 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_autocut;
     public static String query_autocut_tip;
 
+    // Explain score
+    public static String query_explain_score;
+    public static String query_explain_score_tip;
+
     private WeaviateUIMessages() {
     }
 }

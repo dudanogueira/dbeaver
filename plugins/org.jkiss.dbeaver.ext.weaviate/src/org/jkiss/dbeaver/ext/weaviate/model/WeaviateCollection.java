@@ -461,7 +461,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (spec.getMode().hasScore()) {
             columnNames.add(WeaviateColumns.SCORE);
         }
-        if (spec.getMode().hasExplainScore()) {
+        if (spec.getMode().hasExplainScore() && spec.isExplainScore()) {
             columnNames.add(WeaviateColumns.EXPLAIN_SCORE);
         }
         if (spec.getMode().hasDistance()) {
@@ -552,7 +552,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         try (LocalStatement statement = new LocalStatement(session, queryText)) {
             statement.setStatementSource(source);
             LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
-            populateColumns(resultSet, attributes, vectorNames, singleVector, spec.getMode());
+            populateColumns(resultSet, attributes, vectorNames, singleVector, spec.getMode(), spec.isExplainScore());
             String defaultVectorName = singleVector && !vectorNames.isEmpty() ? vectorNames.get(0) : null;
             for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
                 resultSet.addRow(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName));
@@ -593,7 +593,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         try (LocalStatement statement = new LocalStatement(session, queryText)) {
             statement.setStatementSource(source);
             LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
-            populateColumns(resultSet, attributes, vectorNames, singleVector, spec.getMode());
+            populateColumns(resultSet, attributes, vectorNames, singleVector, spec.getMode(), spec.isExplainScore());
             try {
                 Paginator<Map<String, Object>> paginator =
                     handle(spec.getTenant()).paginate(b -> {
@@ -645,7 +645,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 List<String> queryProperties = spec.getQueryProperties();
                 return query.bm25(text, b -> {
                     applyCommon(b, spec, filter, limit, offset);
-                    b.returnMetadata(Metadata.SCORE, Metadata.EXPLAIN_SCORE);
+                    b.returnMetadata(scoreMetadata(spec));
                     if (!queryProperties.isEmpty()) b.queryProperties(queryProperties);
                     return b;
                 });
@@ -696,7 +696,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 WeaviateHybridFusion fusion = spec.getFusionType();
                 return query.hybrid(text, b -> {
                     applyCommon(b, spec, filter, limit, offset);
-                    b.returnMetadata(Metadata.SCORE, Metadata.EXPLAIN_SCORE);
+                    b.returnMetadata(scoreMetadata(spec));
                     if (alpha != null) b.alpha(alpha);
                     if (fusion != null) b.fusionType(fusion.toClientType());
                     return b;
@@ -729,6 +729,17 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (autoCut != null && autoCut > 0 && spec.getMode().supportsAutoCut()) {
             b.autolimit(autoCut);
         }
+    }
+
+    /**
+     * Metadata to request for a scored query. The explanation is only asked for when it will be
+     * shown -- producing it is extra server-side work for a column nobody looked at.
+     */
+    @NotNull
+    private static Metadata[] scoreMetadata(@NotNull WeaviateQuerySpec spec) {
+        return spec.isExplainScore()
+            ? new Metadata[]{Metadata.SCORE, Metadata.EXPLAIN_SCORE}
+            : new Metadata[]{Metadata.SCORE};
     }
 
     @NotNull
@@ -781,7 +792,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         @NotNull List<WeaviateProperty> attributes,
         @NotNull List<String> vectorNames,
         boolean singleVector,
-        @NotNull WeaviateQueryMode mode
+        @NotNull WeaviateQueryMode mode,
+        boolean explainScore
     ) {
         rs.addColumn(WeaviateColumns.UUID, DBPDataKind.STRING);
         for (WeaviateProperty p : attributes) {
@@ -796,7 +808,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (mode.hasScore()) {
             rs.addColumn(WeaviateColumns.SCORE, DBPDataKind.NUMERIC);
         }
-        if (mode.hasExplainScore()) {
+        if (mode.hasExplainScore() && explainScore) {
             rs.addColumn(WeaviateColumns.EXPLAIN_SCORE, DBPDataKind.STRING);
         }
         if (mode.hasDistance()) {

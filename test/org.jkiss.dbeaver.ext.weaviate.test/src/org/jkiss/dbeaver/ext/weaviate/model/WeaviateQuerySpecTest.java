@@ -156,4 +156,195 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
         Assertions.assertEquals(0.25f, spec.getDistance(), 0.0001f);
     }
 
+    /**
+     * Ranked modes skip sorting and report an unknown row count, so a new mode that forgot to
+     * be ranked would silently get plain-fetch behaviour.
+     */
+    @Test
+    public void everyNonFetchModeIsRanked() {
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            boolean ranked = WeaviateQuerySpec.builder(mode).build().rankedResults();
+            Assertions.assertEquals(mode != WeaviateQueryMode.FETCH, ranked, mode + " rankedResults");
+        }
+    }
+
+    @Test
+    public void everyModeHasADistinctLabel() {
+        java.util.Set<String> labels = new java.util.HashSet<>();
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            Assertions.assertTrue(labels.add(mode.getLabel()), "duplicate label: " + mode.getLabel());
+            Assertions.assertFalse(mode.getLabel().isBlank(), mode + " has no label");
+        }
+    }
+
+    @Test
+    public void scoreIsKeywordModesOnly() {
+        Assertions.assertTrue(WeaviateQueryMode.BM25.hasScore());
+        Assertions.assertTrue(WeaviateQueryMode.HYBRID.hasScore());
+        Assertions.assertFalse(WeaviateQueryMode.NEAR_TEXT.hasScore());
+        Assertions.assertFalse(WeaviateQueryMode.NEAR_VECTOR.hasScore());
+        Assertions.assertFalse(WeaviateQueryMode.NEAR_OBJECT.hasScore());
+        Assertions.assertFalse(WeaviateQueryMode.FETCH.hasScore());
+    }
+
+    @Test
+    public void distanceIsNearModesOnly() {
+        Assertions.assertTrue(WeaviateQueryMode.NEAR_TEXT.hasDistance());
+        Assertions.assertTrue(WeaviateQueryMode.NEAR_VECTOR.hasDistance());
+        Assertions.assertTrue(WeaviateQueryMode.NEAR_OBJECT.hasDistance());
+        Assertions.assertFalse(WeaviateQueryMode.BM25.hasDistance());
+        Assertions.assertFalse(WeaviateQueryMode.FETCH.hasDistance());
+    }
+
+    /**
+     * Hybrid reports one fused score. Showing a distance beside it would invite comparing two
+     * numbers that do not mean the same thing.
+     */
+    @Test
+    public void hybridReportsScoreNotDistance() {
+        Assertions.assertTrue(WeaviateQueryMode.HYBRID.hasScore());
+        Assertions.assertFalse(WeaviateQueryMode.HYBRID.hasDistance());
+    }
+
+    /**
+     * A plain fetch is not ranked, so neither metric exists for it.
+     */
+    @Test
+    public void fetchHasNoRelevanceColumns() {
+        Assertions.assertFalse(WeaviateQueryMode.FETCH.hasScore());
+        Assertions.assertFalse(WeaviateQueryMode.FETCH.hasDistance());
+    }
+
+    /**
+     * Every ranked mode must report something, or its results are ordered by a number the user
+     * cannot see.
+     */
+    @Test
+    public void everyRankedModeExposesAMetric() {
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            if (mode == WeaviateQueryMode.FETCH) {
+                continue;
+            }
+            Assertions.assertTrue(mode.hasScore() || mode.hasDistance(),
+                mode + " is ranked but exposes neither score nor distance");
+        }
+    }
+
+    @Test
+    public void autoCutIsCarriedAndOptional() {
+        WeaviateQuerySpec off = WeaviateQuerySpec.builder(WeaviateQueryMode.HYBRID).query("q").build();
+        Assertions.assertNull(off.getAutoCut(), "autocut must default to off");
+
+        WeaviateQuerySpec on = WeaviateQuerySpec.builder(WeaviateQueryMode.HYBRID)
+            .query("q").autoCut(3).build();
+        Assertions.assertEquals(3, on.getAutoCut());
+    }
+
+    @Test
+    public void withTenantPreservesAutoCut() {
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.BM25)
+            .query("q").autoCut(2).build().withTenant("acme");
+        Assertions.assertEquals("acme", spec.getTenant());
+        Assertions.assertEquals(2, spec.getAutoCut(), "withTenant must not drop other settings");
+        Assertions.assertEquals("q", spec.getQuery());
+    }
+
+    /**
+     * The full per-mode capability matrix, so a new mode cannot quietly inherit the wrong
+     * columns or options from a fallthrough.
+     */
+    @Test
+    public void everyModeDeclaresItsOwnCapabilities() {
+        record Expected(WeaviateQueryMode mode, boolean score, boolean distance,
+                        boolean explain, boolean autoCut) { }
+        java.util.List<Expected> matrix = java.util.List.of(
+            new Expected(WeaviateQueryMode.FETCH, false, false, false, false),
+            new Expected(WeaviateQueryMode.BM25, true, false, true, true),
+            new Expected(WeaviateQueryMode.NEAR_TEXT, false, true, false, true),
+            new Expected(WeaviateQueryMode.NEAR_VECTOR, false, true, false, true),
+            new Expected(WeaviateQueryMode.NEAR_OBJECT, false, true, false, true),
+            new Expected(WeaviateQueryMode.HYBRID, true, false, true, true));
+
+        Assertions.assertEquals(WeaviateQueryMode.values().length, matrix.size(),
+            "a mode was added without deciding its score/distance/explain/autocut behaviour");
+        for (Expected e : matrix) {
+            Assertions.assertEquals(e.score(), e.mode().hasScore(), e.mode() + ".hasScore");
+            Assertions.assertEquals(e.distance(), e.mode().hasDistance(), e.mode() + ".hasDistance");
+            Assertions.assertEquals(e.explain(), e.mode().hasExplainScore(), e.mode() + ".hasExplainScore");
+            Assertions.assertEquals(e.autoCut(), e.mode().supportsAutoCut(), e.mode() + ".supportsAutoCut");
+        }
+    }
+
+    /**
+     * An explanation without a score to explain would be a column of orphaned text.
+     */
+    @Test
+    public void explainScoreImpliesScore() {
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            if (mode.hasExplainScore()) {
+                Assertions.assertTrue(mode.hasScore(), mode + " explains a score it does not report");
+            }
+        }
+    }
+
+    @Test
+    public void fetchSupportsNoAutoCut() {
+        Assertions.assertFalse(WeaviateQueryMode.FETCH.supportsAutoCut());
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            if (mode != WeaviateQueryMode.FETCH) {
+                Assertions.assertTrue(mode.supportsAutoCut(), mode + " is ranked, so autocut applies");
+            }
+        }
+    }
+
+    /**
+     * The dropdown is populated from values() and the selected index is mapped straight back,
+     * so declaration order is user-facing and reordering it silently changes the UI.
+     */
+    @Test
+    public void modeOrderMatchesTheDropdown() {
+        Assertions.assertEquals(
+            java.util.List.of(
+                WeaviateQueryMode.FETCH,
+                WeaviateQueryMode.HYBRID,
+                WeaviateQueryMode.NEAR_TEXT,
+                WeaviateQueryMode.BM25,
+                WeaviateQueryMode.NEAR_VECTOR,
+                WeaviateQueryMode.NEAR_OBJECT),
+            java.util.List.of(WeaviateQueryMode.values()));
+    }
+
+    @Test
+    public void explainScoreIsOffByDefault() {
+        Assertions.assertFalse(
+            WeaviateQuerySpec.builder(WeaviateQueryMode.BM25).query("q").build().isExplainScore());
+        Assertions.assertFalse(
+            WeaviateQuerySpec.builder(WeaviateQueryMode.HYBRID).query("q").build().isExplainScore());
+    }
+
+    @Test
+    public void explainScoreIsCarriedWhenRequested() {
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.HYBRID)
+            .query("q").explainScore(true).build();
+        Assertions.assertTrue(spec.isExplainScore());
+        Assertions.assertTrue(spec.withTenant("acme").isExplainScore(),
+            "withTenant must not drop the explain-score choice");
+    }
+
+    /**
+     * Only modes that can explain a score should ever be asked to. The flag being set on another
+     * mode must stay inert rather than producing an empty column.
+     */
+    @Test
+    public void explainScoreOnlyAppliesWhereTheModeSupportsIt() {
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            boolean requested = WeaviateQuerySpec.builder(mode).explainScore(true).build().isExplainScore();
+            Assertions.assertTrue(requested, mode + " should carry the request verbatim");
+            if (!mode.hasExplainScore()) {
+                Assertions.assertFalse(mode.hasScore() && mode != WeaviateQueryMode.FETCH
+                        && mode.hasExplainScore(),
+                    mode + " cannot explain a score");
+            }
+        }
+    }
 }

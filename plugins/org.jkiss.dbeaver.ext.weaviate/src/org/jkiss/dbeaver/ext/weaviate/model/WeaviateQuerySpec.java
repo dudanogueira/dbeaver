@@ -35,6 +35,8 @@ public final class WeaviateQuerySpec {
     private final String tenant;
     /** Autocut groups, or null/0 for off. See {@link #getAutoCut()}. */
     private final Integer autoCut;
+    /** Whether to ask for and show the score explanation. Off unless requested. */
+    private final boolean explainScore;
     private final Float alpha;
     private final List<String> queryProperties;
     private final Float distance;
@@ -50,6 +52,7 @@ public final class WeaviateQuerySpec {
         this.objectId = b.objectId;
         this.tenant = b.tenant;
         this.autoCut = b.autoCut;
+        this.explainScore = b.explainScore;
         this.alpha = b.alpha;
         this.queryProperties = b.queryProperties == null ? Collections.emptyList() : List.copyOf(b.queryProperties);
         this.distance = b.distance;
@@ -166,6 +169,16 @@ public final class WeaviateQuerySpec {
         return autoCut;
     }
 
+    /**
+     * Whether the score explanation was asked for.
+     * <p>
+     * Off by default: it is a long string of per-term arithmetic that pushes the actual
+     * properties off screen, and it costs extra work server-side to produce.
+     */
+    public boolean isExplainScore() {
+        return explainScore;
+    }
+
     @Nullable
     public float[] getVector() {
         return vector;
@@ -219,6 +232,7 @@ public final class WeaviateQuerySpec {
             .includeVector(includeVector)
             .tenant(tenant)
             .autoCut(autoCut)
+            .explainScore(explainScore)
             .build();
     }
 
@@ -233,6 +247,7 @@ public final class WeaviateQuerySpec {
         private String objectId;
         private String tenant;
         private Integer autoCut;
+        private boolean explainScore;
         private Float alpha;
         private List<String> queryProperties;
         private Float distance;
@@ -267,6 +282,11 @@ public final class WeaviateQuerySpec {
 
         public Builder autoCut(@Nullable Integer autoCut) {
             this.autoCut = autoCut;
+            return this;
+        }
+
+        public Builder explainScore(boolean explainScore) {
+            this.explainScore = explainScore;
             return this;
         }
 
