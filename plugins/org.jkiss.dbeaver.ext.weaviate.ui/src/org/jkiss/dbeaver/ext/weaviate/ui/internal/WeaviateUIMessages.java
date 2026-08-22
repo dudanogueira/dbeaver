@@ -119,6 +119,15 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_tenant_tip;
     public static String query_tenant_none;
 
+    // Tenant selection
+    public static String tenant_dialog_title;
+    public static String tenant_dialog_title_plain;
+    public static String tenant_dialog_prompt;
+    public static String tenant_dialog_filter_hint;
+    public static String tenant_dialog_count;
+    public static String tenant_not_multi_tenant;
+    public static String tenant_list_failed;
+    public static String tenant_selected;
 
     // Hybrid alpha slider
     public static String query_alpha_keyword_end;

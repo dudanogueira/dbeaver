@@ -72,6 +72,9 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.readDocs">
                 <visibleWhen checkEnabled="true"/>
             </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant">
+                <visibleWhen checkEnabled="true"/>
+            </command>
         </menuContribution>
     </extension>
 
@@ -99,6 +102,38 @@
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.readDocs"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateReadDocsHandler"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commands">
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant"
+                name="Select Tenant..."
+                description="Choose which tenant's data the Data tab shows"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateSelectTenantHandler">
+            <enabledWhen>
+                <with variable="selection">
+                    <count value="1"/>
+                    <iterate operator="and">
+                        <adapt type="org.jkiss.dbeaver.model.struct.DBSObject">
+                            <instanceof value="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"/>
+                        </adapt>
+                    </iterate>
+                </with>
+            </enabledWhen>
+        </handler>
+    </extension>
+
+    <!-- Registers the searchable tenant picker with the model bundle. The read path may need
+         to ask for a tenant before any Weaviate UI has been opened, so this cannot wait for a
+         page or panel to load. -->
+    <extension point="org.eclipse.ui.startup">
+        <startup class="org.jkiss.dbeaver.ext.weaviate.ui.WeaviateUIStartup"/>
     </extension>
 
 </plugin>
