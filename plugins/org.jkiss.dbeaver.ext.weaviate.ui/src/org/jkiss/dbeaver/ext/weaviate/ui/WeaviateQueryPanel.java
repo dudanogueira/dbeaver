@@ -76,12 +76,17 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private IResultSetPresentation presentation;
 
     private Combo modeCombo;
+    /** Mode the fields currently show, so switching can carry the query text across. */
+    private WeaviateQueryMode displayedMode;
     /** One autocut control per mode that supports it; a plain fetch has none. */
     private final Map<WeaviateQueryMode, Spinner> autoCutSpinners = new EnumMap<>(WeaviateQueryMode.class);
+    /** One explain-score toggle per mode that can produce an explanation. */
+    private final Map<WeaviateQueryMode, Button> explainScoreChecks = new EnumMap<>(WeaviateQueryMode.class);
     private Composite tenantRow;
     private Label tenantLabel;
     private Combo tenantCombo;
-    private Button includeVectorCheck;
+    /** One include-vectors toggle per mode, beside that mode's other result options. */
+    private final Map<WeaviateQueryMode, Button> includeVectorChecks = new EnumMap<>(WeaviateQueryMode.class);
     private StackLayout fieldsLayout;
     private Composite fieldsHolder;
     private Composite emptyComposite;
@@ -127,7 +132,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         root.setLayout(rootLayout);
 
         Composite topRow = new Composite(root, SWT.NONE);
-        GridLayout topLayout = new GridLayout(5, false);
+        GridLayout topLayout = new GridLayout(4, false);
         topLayout.marginWidth = 0;
         topLayout.marginHeight = 0;
         topRow.setLayout(topLayout);
@@ -183,10 +188,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 runQuery();
             }
         });
-
-        includeVectorCheck = new Button(topRow, SWT.CHECK);
-        includeVectorCheck.setText(WeaviateUIMessages.query_include_vector);
-        includeVectorCheck.setToolTipText(WeaviateUIMessages.query_include_vector_tip);
 
         Button resetButton = new Button(topRow, SWT.PUSH);
         resetButton.setText(WeaviateUIMessages.query_reset);
@@ -250,6 +251,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         c.setLayout(new GridLayout(1, false));
         Label l = new Label(c, SWT.WRAP);
         l.setText(WeaviateUIMessages.query_fetch_hint);
+        addIncludeVectorField(c, WeaviateQueryMode.FETCH);
         l.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
         return c;
     }
@@ -262,6 +264,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         bm25QueryField = new Text(c, SWT.BORDER);
         bm25QueryField.setLayoutData(fillFieldData());
         bm25QueryField.setMessage(WeaviateUIMessages.query_search_hint);
+        runOnEnter(bm25QueryField);
 
         Label lbl = new Label(c, SWT.NONE);
         lbl.setText(WeaviateUIMessages.query_properties);
@@ -271,6 +274,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         lgd.heightHint = 80;
         bm25PropertiesList.setLayoutData(lgd);
         bm25PropertiesList.setToolTipText(WeaviateUIMessages.query_bm25_properties_tip);
+        addIncludeVectorField(c, WeaviateQueryMode.BM25);
+        addExplainScoreField(c, WeaviateQueryMode.BM25);
         addAutoCutField(c, WeaviateQueryMode.BM25);
         return c;
     }
@@ -283,11 +288,14 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         nearTextQueryField = new Text(c, SWT.BORDER);
         nearTextQueryField.setLayoutData(fillFieldData());
         nearTextQueryField.setMessage(WeaviateUIMessages.query_search_hint);
+        runOnEnter(nearTextQueryField);
 
         new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_distance);
         nearTextDistanceField = new Text(c, SWT.BORDER);
         nearTextDistanceField.setLayoutData(fillFieldData());
         nearTextDistanceField.setMessage(WeaviateUIMessages.query_distance_hint);
+        runOnEnter(nearTextDistanceField);
+        addIncludeVectorField(c, WeaviateQueryMode.NEAR_TEXT);
         addAutoCutField(c, WeaviateQueryMode.NEAR_TEXT);
         return c;
     }
@@ -309,6 +317,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         nearVectorDistanceField = new Text(c, SWT.BORDER);
         nearVectorDistanceField.setLayoutData(fillFieldData());
         nearVectorDistanceField.setMessage(WeaviateUIMessages.query_distance_hint);
+        runOnEnter(nearVectorDistanceField);
+        addIncludeVectorField(c, WeaviateQueryMode.NEAR_VECTOR);
         addAutoCutField(c, WeaviateQueryMode.NEAR_VECTOR);
         return c;
     }
@@ -322,11 +332,14 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         nearObjectField.setLayoutData(fillFieldData());
         nearObjectField.setMessage(WeaviateUIMessages.query_object_id_hint);
         nearObjectField.setToolTipText(WeaviateUIMessages.query_object_id_tip);
+        runOnEnter(nearObjectField);
 
         new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_distance);
         nearObjectDistanceField = new Text(c, SWT.BORDER);
         nearObjectDistanceField.setLayoutData(fillFieldData());
         nearObjectDistanceField.setMessage(WeaviateUIMessages.query_distance_hint);
+        runOnEnter(nearObjectDistanceField);
+        addIncludeVectorField(c, WeaviateQueryMode.NEAR_OBJECT);
         addAutoCutField(c, WeaviateQueryMode.NEAR_OBJECT);
         return c;
     }
@@ -339,6 +352,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         hybridQueryField = new Text(c, SWT.BORDER);
         hybridQueryField.setLayoutData(fillFieldData());
         hybridQueryField.setMessage(WeaviateUIMessages.query_search_hint);
+        runOnEnter(hybridQueryField);
 
         new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_alpha);
         // A slider rather than a number box: alpha is a blend between two named extremes, and
@@ -384,6 +398,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
         hybridFusionCombo.select(0);
         hybridFusionCombo.setLayoutData(fillFieldData());
+        addIncludeVectorField(c, WeaviateQueryMode.HYBRID);
+        addExplainScoreField(c, WeaviateQueryMode.HYBRID);
         addAutoCutField(c, WeaviateQueryMode.HYBRID);
         return c;
     }
@@ -512,6 +528,45 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         autoCutSpinners.put(mode, spinner);
     }
 
+    /**
+     * Adds the explain-score toggle to a mode's own field panel.
+     * <p>
+     * Off by default and only for modes that can explain a score: the explanation is a long
+     * string of per-term arithmetic, useful when tuning relevance and noise the rest of the
+     * time, so it is asked for rather than assumed.
+     */
+    private void addExplainScoreField(@NotNull Composite c, @NotNull WeaviateQueryMode mode) {
+        new Label(c, SWT.NONE).setText("");
+        Button check = new Button(c, SWT.CHECK);
+        check.setText(WeaviateUIMessages.query_explain_score);
+        check.setToolTipText(WeaviateUIMessages.query_explain_score_tip);
+        check.setSelection(false);
+        explainScoreChecks.put(mode, check);
+    }
+
+    /**
+     * Adds the include-vectors toggle to a mode's own field panel, beside the other options that
+     * decide what comes back. Unlike explain-score this applies to every mode, a plain fetch
+     * included.
+     */
+    private void addIncludeVectorField(@NotNull Composite c, @NotNull WeaviateQueryMode mode) {
+        new Label(c, SWT.NONE).setText("");
+        Button check = new Button(c, SWT.CHECK);
+        check.setText(WeaviateUIMessages.query_include_vector);
+        check.setToolTipText(WeaviateUIMessages.query_include_vector_tip);
+        includeVectorChecks.put(mode, check);
+    }
+
+    private boolean currentIncludeVector() {
+        Button check = includeVectorChecks.get(currentMode());
+        return check != null && !check.isDisposed() && check.getSelection();
+    }
+
+    private boolean currentExplainScore() {
+        Button check = explainScoreChecks.get(currentMode());
+        return check != null && !check.isDisposed() && check.getSelection();
+    }
+
     @Nullable
     private Integer currentAutoCut() {
         Spinner spinner = autoCutSpinners.get(currentMode());
@@ -521,15 +576,67 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         return spinner.getSelection();
     }
 
+    /**
+     * Run the query when Enter is pressed in a field.
+     * <p>
+     * Single-line inputs only: SWT fires DefaultSelection on Enter for those, while in a
+     * multi-line field -- the near-vector box -- Enter is how you add a line, so hijacking it
+     * would stop you typing a vector across lines.
+     */
+    private void runOnEnter(@NotNull Text field) {
+        field.addListener(SWT.DefaultSelection, e -> runQuery());
+    }
+
     private WeaviateQueryMode currentMode() {
         int idx = modeCombo.getSelectionIndex();
         if (idx < 0) idx = 0;
         return WeaviateQueryMode.values()[idx];
     }
 
+    /**
+     * The text-search input for a mode, or null if it does not take one.
+     * <p>
+     * Near Vector and Near Object are excluded on purpose: a vector and an object id are not
+     * search text, and carrying a sentence into either would only produce an invalid query.
+     */
+    @Nullable
+    private Text queryFieldFor(@Nullable WeaviateQueryMode mode) {
+        if (mode == null) {
+            return null;
+        }
+        return switch (mode) {
+            case BM25 -> bm25QueryField;
+            case NEAR_TEXT -> nearTextQueryField;
+            case HYBRID -> hybridQueryField;
+            default -> null;
+        };
+    }
+
+    /**
+     * Carry the query text from the mode being left to the one being entered, so trying the same
+     * search a different way does not mean retyping it.
+     */
+    private void carryQueryText(@NotNull WeaviateQueryMode from, @NotNull WeaviateQueryMode to) {
+        Text source = queryFieldFor(from);
+        Text target = queryFieldFor(to);
+        if (source == null || target == null || source.isDisposed() || target.isDisposed()) {
+            return;
+        }
+        String text = source.getText();
+        if (!text.equals(target.getText())) {
+            target.setText(text);
+        }
+    }
+
     private void updateFieldVisibility() {
+        WeaviateQueryMode mode = currentMode();
+        if (displayedMode != null && displayedMode != mode) {
+            carryQueryText(displayedMode, mode);
+        }
+        displayedMode = mode;
+
         Composite top;
-        switch (currentMode()) {
+        switch (mode) {
             case BM25:
                 refreshBm25PropertyList();
                 top = bm25Composite;
@@ -678,6 +785,14 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         if (spinner != null && !spinner.isDisposed()) {
             spinner.setSelection(spec.getAutoCut() == null ? 0 : spec.getAutoCut());
         }
+        Button check = explainScoreChecks.get(spec.getMode());
+        if (check != null && !check.isDisposed()) {
+            check.setSelection(spec.isExplainScore());
+        }
+        Button vectors = includeVectorChecks.get(spec.getMode());
+        if (vectors != null && !vectors.isDisposed()) {
+            vectors.setSelection(spec.isIncludeVector());
+        }
     }
 
     private void loadSpecIntoUi() {
@@ -685,14 +800,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         if (collection == null) return;
         WeaviateQuerySpec spec = collection.getQuerySpec();
         modeCombo.select(spec.getMode().ordinal());
+        // Adopt the spec's mode first: updateFieldVisibility must not treat this as a switch and
+        // copy text over the values just loaded.
+        displayedMode = spec.getMode();
         loadAutoCutIntoUi(spec);
 
-        if (includeVectorCheck != null && !includeVectorCheck.isDisposed()) {
-            // The spec already carries the connection default when this collection has not been
-            // queried yet (see WeaviateDataSource#getQuerySpec), so the checkbox reflects what a
-            // read would actually do rather than always starting unchecked.
-            includeVectorCheck.setSelection(spec.isIncludeVector());
-        }
 
         // Filter rows
         if (filterRowsHolder != null && !filterRowsHolder.isDisposed()) {
@@ -853,7 +965,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         return builder.filterRows(rows).anyFilter(any)
             .tenant(currentTenant())
             .autoCut(currentAutoCut())
-            .includeVector(includeVectorCheck != null && includeVectorCheck.getSelection())
+            .explainScore(currentExplainScore())
+            .includeVector(currentIncludeVector())
             .build();
     }
 
