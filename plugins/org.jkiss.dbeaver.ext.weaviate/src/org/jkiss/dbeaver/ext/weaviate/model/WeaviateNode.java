@@ -31,12 +31,15 @@ import org.jkiss.dbeaver.model.struct.DBSObjectContainer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 public class WeaviateNode implements DBSObject, DBSObjectContainer {
 
     private final WeaviateDataSource dataSource;
     private final Node node;
     private List<WeaviateShard> shards;
+    private List<WeaviateShardGroup> shardGroups;
 
     public WeaviateNode(@NotNull WeaviateDataSource dataSource, @NotNull Node node) {
         this.dataSource = dataSource;
@@ -101,6 +104,32 @@ public class WeaviateNode implements DBSObject, DBSObjectContainer {
     @Override
     public boolean isPersisted() {
         return true;
+    }
+
+    /**
+     * Shards on this node grouped by the collection they belong to.
+     * <p>
+     * Sorted by collection name, and each group keeps the server's shard order. Multi-tenant
+     * collections name a shard per tenant, so this is what makes a node with hundreds of shards
+     * navigable.
+     */
+    @Association
+    public List<WeaviateShardGroup> getShardGroups(@NotNull DBRProgressMonitor monitor) {
+        if (shardGroups == null) {
+            Map<String, List<WeaviateShard>> byCollection = new TreeMap<>();
+            for (WeaviateShard shard : getShards(monitor)) {
+                String collection = shard.getCollection();
+                byCollection
+                    .computeIfAbsent(collection == null ? "" : collection, k -> new ArrayList<>())
+                    .add(shard);
+            }
+            List<WeaviateShardGroup> result = new ArrayList<>(byCollection.size());
+            for (Map.Entry<String, List<WeaviateShard>> e : byCollection.entrySet()) {
+                result.add(new WeaviateShardGroup(this, e.getKey(), e.getValue()));
+            }
+            shardGroups = result;
+        }
+        return shardGroups;
     }
 
     @Association

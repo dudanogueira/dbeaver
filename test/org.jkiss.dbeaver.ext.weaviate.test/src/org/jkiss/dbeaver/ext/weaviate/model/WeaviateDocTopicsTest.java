@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -51,12 +52,34 @@ public class WeaviateDocTopicsTest extends DBeaverUnitTest {
     }
 
     /**
-     * The folders that carry an explicit {@code id} in plugin.xml are exactly the ones this
-     * map documents -- the ids exist for no other reason. Renaming a folder id without
-     * updating the map would silently drop its context menu, which is hard to spot by hand.
+     * Folder ids exist for more than one reason -- {@code shardGroups} is there to give the tree
+     * a grouping level, not to be documented -- so this is not an equality check. What must hold
+     * is that no topic points at an id the tree no longer declares, since a renamed folder would
+     * silently lose its context menu.
      */
     @Test
-    public void topicIdsMatchTheFoldersDeclaredInPluginXml() throws Exception {
+    public void everyTopicPointsAtAFolderThatExists() throws Exception {
+        Set<String> declared = declaredFolderIds();
+        for (String id : WeaviateDocTopics.topicIds()) {
+            Assertions.assertTrue(declared.contains(id),
+                "doc topic '" + id + "' has no matching <folder id=...> in plugin.xml");
+        }
+    }
+
+    /**
+     * The collection config folders are the ones the feature exists for; each must stay mapped.
+     */
+    @Test
+    public void everyCollectionConfigFolderHasATopic() throws Exception {
+        Set<String> declared = declaredFolderIds();
+        for (String id : List.of("definition", "properties", "vectorizers", "rerankers",
+            "generative", "replication", "sharding", "multiTenancy", "invertedIndex", "objectTtl")) {
+            Assertions.assertTrue(declared.contains(id), id + " is no longer declared in plugin.xml");
+            Assertions.assertNotNull(WeaviateDocTopics.urlFor(id), id + " has no documentation topic");
+        }
+    }
+
+    private static Set<String> declaredFolderIds() throws Exception {
         Set<String> declared = new TreeSet<>();
         try (InputStream is = WeaviateDocTopics.class.getResourceAsStream("/plugin.xml")) {
             Assertions.assertNotNull(is, "plugin.xml not found on the bundle classpath");
@@ -66,6 +89,6 @@ public class WeaviateDocTopicsTest extends DBeaverUnitTest {
                 declared.add(m.group(1));
             }
         }
-        Assertions.assertEquals(new TreeSet<>(WeaviateDocTopics.topicIds()), declared);
+        return declared;
     }
 }
