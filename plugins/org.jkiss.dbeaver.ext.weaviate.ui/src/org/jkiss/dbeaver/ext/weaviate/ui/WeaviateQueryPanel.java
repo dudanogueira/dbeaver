@@ -201,9 +201,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         banner = createBanner(root);
 
         fieldsHolder = new Composite(root, SWT.NONE);
-        GridData fhGd = new GridData(SWT.FILL, SWT.TOP, true, false);
-        fhGd.heightHint = 100;
-        fieldsHolder.setLayoutData(fhGd);
+        // No fixed height. StackLayout#computeSize already reports the tallest child, so the
+        // holder sizes to whichever mode needs the most room and every mode gets the same
+        // height -- no jumping as you switch. A fixed hint clipped the taller panels instead:
+        // Hybrid needs four rows and ran underneath the filter section below it.
+        fieldsHolder.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
         fieldsLayout = new StackLayout();
         fieldsHolder.setLayout(fieldsLayout);
 
@@ -550,6 +552,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
         fieldsLayout.topControl = top;
         fieldsHolder.layout();
+        // The holder's preferred height can change when panels are rebuilt, so re-flow the
+        // whole panel rather than just the holder's children.
+        if (fieldsHolder.getParent() != null && !fieldsHolder.getParent().isDisposed()) {
+            fieldsHolder.getParent().layout(true, true);
+        }
     }
 
     private void refreshBm25PropertyList() {
