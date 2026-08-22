@@ -148,6 +148,10 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 dismissBanner();
+                WeaviateCollection collection = currentCollection();
+                if (collection != null) {
+                    collection.setQuerySpec(collection.getQuerySpec().withTenant(currentTenant()));
+                }
                 // Switching tenant changes the whole result set, so reload rather than making
                 // the user press Run to see a different tenant's data.
                 runQuery();
@@ -425,7 +429,10 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
         log.debug("Tenant picker shown for multi-tenant collection " + collection.getName());
         setTenantRowVisible(true);
-        String previous = tenantCombo.getText();
+        // Follow the spec, not whatever the combo happened to show: the tenant is usually set
+        // from the read-path dialog or the "Select Tenant..." command, and the combo has no way
+        // to know about either.
+        String current = collection.getQuerySpec().getTenant();
         tenantCombo.removeAll();
         try {
             for (String name : collection.listTenantNames(new VoidProgressMonitor())) {
@@ -440,8 +447,30 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             showError(WeaviateUIMessages.query_tenant_none);
             return;
         }
-        int idx = tenantCombo.indexOf(previous);
+        int idx = current == null ? -1 : tenantCombo.indexOf(current);
         if (idx >= 0) {
+            tenantCombo.select(idx);
+        } else {
+            // Nothing chosen yet, or the stored tenant no longer exists -- leave it unselected
+            // rather than silently pointing at a different tenant's data.
+            tenantCombo.deselectAll();
+        }
+    }
+
+    /**
+     * Point the combo at the tenant the spec actually holds, without refetching the list.
+     */
+    private void syncTenantSelection() {
+        WeaviateCollection collection = currentCollection();
+        if (collection == null || tenantCombo == null || tenantCombo.isDisposed()) {
+            return;
+        }
+        String current = collection.getQuerySpec().getTenant();
+        if (current == null) {
+            return;
+        }
+        int idx = tenantCombo.indexOf(current);
+        if (idx >= 0 && idx != tenantCombo.getSelectionIndex()) {
             tenantCombo.select(idx);
         }
     }
@@ -995,6 +1024,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     @Override
     public void refresh(boolean force) {
         refreshTenants();
+        // refreshTenants ran before the read completed the first time round, so re-sync after.
+        syncTenantSelection();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();

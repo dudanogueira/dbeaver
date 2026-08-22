@@ -469,18 +469,20 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         }
 
         // A multi-tenant collection has no queryable "all tenants" view; Weaviate errors out.
+        // Asked once, when no tenant has been chosen yet -- asking on every read means a dialog
+        // after each query and refresh. Changing it afterwards is the Query panel's tenant
+        // dropdown, or "Select Tenant..." on the collection.
         if (isMultiTenant() && CommonUtils.isEmpty(spec.getTenant())) {
             String chosen = promptForTenant(session, monitor, spec);
             if (chosen == null) {
-                // Declined, or nothing to choose from. Reported like a failed query -- banner and
-                // an empty grid -- rather than thrown, so the result tab survives.
+                // Declined, and nothing to fall back on. Reported like a failed query -- banner
+                // and an empty grid -- rather than thrown, so the result tab survives.
                 lastQueryError = TENANT_REQUIRED;
                 statistics.setQueryText(TENANT_REQUIRED);
                 return statistics;
             }
             spec = spec.withTenant(chosen);
-            // Remember it, so every later read, the row count and deletes all use the same
-            // tenant instead of asking again.
+            // Remember it so the row count, the panel and any delete use the same tenant.
             setQuerySpec(spec);
         }
 
