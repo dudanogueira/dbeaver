@@ -23,6 +23,7 @@ import org.eclipse.swt.custom.StackLayout;
 import org.eclipse.swt.events.DisposeEvent;
 import org.eclipse.swt.events.DisposeListener;
 import org.eclipse.swt.events.SelectionAdapter;
+import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Font;
@@ -36,6 +37,7 @@ import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Spinner;
+import org.eclipse.swt.widgets.Scale;
 import org.eclipse.swt.widgets.Text;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
@@ -52,14 +54,17 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorParser;
 import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
 import org.jkiss.dbeaver.model.DBPDataKind;
 import org.jkiss.dbeaver.model.exec.DBCLogicalOperator;
+import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.model.runtime.VoidProgressMonitor;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.ui.controls.resultset.IResultSetPresentation;
 import org.jkiss.dbeaver.ui.controls.resultset.panel.ResultSetPanelBase;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 public class WeaviateQueryPanel extends ResultSetPanelBase {
 
@@ -71,6 +76,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private IResultSetPresentation presentation;
 
     private Combo modeCombo;
+    /** One autocut control per mode that supports it; a plain fetch has none. */
+    private final Map<WeaviateQueryMode, Spinner> autoCutSpinners = new EnumMap<>(WeaviateQueryMode.class);
+    private Composite tenantRow;
+    private Label tenantLabel;
+    private Combo tenantCombo;
     private Button includeVectorCheck;
     private StackLayout fieldsLayout;
     private Composite fieldsHolder;
@@ -83,10 +93,14 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Text nearTextDistanceField;
     private Composite nearVectorComposite;
     private Text nearVectorField;
+    private Composite nearObjectComposite;
+    private Text nearObjectField;
+    private Text nearObjectDistanceField;
     private Text nearVectorDistanceField;
     private Composite hybridComposite;
     private Text hybridQueryField;
-    private Spinner hybridAlphaSpinner;
+    private Scale hybridAlphaScale;
+    private Label hybridAlphaValue;
     private Combo hybridFusionCombo;
     private Composite banner;
     private Label bannerLabel;
@@ -118,6 +132,28 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         topLayout.marginHeight = 0;
         topRow.setLayout(topLayout);
         topRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        tenantRow = new Composite(root, SWT.NONE);
+        GridLayout tenantLayout = new GridLayout(2, false);
+        tenantLayout.marginWidth = 0;
+        tenantLayout.marginHeight = 0;
+        tenantRow.setLayout(tenantLayout);
+        tenantRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        tenantLabel = new Label(tenantRow, SWT.NONE);
+        tenantLabel.setText(WeaviateUIMessages.query_tenant);
+        tenantCombo = new Combo(tenantRow, SWT.READ_ONLY);
+        tenantCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        tenantCombo.setToolTipText(WeaviateUIMessages.query_tenant_tip);
+        tenantCombo.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                dismissBanner();
+                // Switching tenant changes the whole result set, so reload rather than making
+                // the user press Run to see a different tenant's data.
+                runQuery();
+            }
+        });
+        setTenantRowVisible(false);
 
         new Label(topRow, SWT.NONE).setText(WeaviateUIMessages.query_mode);
         modeCombo = new Combo(topRow, SWT.READ_ONLY);
@@ -171,10 +207,15 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         bm25Composite = createBm25Fields(fieldsHolder);
         nearTextComposite = createNearTextFields(fieldsHolder);
         nearVectorComposite = createNearVectorFields(fieldsHolder);
+        nearObjectComposite = createNearObjectFields(fieldsHolder);
         hybridComposite = createHybridFields(fieldsHolder);
 
         createFilterSection(root);
 
+        // Must run here as well as in activatePanel(): the row starts hidden, and on first
+        // display of the panel activatePanel() has not necessarily fired yet, so without this
+        // the tenant picker never appears for a multi-tenant collection.
+        refreshTenants();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();
@@ -224,6 +265,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         lgd.heightHint = 80;
         bm25PropertiesList.setLayoutData(lgd);
         bm25PropertiesList.setToolTipText(WeaviateUIMessages.query_bm25_properties_tip);
+        addAutoCutField(c, WeaviateQueryMode.BM25);
         return c;
     }
 
@@ -240,6 +282,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         nearTextDistanceField = new Text(c, SWT.BORDER);
         nearTextDistanceField.setLayoutData(fillFieldData());
         nearTextDistanceField.setMessage(WeaviateUIMessages.query_distance_hint);
+        addAutoCutField(c, WeaviateQueryMode.NEAR_TEXT);
         return c;
     }
 
@@ -260,6 +303,25 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         nearVectorDistanceField = new Text(c, SWT.BORDER);
         nearVectorDistanceField.setLayoutData(fillFieldData());
         nearVectorDistanceField.setMessage(WeaviateUIMessages.query_distance_hint);
+        addAutoCutField(c, WeaviateQueryMode.NEAR_VECTOR);
+        return c;
+    }
+
+    private Composite createNearObjectFields(Composite parent) {
+        Composite c = new Composite(parent, SWT.NONE);
+        c.setLayout(twoColumnLayout());
+
+        new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_object_id);
+        nearObjectField = new Text(c, SWT.BORDER);
+        nearObjectField.setLayoutData(fillFieldData());
+        nearObjectField.setMessage(WeaviateUIMessages.query_object_id_hint);
+        nearObjectField.setToolTipText(WeaviateUIMessages.query_object_id_tip);
+
+        new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_distance);
+        nearObjectDistanceField = new Text(c, SWT.BORDER);
+        nearObjectDistanceField.setLayoutData(fillFieldData());
+        nearObjectDistanceField.setMessage(WeaviateUIMessages.query_distance_hint);
+        addAutoCutField(c, WeaviateQueryMode.NEAR_OBJECT);
         return c;
     }
 
@@ -273,13 +335,40 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         hybridQueryField.setMessage(WeaviateUIMessages.query_search_hint);
 
         new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_alpha);
-        hybridAlphaSpinner = new Spinner(c, SWT.BORDER);
-        hybridAlphaSpinner.setDigits(2);
-        hybridAlphaSpinner.setMinimum(0);
-        hybridAlphaSpinner.setMaximum(100);
-        hybridAlphaSpinner.setIncrement(5);
-        hybridAlphaSpinner.setSelection((int) (WeaviateQuerySpec.DEFAULT_HYBRID_ALPHA * 100));
-        hybridAlphaSpinner.setToolTipText("0 = pure keyword (BM25), 1 = pure vector");
+        // A slider rather than a number box: alpha is a blend between two named extremes, and
+        // the useful question is "more keyword or more vector", not "which hundredth".
+        Composite alphaRow = new Composite(c, SWT.NONE);
+        GridLayout alphaLayout = new GridLayout(4, false);
+        alphaLayout.marginWidth = 0;
+        alphaLayout.marginHeight = 0;
+        alphaRow.setLayout(alphaLayout);
+        alphaRow.setLayoutData(fillFieldData());
+
+        Label keywordEnd = new Label(alphaRow, SWT.NONE);
+        keywordEnd.setText(WeaviateUIMessages.query_alpha_keyword_end);
+
+        hybridAlphaScale = new Scale(alphaRow, SWT.HORIZONTAL);
+        hybridAlphaScale.setMinimum(0);
+        hybridAlphaScale.setMaximum(100);
+        hybridAlphaScale.setIncrement(5);
+        hybridAlphaScale.setPageIncrement(25);
+        hybridAlphaScale.setSelection((int) (WeaviateQuerySpec.DEFAULT_HYBRID_ALPHA * 100));
+        GridData scaleGd = new GridData(SWT.FILL, SWT.CENTER, true, false);
+        scaleGd.widthHint = 200;
+        hybridAlphaScale.setLayoutData(scaleGd);
+        hybridAlphaScale.setToolTipText(WeaviateUIMessages.query_alpha_tip);
+
+        Label vectorEnd = new Label(alphaRow, SWT.NONE);
+        vectorEnd.setText(WeaviateUIMessages.query_alpha_vector_end);
+
+        hybridAlphaValue = new Label(alphaRow, SWT.NONE);
+        GridData valueGd = new GridData(SWT.LEFT, SWT.CENTER, false, false);
+        // Fixed width so the row does not jitter as the number changes while dragging.
+        valueGd.widthHint = UIUtils.getFontHeight(hybridAlphaValue) * 6;
+        hybridAlphaValue.setLayoutData(valueGd);
+        hybridAlphaScale.addSelectionListener(SelectionListener.widgetSelectedAdapter(
+            e -> updateAlphaLabel()));
+        updateAlphaLabel();
 
         new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_fusion);
         hybridFusionCombo = new Combo(c, SWT.READ_ONLY);
@@ -289,7 +378,116 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
         hybridFusionCombo.select(0);
         hybridFusionCombo.setLayoutData(fillFieldData());
+        addAutoCutField(c, WeaviateQueryMode.HYBRID);
         return c;
+    }
+
+    /**
+     * Canonical 8-4-4-4-12 only. {@link java.util.UUID#fromString} also accepts short forms like
+     * "1-2-3-4-5", which the server then rejects with a less helpful message.
+     */
+    private static boolean isUuid(String value) {
+        String token = value.trim();
+        if (token.length() != 36) {
+            return false;
+        }
+        try {
+            return java.util.UUID.fromString(token).toString().equalsIgnoreCase(token);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private void setTenantRowVisible(boolean visible) {
+        if (tenantRow == null || tenantRow.isDisposed()) {
+            return;
+        }
+        tenantRow.setVisible(visible);
+        ((GridData) tenantRow.getLayoutData()).exclude = !visible;
+        tenantRow.getParent().layout(true, true);
+    }
+
+    /**
+     * Show the tenant picker only for multi-tenant collections, and preselect nothing so the
+     * choice is deliberate -- a query against the wrong tenant returns plausible but wrong rows.
+     */
+    private void refreshTenants() {
+        WeaviateCollection collection = currentCollection();
+        if (collection == null) {
+            log.debug("Tenant picker hidden: no Weaviate collection resolved for this result set");
+            setTenantRowVisible(false);
+            return;
+        }
+        if (!collection.isMultiTenant()) {
+            log.debug("Tenant picker hidden: " + collection.getName() + " is not multi-tenant");
+            setTenantRowVisible(false);
+            return;
+        }
+        log.debug("Tenant picker shown for multi-tenant collection " + collection.getName());
+        setTenantRowVisible(true);
+        String previous = tenantCombo.getText();
+        tenantCombo.removeAll();
+        try {
+            for (String name : collection.listTenantNames(new VoidProgressMonitor())) {
+                tenantCombo.add(name);
+            }
+        } catch (DBException e) {
+            log.debug("Cannot list tenants", e);
+            showError(e.getMessage());
+            return;
+        }
+        if (tenantCombo.getItemCount() == 0) {
+            showError(WeaviateUIMessages.query_tenant_none);
+            return;
+        }
+        int idx = tenantCombo.indexOf(previous);
+        if (idx >= 0) {
+            tenantCombo.select(idx);
+        }
+    }
+
+    @Nullable
+    private String currentTenant() {
+        if (tenantCombo == null || tenantCombo.isDisposed() || !tenantRow.isVisible()) {
+            return null;
+        }
+        int idx = tenantCombo.getSelectionIndex();
+        return idx < 0 ? null : tenantCombo.getItem(idx);
+    }
+
+    private void updateAlphaLabel() {
+        if (hybridAlphaValue == null || hybridAlphaValue.isDisposed()) {
+            return;
+        }
+        hybridAlphaValue.setText(String.format("%.2f", hybridAlphaScale.getSelection() / 100.0f));
+        hybridAlphaValue.getParent().layout();
+    }
+
+    /**
+     * Adds an autocut control to a mode's own field panel.
+     * <p>
+     * Per mode rather than shared: autocut is a property of a ranked query, and a plain fetch
+     * has no ranking to cut on -- so rather than showing a disabled control there, the option
+     * simply does not exist for it.
+     */
+    private void addAutoCutField(@NotNull Composite c, @NotNull WeaviateQueryMode mode) {
+        new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_autocut);
+        Spinner spinner = new Spinner(c, SWT.BORDER);
+        spinner.setMinimum(0);
+        spinner.setMaximum(100);
+        spinner.setIncrement(1);
+        spinner.setSelection(0);
+        spinner.setToolTipText(WeaviateUIMessages.query_autocut_tip);
+        autoCutSpinners.put(mode, spinner);
+    }
+
+    @Nullable
+    private Integer currentAutoCut() {
+        Spinner spinner = autoCutSpinners.get(currentMode());
+        if (spinner == null || spinner.isDisposed() || spinner.getSelection() <= 0) {
+            return null;
+        }
+        return spinner.getSelection();
     }
 
     private WeaviateQueryMode currentMode() {
@@ -310,6 +508,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 break;
             case NEAR_VECTOR:
                 top = nearVectorComposite;
+                break;
+            case NEAR_OBJECT:
+                top = nearObjectComposite;
                 break;
             case HYBRID:
                 top = hybridComposite;
@@ -347,7 +548,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         WeaviateCollection collection = currentCollection();
         if (collection == null) return Collections.emptyList();
         try {
-            List<WeaviateProperty> attrs = collection.getAttributes(new VoidProgressMonitor());
+            List<WeaviateProperty> attrs = collection.getProperties(new VoidProgressMonitor());
             List<String> out = new ArrayList<>(attrs.size());
             for (WeaviateProperty p : attrs) out.add(p.getName());
             return out;
@@ -427,7 +628,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         WeaviateCollection collection = currentCollection();
         if (collection == null) return DBPDataKind.STRING;
         try {
-            for (WeaviateProperty p : collection.getAttributes(new VoidProgressMonitor())) {
+            for (WeaviateProperty p : collection.getProperties(new VoidProgressMonitor())) {
                 if (p.getName().equals(propertyName)) return p.getDataKind();
             }
         } catch (DBException ignored) {
@@ -436,11 +637,19 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         return DBPDataKind.STRING;
     }
 
+    private void loadAutoCutIntoUi(@NotNull WeaviateQuerySpec spec) {
+        Spinner spinner = autoCutSpinners.get(spec.getMode());
+        if (spinner != null && !spinner.isDisposed()) {
+            spinner.setSelection(spec.getAutoCut() == null ? 0 : spec.getAutoCut());
+        }
+    }
+
     private void loadSpecIntoUi() {
         WeaviateCollection collection = currentCollection();
         if (collection == null) return;
         WeaviateQuerySpec spec = collection.getQuerySpec();
         modeCombo.select(spec.getMode().ordinal());
+        loadAutoCutIntoUi(spec);
 
         if (includeVectorCheck != null && !includeVectorCheck.isDisposed()) {
             // The spec already carries the connection default when this collection has not been
@@ -485,9 +694,16 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 if (spec.getVector() != null) nearVectorField.setText(WeaviateVectorParser.format(spec.getVector()));
                 if (spec.getDistance() != null) nearVectorDistanceField.setText(spec.getDistance().toString());
                 break;
+            case NEAR_OBJECT:
+                if (spec.getObjectId() != null) nearObjectField.setText(spec.getObjectId());
+                if (spec.getDistance() != null) nearObjectDistanceField.setText(spec.getDistance().toString());
+                break;
             case HYBRID:
                 if (spec.getQuery() != null) hybridQueryField.setText(spec.getQuery());
-                if (spec.getAlpha() != null) hybridAlphaSpinner.setSelection(Math.round(spec.getAlpha() * 100));
+                if (spec.getAlpha() != null) {
+                    hybridAlphaScale.setSelection(Math.round(spec.getAlpha() * 100));
+                    updateAlphaLabel();
+                }
                 if (spec.getFusionType() != null) {
                     hybridFusionCombo.setText(spec.getFusionType().name());
                 } else {
@@ -571,9 +787,22 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                     .distance(distance);
                 break;
             }
+            case NEAR_OBJECT: {
+                String uuid = requireNonBlank(
+                    nearObjectField.getText(), WeaviateUIMessages.query_required_object_id);
+                if (!isUuid(uuid)) {
+                    throw new IllegalArgumentException(
+                        NLS.bind(WeaviateUIMessages.query_invalid_object_id, uuid));
+                }
+                Float distance = parseOptionalFloat(nearObjectDistanceField.getText(), "distance");
+                builder = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_OBJECT)
+                    .objectId(uuid)
+                    .distance(distance);
+                break;
+            }
             case HYBRID: {
                 String q = requireNonBlank(hybridQueryField.getText(), WeaviateUIMessages.query_required_hybrid);
-                float alpha = hybridAlphaSpinner.getSelection() / 100.0f;
+                float alpha = hybridAlphaScale.getSelection() / 100.0f;
                 WeaviateHybridFusion fusionType = readFusionType();
                 builder = WeaviateQuerySpec.builder(WeaviateQueryMode.HYBRID)
                     .query(q)
@@ -586,6 +815,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 builder = WeaviateQuerySpec.builder(WeaviateQueryMode.FETCH);
         }
         return builder.filterRows(rows).anyFilter(any)
+            .tenant(currentTenant())
+            .autoCut(currentAutoCut())
             .includeVector(includeVectorCheck != null && includeVectorCheck.getSelection())
             .build();
     }
@@ -744,6 +975,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
 
     @Override
     public void activatePanel() {
+        refreshTenants();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();
@@ -762,6 +994,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
 
     @Override
     public void refresh(boolean force) {
+        refreshTenants();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();

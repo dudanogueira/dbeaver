@@ -29,6 +29,12 @@ public final class WeaviateQuerySpec {
     private final WeaviateQueryMode mode;
     private final String query;
     private final float[] vector;
+    /** Reference object UUID for {@link WeaviateQueryMode#NEAR_OBJECT}. */
+    private final String objectId;
+    /** Tenant to scope the query to; only meaningful for multi-tenant collections. */
+    private final String tenant;
+    /** Autocut groups, or null/0 for off. See {@link #getAutoCut()}. */
+    private final Integer autoCut;
     private final Float alpha;
     private final List<String> queryProperties;
     private final Float distance;
@@ -41,6 +47,9 @@ public final class WeaviateQuerySpec {
         this.mode = b.mode;
         this.query = b.query;
         this.vector = b.vector;
+        this.objectId = b.objectId;
+        this.tenant = b.tenant;
+        this.autoCut = b.autoCut;
         this.alpha = b.alpha;
         this.queryProperties = b.queryProperties == null ? Collections.emptyList() : List.copyOf(b.queryProperties);
         this.distance = b.distance;
@@ -123,6 +132,40 @@ public final class WeaviateQuerySpec {
         return query;
     }
 
+    /**
+     * The reference object for Near Object. Deliberately separate from {@link #getVector()}:
+     * Near Vector is given a vector, Near Object is given an object id and the server resolves
+     * that object's vector itself.
+     */
+    @Nullable
+    public String getObjectId() {
+        return objectId;
+    }
+
+    /**
+     * Tenant this query is scoped to, or null. Required for a multi-tenant collection: Weaviate
+     * rejects an unscoped query against one.
+     */
+    @Nullable
+    public String getTenant() {
+        return tenant;
+    }
+
+    /**
+     * Autocut: keep only the first N groups of results, cutting where the score or distance
+     * jumps rather than at a fixed row count.
+     * <p>
+     * Useful on its own for trimming a long tail of weak matches, and the natural way to bound
+     * what gets fed to a generative step later -- "the results that actually matched" rather
+     * than "the top 20".
+     *
+     * @return number of groups to keep, or null when off
+     */
+    @Nullable
+    public Integer getAutoCut() {
+        return autoCut;
+    }
+
     @Nullable
     public float[] getVector() {
         return vector;
@@ -157,6 +200,28 @@ public final class WeaviateQuerySpec {
         return anyFilter;
     }
 
+    /**
+     * A copy of this spec bound to {@code tenant}. Used once the user picks one, so the choice
+     * sticks for later reads without rebuilding the query by hand.
+     */
+    @NotNull
+    public WeaviateQuerySpec withTenant(@Nullable String tenant) {
+        return builder(mode)
+            .query(query)
+            .vector(vector)
+            .objectId(objectId)
+            .alpha(alpha)
+            .queryProperties(queryProperties)
+            .distance(distance)
+            .fusionType(fusionType)
+            .filterRows(filterRows)
+            .anyFilter(anyFilter)
+            .includeVector(includeVector)
+            .tenant(tenant)
+            .autoCut(autoCut)
+            .build();
+    }
+
     public boolean rankedResults() {
         return mode != WeaviateQueryMode.FETCH;
     }
@@ -165,6 +230,9 @@ public final class WeaviateQuerySpec {
         private final WeaviateQueryMode mode;
         private String query;
         private float[] vector;
+        private String objectId;
+        private String tenant;
+        private Integer autoCut;
         private Float alpha;
         private List<String> queryProperties;
         private Float distance;
@@ -184,6 +252,21 @@ public final class WeaviateQuerySpec {
 
         public Builder vector(@Nullable float[] vector) {
             this.vector = vector;
+            return this;
+        }
+
+        public Builder objectId(@Nullable String objectId) {
+            this.objectId = objectId;
+            return this;
+        }
+
+        public Builder tenant(@Nullable String tenant) {
+            this.tenant = tenant;
+            return this;
+        }
+
+        public Builder autoCut(@Nullable Integer autoCut) {
+            this.autoCut = autoCut;
             return this;
         }
 

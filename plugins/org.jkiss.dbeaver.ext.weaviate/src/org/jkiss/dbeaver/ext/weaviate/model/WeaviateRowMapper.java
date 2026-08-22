@@ -77,6 +77,8 @@ public final class WeaviateRowMapper {
                 return meta == null ? null : meta.score();
             case WeaviateColumns.DISTANCE:
                 return meta == null ? null : meta.distance();
+            case WeaviateColumns.EXPLAIN_SCORE:
+                return meta == null ? null : meta.explainScore();
             default:
                 String vectorName = WeaviateColumns.vectorNameOf(column, defaultVectorName);
                 if (vectorName != null) {

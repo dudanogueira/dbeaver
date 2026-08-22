@@ -40,12 +40,21 @@ public class WeaviateDataSourceInfo extends AbstractDataSourceInfo {
     }
 
     /**
-     * Object rows cannot be inserted, updated or deleted: {@link WeaviateCollection} implements
-     * {@code DBSDataContainer} but not {@code DBSDataManipulator}.
+     * Rows can be deleted from the grid, so the data container is not read-only.
+     * <p>
+     * This flag is checked before anything else: {@code DBExecUtils#getResultSetReadOnlyStatus}
+     * returns "Read-only data container" and disables every edit action, so with it set the
+     * {@code DBSDataManipulator} implemented by {@link WeaviateCollection} is never consulted
+     * and Delete never appears.
+     * <p>
+     * Insert and update remain unimplemented, and are held back by the feature list rather than
+     * by this flag: {@code WeaviateCollection} advertises only {@code data.delete}, and
+     * {@code DBExecUtils#getAttributeReadOnlyStatus} reports every attribute as read-only unless
+     * {@code data.update} is advertised, which is what keeps cell editing switched off.
      */
     @Override
     public boolean isReadOnlyData() {
-        return true;
+        return false;
     }
 
     /**

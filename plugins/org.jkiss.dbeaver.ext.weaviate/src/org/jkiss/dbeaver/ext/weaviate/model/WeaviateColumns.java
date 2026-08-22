@@ -21,6 +21,8 @@ public final class WeaviateColumns {
     public static final String UUID = "uuid";
     public static final String SCORE = "_score";
     public static final String DISTANCE = "_distance";
+    /** Server's explanation of how {@link #SCORE} was arrived at. Keyword modes only. */
+    public static final String EXPLAIN_SCORE = "_explainScore";
 
     /** Column holding the embedding when a collection has a single (or unnamed) vector. */
     public static final String VECTOR = "_vector";

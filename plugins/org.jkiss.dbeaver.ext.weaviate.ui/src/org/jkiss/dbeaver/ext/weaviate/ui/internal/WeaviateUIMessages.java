@@ -107,6 +107,28 @@ public final class WeaviateUIMessages extends NLS {
     public static String model_keys_tooltip_env_none;
     public static String model_keys_env_hint;
 
+    // Near Object query mode
+    public static String query_object_id;
+    public static String query_object_id_hint;
+    public static String query_object_id_tip;
+    public static String query_required_object_id;
+    public static String query_invalid_object_id;
+
+    // Multi-tenancy
+    public static String query_tenant;
+    public static String query_tenant_tip;
+    public static String query_tenant_none;
+
+
+    // Hybrid alpha slider
+    public static String query_alpha_keyword_end;
+    public static String query_alpha_vector_end;
+    public static String query_alpha_tip;
+
+    // Autocut
+    public static String query_autocut;
+    public static String query_autocut_tip;
+
     private WeaviateUIMessages() {
     }
 }

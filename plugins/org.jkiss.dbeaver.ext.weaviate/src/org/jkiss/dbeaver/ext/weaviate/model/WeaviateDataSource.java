@@ -374,12 +374,21 @@ public class WeaviateDataSource extends AbstractDataSource
         if (spec != null) {
             return spec;
         }
-        // No panel interaction for this collection yet - fall back to the connection default.
-        // This is the path an export from the navigator takes, so it is what decides whether
-        // exported data carries embeddings.
+        // No panel interaction for this collection yet. Vectors stay out of this default:
+        // embeddings are hundreds of columns wide and make the grid unreadable. Export is not
+        // affected -- WeaviateCollection#readData restores the connection setting for
+        // non-interactive reads, which is where the embeddings actually matter.
         return WeaviateQuerySpec.builder(WeaviateQueryMode.FETCH)
-            .includeVector(isIncludeVectorsByDefault())
+            .includeVector(false)
             .build();
+    }
+
+    /**
+     * Whether the Query panel has set a spec for this collection, i.e. the user made an explicit
+     * choice rather than getting the default.
+     */
+    boolean hasQuerySpec(@NotNull String collectionName) {
+        return querySpecs.get(collectionName) != null;
     }
 
     /**

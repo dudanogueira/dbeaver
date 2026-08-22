@@ -18,13 +18,16 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 
 import com.google.gson.JsonElement;
 import io.weaviate.client6.v1.api.collections.CollectionConfig;
+import io.weaviate.client6.v1.api.collections.CollectionHandle;
 import io.weaviate.client6.v1.api.collections.Property;
 import io.weaviate.client6.v1.api.collections.Reranker;
 import io.weaviate.client6.v1.api.collections.VectorConfig;
 import io.weaviate.client6.v1.api.collections.WeaviateObject;
 import io.weaviate.client6.v1.api.collections.aggregate.AggregateResponse;
 import io.weaviate.client6.v1.api.collections.pagination.Paginator;
+import io.weaviate.client6.v1.api.collections.data.DeleteManyResponse;
 import io.weaviate.client6.v1.api.collections.query.Filter;
+import io.weaviate.client6.v1.api.collections.tenants.Tenant;
 import io.weaviate.client6.v1.api.collections.query.Metadata;
 import io.weaviate.client6.v1.api.collections.query.QueryResponse;
 import io.weaviate.client6.v1.api.collections.query.SortBy;
@@ -39,6 +42,10 @@ import org.jkiss.dbeaver.model.DBUtils;
 import org.jkiss.dbeaver.model.data.DBDAttributeConstraint;
 import org.jkiss.dbeaver.model.data.DBDDataFilter;
 import org.jkiss.dbeaver.model.data.DBDDataReceiver;
+import org.jkiss.dbeaver.model.struct.DBSAttributeBase;
+import org.jkiss.dbeaver.model.impl.edit.SQLDatabasePersistActionComment;
+import org.jkiss.dbeaver.model.exec.DBCException;
+import org.jkiss.dbeaver.model.edit.DBEPersistAction;
 import org.jkiss.dbeaver.model.exec.DBCExecutionSource;
 import org.jkiss.dbeaver.model.exec.DBCSession;
 import org.jkiss.dbeaver.model.exec.DBCStatistics;
@@ -47,11 +54,16 @@ import org.jkiss.dbeaver.model.impl.local.LocalStatement;
 import org.jkiss.dbeaver.model.meta.Association;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.struct.DBSDataContainer;
+import org.jkiss.dbeaver.model.struct.DBSDataManipulator;
 import org.jkiss.dbeaver.model.struct.DBSEntity;
 import org.jkiss.dbeaver.model.struct.DBSEntityAssociation;
+import org.jkiss.dbeaver.model.struct.DBSEntityAttribute;
 import org.jkiss.dbeaver.model.struct.DBSEntityConstraint;
 import org.jkiss.dbeaver.model.struct.DBSEntityType;
 import org.jkiss.dbeaver.model.struct.DBSObject;
+import org.jkiss.dbeaver.runtime.DBWorkbench;
+import org.jkiss.dbeaver.runtime.ui.DBPPlatformUI;
+import org.jkiss.utils.CommonUtils;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -60,12 +72,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-public class WeaviateCollection implements DBSEntity, DBSDataContainer {
+public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
 
     private static final String[] SUPPORTED_FEATURES = new String[]{
         FEATURE_DATA_SELECT,
         FEATURE_DATA_COUNT,
         FEATURE_DATA_FILTER,
+        FEATURE_DATA_DELETE,
     };
 
     private static final org.jkiss.dbeaver.Log queryLog = org.jkiss.dbeaver.Log.getLog(WeaviateCollection.class);
@@ -75,6 +88,19 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
     private volatile CollectionConfig config;
     private volatile boolean persisted;
     private volatile List<WeaviateProperty> attributes;
+    /**
+     * Beyond this many tenants the platform's choice dialog (a flat list of labels) stops being
+     * usable, and the searchable "Select Tenant..." picker is the only sensible way in.
+     */
+    private static final int MAX_TENANTS_TO_PROMPT = 30;
+
+    private static final String TENANT_REQUIRED =
+        "This collection is multi-tenant. Right-click the collection and choose "
+            + "\"Select Tenant...\" to pick one.";
+
+    private WeaviateUuidAttribute uuidAttribute;
+    private WeaviateUuidConstraint uuidConstraint;
+
     private volatile String lastQueryError;
     private volatile String pendingSchemaJson;
     private volatile List<WeaviateJsonNode> definitionNodes;
@@ -198,8 +224,12 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         return dataSource.getContainer();
     }
 
-    @Override
-    public List<WeaviateProperty> getAttributes(@NotNull DBRProgressMonitor monitor) throws DBException {
+    /**
+     * The collection's declared properties, without the uuid attribute.
+     * Callers that need what the grid shows want {@link #getAttributes} instead.
+     */
+    @NotNull
+    public List<WeaviateProperty> getProperties(@NotNull DBRProgressMonitor monitor) throws DBException {
         if (attributes == null) {
             synchronized (this) {
                 if (attributes == null) {
@@ -215,21 +245,53 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         if (props == null || props.isEmpty()) {
             return Collections.emptyList();
         }
+        // Ordinal 0 is reserved for the uuid attribute, which is not a declared property but is
+        // a real column of every result -- see getAttributesWithId().
         List<WeaviateProperty> result = new ArrayList<>(props.size());
         for (int i = 0; i < props.size(); i++) {
-            result.add(new WeaviateProperty(this, props.get(i), i));
+            result.add(new WeaviateProperty(this, props.get(i), i + 1));
         }
         return result;
     }
 
+    /**
+     * The uuid attribute, kept as a single instance so identity comparisons hold.
+     */
+    @NotNull
+    public synchronized WeaviateUuidAttribute getUuidAttribute() {
+        if (uuidAttribute == null) {
+            uuidAttribute = new WeaviateUuidAttribute(this);
+        }
+        return uuidAttribute;
+    }
+
+    /**
+     * Declared properties preceded by the uuid attribute.
+     * <p>
+     * DBeaver needs uuid in the entity's attributes for two reasons: the grid renders the column
+     * from them, and {@link #getConstraints} names it as the primary key, which is what allows a
+     * selected row to be deleted.
+     */
+    @NotNull
     @Override
-    public WeaviateProperty getAttribute(@NotNull DBRProgressMonitor monitor, @NotNull String attributeName) throws DBException {
+    public List<? extends DBSEntityAttribute> getAttributes(@NotNull DBRProgressMonitor monitor) throws DBException {
+        List<DBSEntityAttribute> all = new ArrayList<>();
+        all.add(getUuidAttribute());
+        all.addAll(getProperties(monitor));
+        return all;
+    }
+
+    @Override
+    public DBSEntityAttribute getAttribute(@NotNull DBRProgressMonitor monitor, @NotNull String attributeName) throws DBException {
         return DBUtils.findObject(getAttributes(monitor), attributeName);
     }
 
     @Override
     public Collection<? extends DBSEntityConstraint> getConstraints(@NotNull DBRProgressMonitor monitor) {
-        return Collections.emptyList();
+        if (uuidConstraint == null) {
+            uuidConstraint = new WeaviateUuidConstraint(this, getUuidAttribute());
+        }
+        return List.of(uuidConstraint);
     }
 
     @Override
@@ -382,8 +444,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         DBRProgressMonitor monitor = session.getProgressMonitor();
 
         WeaviateQuerySpec spec = getQuerySpec();
-        List<WeaviateProperty> attributes = getAttributes(monitor);
-        List<String> vectorNames = spec.isIncludeVector() ? getVectorNames() : Collections.emptyList();
+        List<WeaviateProperty> attributes = getProperties(monitor);
+        List<String> vectorNames = includeVectors(session, spec) ? getVectorNames() : Collections.emptyList();
         boolean singleVector = vectorNames.size() <= 1;
 
         List<String> columnNames = new ArrayList<>(attributes.size() + 3 + vectorNames.size());
@@ -394,8 +456,33 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         for (String vectorName : vectorNames) {
             columnNames.add(WeaviateColumns.vectorColumn(vectorName, singleVector));
         }
-        columnNames.add(WeaviateColumns.SCORE);
-        columnNames.add(WeaviateColumns.DISTANCE);
+        // Only the metric this mode actually produces: a plain fetch has neither, and showing
+        // an always-empty _score or _distance column just crowds out the real properties.
+        if (spec.getMode().hasScore()) {
+            columnNames.add(WeaviateColumns.SCORE);
+        }
+        if (spec.getMode().hasExplainScore()) {
+            columnNames.add(WeaviateColumns.EXPLAIN_SCORE);
+        }
+        if (spec.getMode().hasDistance()) {
+            columnNames.add(WeaviateColumns.DISTANCE);
+        }
+
+        // A multi-tenant collection has no queryable "all tenants" view; Weaviate errors out.
+        if (isMultiTenant() && CommonUtils.isEmpty(spec.getTenant())) {
+            String chosen = promptForTenant(session, monitor, spec);
+            if (chosen == null) {
+                // Declined, or nothing to choose from. Reported like a failed query -- banner and
+                // an empty grid -- rather than thrown, so the result tab survives.
+                lastQueryError = TENANT_REQUIRED;
+                statistics.setQueryText(TENANT_REQUIRED);
+                return statistics;
+            }
+            spec = spec.withTenant(chosen);
+            // Remember it, so every later read, the row count and deletes all use the same
+            // tenant instead of asking again.
+            setQuerySpec(spec);
+        }
 
         // Filter translation rejects anything it cannot express rather than widening the result
         // set. That rejection is a RuntimeException, so it has to be caught here: letting it
@@ -463,7 +550,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         try (LocalStatement statement = new LocalStatement(session, queryText)) {
             statement.setStatementSource(source);
             LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
-            populateColumns(resultSet, attributes, vectorNames, singleVector);
+            populateColumns(resultSet, attributes, vectorNames, singleVector, spec.getMode());
             String defaultVectorName = singleVector && !vectorNames.isEmpty() ? vectorNames.get(0) : null;
             for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
                 resultSet.addRow(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName));
@@ -504,10 +591,10 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         try (LocalStatement statement = new LocalStatement(session, queryText)) {
             statement.setStatementSource(source);
             LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
-            populateColumns(resultSet, attributes, vectorNames, singleVector);
+            populateColumns(resultSet, attributes, vectorNames, singleVector, spec.getMode());
             try {
                 Paginator<Map<String, Object>> paginator =
-                    dataSource.getClient().collections.use(getName()).paginate(b -> {
+                    handle(spec.getTenant()).paginate(b -> {
                         if (filter != null) b.filters(filter);
                         if (spec.isIncludeVector()) b.includeVector();
                         return b;
@@ -549,14 +636,14 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         int offset
     ) {
         WeaviateQueryClient<Map<String, Object>> query =
-            dataSource.getClient().collections.use(getName()).query;
+            handle(spec.getTenant()).query;
         switch (spec.getMode()) {
             case BM25: {
                 String text = requireQuery(spec, "BM25");
                 List<String> queryProperties = spec.getQueryProperties();
                 return query.bm25(text, b -> {
                     applyCommon(b, spec, filter, limit, offset);
-                    b.returnMetadata(Metadata.SCORE);
+                    b.returnMetadata(Metadata.SCORE, Metadata.EXPLAIN_SCORE);
                     if (!queryProperties.isEmpty()) b.queryProperties(queryProperties);
                     return b;
                 });
@@ -584,13 +671,30 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
                     return b;
                 });
             }
+            case NEAR_OBJECT: {
+                // Near Vector is handed a vector; Near Object is handed an object id and the
+                // server resolves that object's stored vector itself, so this works even when
+                // the reference object's vector is never returned to the client.
+                String uuid = spec.getObjectId();
+                if (uuid == null || uuid.isBlank()) {
+                    throw new IllegalStateException(
+                        "Near Object mode requires the UUID of a reference object");
+                }
+                Float distance = spec.getDistance();
+                return query.nearObject(uuid, b -> {
+                    applyCommon(b, spec, filter, limit, offset);
+                    b.returnMetadata(Metadata.DISTANCE);
+                    if (distance != null) b.distance(distance);
+                    return b;
+                });
+            }
             case HYBRID: {
                 String text = requireQuery(spec, "Hybrid");
                 Float alpha = spec.getAlpha();
                 WeaviateHybridFusion fusion = spec.getFusionType();
                 return query.hybrid(text, b -> {
                     applyCommon(b, spec, filter, limit, offset);
-                    b.returnMetadata(Metadata.SCORE, Metadata.DISTANCE);
+                    b.returnMetadata(Metadata.SCORE, Metadata.EXPLAIN_SCORE);
                     if (alpha != null) b.alpha(alpha);
                     if (fusion != null) b.fusionType(fusion.toClientType());
                     return b;
@@ -618,6 +722,11 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         if (offset > 0) b.offset(offset);
         if (filter != null) b.filters(filter);
         if (spec.isIncludeVector()) b.includeVector();
+        // The client calls Weaviate's autocut "autolimit"; the wire field is autocut.
+        Integer autoCut = spec.getAutoCut();
+        if (autoCut != null && autoCut > 0 && spec.getMode().supportsAutoCut()) {
+            b.autolimit(autoCut);
+        }
     }
 
     @NotNull
@@ -649,7 +758,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
             Filter columnHeaderFilter = WeaviateFilterTranslator.translate(dataFilter);
             Filter customFilter = WeaviateFilterTranslator.translateRows(spec.getFilterRows(), spec.isAnyFilter());
             Filter filter = WeaviateFilterTranslator.and(columnHeaderFilter, customFilter);
-            AggregateResponse response = dataSource.getClient().collections.use(getName())
+            AggregateResponse response = handle(spec.getTenant())
                 .aggregate.overAll(b -> {
                     b.includeTotalCount(true);
                     if (filter != null) b.filters(filter);
@@ -669,7 +778,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
         @NotNull LocalResultSet<LocalStatement> rs,
         @NotNull List<WeaviateProperty> attributes,
         @NotNull List<String> vectorNames,
-        boolean singleVector
+        boolean singleVector,
+        @NotNull WeaviateQueryMode mode
     ) {
         rs.addColumn(WeaviateColumns.UUID, DBPDataKind.STRING);
         for (WeaviateProperty p : attributes) {
@@ -679,8 +789,17 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
             // Rendered as text - see WeaviateRowMapper#readVector.
             rs.addColumn(WeaviateColumns.vectorColumn(vectorName, singleVector), DBPDataKind.STRING);
         }
-        rs.addColumn(WeaviateColumns.SCORE, DBPDataKind.NUMERIC);
-        rs.addColumn(WeaviateColumns.DISTANCE, DBPDataKind.NUMERIC);
+        // Must mirror the columnNames list built in readData, or the row mapper writes values
+        // into the wrong columns.
+        if (mode.hasScore()) {
+            rs.addColumn(WeaviateColumns.SCORE, DBPDataKind.NUMERIC);
+        }
+        if (mode.hasExplainScore()) {
+            rs.addColumn(WeaviateColumns.EXPLAIN_SCORE, DBPDataKind.STRING);
+        }
+        if (mode.hasDistance()) {
+            rs.addColumn(WeaviateColumns.DISTANCE, DBPDataKind.NUMERIC);
+        }
     }
 
     /**
@@ -757,6 +876,10 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
                 function = "nearVector";
                 args.add("dim=" + (spec.getVector() == null ? 0 : spec.getVector().length));
                 break;
+            case NEAR_OBJECT:
+                function = "nearObject";
+                args.add("id=" + quote(spec.getObjectId()));
+                break;
             case HYBRID:
                 function = "hybrid";
                 args.add("query=" + quote(spec.getQuery()));
@@ -790,6 +913,296 @@ public class WeaviateCollection implements DBSEntity, DBSDataContainer {
 
     public void setQuerySpec(@Nullable WeaviateQuerySpec spec) {
         dataSource.setQuerySpec(getName(), spec);
+    }
+
+    /**
+     * True when the collection partitions its objects by tenant.
+     * <p>
+     * Weaviate rejects a query against such a collection unless it names a tenant, so the data
+     * view has to ask which one before it can show anything.
+     */
+    public boolean isMultiTenant() {
+        return config.multiTenancy() != null && config.multiTenancy().enabled();
+    }
+
+    /**
+     * Tenants defined for this collection, ordered by name. Empty for a single-tenant collection.
+     */
+    @NotNull
+    public List<String> listTenantNames(@NotNull DBRProgressMonitor monitor) throws DBException {
+        if (!isMultiTenant()) {
+            return List.of();
+        }
+        try {
+            List<String> names = new ArrayList<>();
+            for (Tenant tenant : dataSource.getClient().collections.use(getName()).tenants.list()) {
+                if (tenant.name() != null) {
+                    names.add(tenant.name());
+                }
+            }
+            names.sort(String::compareTo);
+            return names;
+        } catch (Exception e) {
+            throw new DBException(
+                "Cannot list tenants of " + getName() + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Collection handle scoped to {@code tenant} when one is given.
+     * <p>
+     * Every request has to go through here: a handle built without the tenant silently targets
+     * nothing on a multi-tenant collection, so reads look empty and deletes appear to do nothing.
+     */
+    @NotNull
+    private CollectionHandle<Map<String, Object>> handle(@Nullable String tenant) {
+        if (tenant == null || tenant.isBlank()) {
+            return dataSource.getClient().collections.use(getName());
+        }
+        return dataSource.getClient().collections.use(getName(), b -> b.tenant(tenant));
+    }
+
+    /**
+     * Whether this read should carry embeddings.
+     * <p>
+     * An explicit choice in the Query panel always wins. Without one, the answer depends on who
+     * is reading: the grid gets no vectors, because an embedding is hundreds of columns wide and
+     * pushes the real properties off screen, while a non-interactive read -- an export -- honours
+     * the connection setting, since that is exactly where embeddings are wanted.
+     */
+    private boolean includeVectors(@NotNull DBCSession session, @NotNull WeaviateQuerySpec spec) {
+        if (dataSource.hasQuerySpec(getName())) {
+            return spec.isIncludeVector();
+        }
+        if (session.getPurpose().isUser()) {
+            return false;
+        }
+        return dataSource.isIncludeVectorsByDefault();
+    }
+
+    /**
+     * Ask which tenant to read, when the data view is opened on a multi-tenant collection.
+     * <p>
+     * The choice cannot be defaulted: reading the wrong tenant returns real rows that are simply
+     * someone else's, which is worse than showing nothing. Only interactive reads prompt -- an
+     * export runs unattended and must not block on a dialog.
+     *
+     * @return the chosen tenant, or null if the user declined or there are none
+     */
+    @Nullable
+    private String promptForTenant(
+        @NotNull DBCSession session,
+        @NotNull DBRProgressMonitor monitor,
+        @NotNull WeaviateQuerySpec spec
+    ) {
+        if (!session.getPurpose().isUser()) {
+            return null;
+        }
+        List<String> tenants;
+        try {
+            tenants = listTenantNames(monitor);
+        } catch (DBException e) {
+            queryLog.warn("Cannot list tenants of " + getName(), e);
+            return null;
+        }
+        if (tenants.isEmpty()) {
+            return null;
+        }
+        // The searchable picker handles any number of tenants, so prefer it whenever the UI
+        // bundle has registered one.
+        WeaviateTenantPrompt prompt = WeaviateTenantPrompt.getProvider();
+        if (prompt != null) {
+            return prompt.selectTenant(getName(), tenants, spec.getTenant());
+        }
+        if (tenants.size() > MAX_TENANTS_TO_PROMPT) {
+            // Fallback only. The platform dialog lays options out as a row of buttons, so past a
+            // handful it is unusable; better to say nothing and let the message point at the
+            // "Select Tenant..." command.
+            queryLog.debug(getName() + " has " + tenants.size()
+                + " tenants and no searchable picker is registered");
+            return null;
+        }
+        DBPPlatformUI.UserChoiceResponse response = DBWorkbench.getPlatformUI().showUserChoice(
+            "Select tenant",
+            "\"" + getName() + "\" is a multi-tenant collection. Choose which tenant's data to show.",
+            tenants,
+            List.of(),
+            null,
+            0);
+        if (response.choiceIndex < 0 || response.choiceIndex >= tenants.size()) {
+            return null;
+        }
+        return tenants.get(response.choiceIndex);
+    }
+
+    // ---- DBSDataManipulator ----------------------------------------------------------------
+
+    @NotNull
+    @Override
+    public ExecuteBatch deleteData(
+        @NotNull DBCSession session,
+        @NotNull DBSAttributeBase[] keyAttributes,
+        @NotNull DBCExecutionSource source
+    ) throws DBException {
+        int uuidIndex = -1;
+        for (int i = 0; i < keyAttributes.length; i++) {
+            if (WeaviateColumns.UUID.equalsIgnoreCase(keyAttributes[i].getName())) {
+                uuidIndex = i;
+                break;
+            }
+        }
+        if (uuidIndex < 0) {
+            // Only reachable if the row identifier resolved to something other than the uuid
+            // pseudo-attribute; deleting on any other basis would target the wrong objects.
+            throw new DBException(
+                "Weaviate rows can only be deleted by their " + WeaviateColumns.UUID
+                    + ". Make sure that column is present in the result set.");
+        }
+        String tenant = getQuerySpec().getTenant();
+        if (isMultiTenant() && CommonUtils.isEmpty(tenant)) {
+            // Without a tenant the request would match nothing and report a cheerful zero.
+            throw new DBException(
+                "Select a tenant in the Weaviate Query panel before deleting from a multi-tenant collection");
+        }
+        return new DeleteBatch(uuidIndex, tenant);
+    }
+
+    @NotNull
+    @Override
+    public ExecuteBatch insertData(
+        @NotNull DBCSession session,
+        @NotNull DBSAttributeBase[] attributes,
+        @Nullable DBDDataReceiver keysReceiver,
+        @NotNull DBCExecutionSource source,
+        @NotNull Map<String, Object> options
+    ) throws DBException {
+        throw new DBException("Adding objects from the data grid is not supported yet");
+    }
+
+    @NotNull
+    @Override
+    public ExecuteBatch updateData(
+        @NotNull DBCSession session,
+        @NotNull DBSAttributeBase[] updateAttributes,
+        @NotNull DBSAttributeBase[] keyAttributes,
+        @Nullable DBDDataReceiver keysReceiver,
+        @NotNull DBCExecutionSource source
+    ) throws DBException {
+        throw new DBException("Editing objects from the data grid is not supported yet");
+    }
+
+    @NotNull
+    @Override
+    public DBCStatistics truncateData(
+        @NotNull DBCSession session,
+        @NotNull DBCExecutionSource source
+    ) throws DBException {
+        throw new DBException("Truncating a Weaviate collection is not supported yet");
+    }
+
+    /**
+     * Collects the UUIDs of the rows marked for deletion and removes them in one request.
+     * <p>
+     * DBeaver calls {@link #add} once per row and {@link #execute} once when the user saves, so
+     * batching here turns "delete 200 selected rows" into a single call rather than 200.
+     */
+    private final class DeleteBatch implements ExecuteBatch {
+
+        private final int uuidIndex;
+        private final String tenant;
+        private final List<String> ids = new ArrayList<>();
+
+        DeleteBatch(int uuidIndex, @Nullable String tenant) {
+            this.uuidIndex = uuidIndex;
+            this.tenant = tenant;
+        }
+
+        @NotNull
+        @Override
+        public ExecuteBatch add(@NotNull Object[] attributeValues) throws DBCException {
+            if (uuidIndex >= attributeValues.length) {
+                throw new DBCException("Row has no " + WeaviateColumns.UUID + " value to delete by");
+            }
+            Object value = attributeValues[uuidIndex];
+            String id = value == null ? null : value.toString().trim();
+            if (id == null || id.isEmpty()) {
+                throw new DBCException("Cannot delete a row with an empty " + WeaviateColumns.UUID);
+            }
+            ids.add(id);
+            return this;
+        }
+
+        @NotNull
+        @Override
+        public DBCStatistics execute(
+            @NotNull DBCSession session,
+            @NotNull Map<String, Object> options
+        ) throws DBException {
+            DBCStatistics statistics = new DBCStatistics();
+            if (ids.isEmpty()) {
+                return statistics;
+            }
+            long startTime = System.currentTimeMillis();
+            statistics.setQueryText("DELETE " + ids.size() + " object(s) FROM " + getName());
+            try {
+                DeleteManyResponse response = handle(tenant)
+                    .data.deleteMany(
+                        Filter.uuid().containsAny(ids.toArray(new String[0])),
+                        b -> b.verbose(true));
+                long failed = response.failed();
+                if (failed > 0) {
+                    // Surfaced rather than swallowed: the grid would otherwise drop the rows
+                    // locally and look as though the delete had succeeded.
+                    throw new DBCException(
+                        "Weaviate deleted " + response.successful() + " of " + ids.size()
+                            + " object(s); " + failed + " failed" + firstError(response));
+                }
+                statistics.setRowsUpdated(response.successful());
+            } catch (DBCException e) {
+                throw e;
+            } catch (Exception e) {
+                String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                queryLog.warn("Weaviate delete failed for collection " + getName() + ": " + msg, e);
+                throw new DBCException("Failed to delete from " + getName() + ": " + msg, e);
+            } finally {
+                statistics.setExecuteTime(System.currentTimeMillis() - startTime);
+                ids.clear();
+            }
+            return statistics;
+        }
+
+        @Override
+        public void generatePersistActions(
+            @NotNull DBCSession session,
+            @NotNull List<DBEPersistAction> actions,
+            @NotNull Map<String, Object> options
+        ) {
+            // "Generate SQL" for the pending changes. There is no SQL dialect behind Weaviate,
+            // so the best that can be offered is a readable description of what would be sent.
+            for (String id : ids) {
+                actions.add(new SQLDatabasePersistActionComment(
+                    getDataSource(),
+                    "Delete object " + id + " from " + getName()));
+            }
+        }
+
+        @Override
+        public void close() {
+            ids.clear();
+        }
+    }
+
+    @NotNull
+    private static String firstError(@NotNull DeleteManyResponse response) {
+        if (response.objects() == null) {
+            return "";
+        }
+        for (DeleteManyResponse.DeletedObject o : response.objects()) {
+            if (!o.successful() && o.error() != null) {
+                return ": " + o.error();
+            }
+        }
+        return "";
     }
 
     @Nullable
