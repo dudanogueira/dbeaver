@@ -29,8 +29,10 @@ import io.weaviate.client6.v1.api.collections.data.DeleteManyResponse;
 import io.weaviate.client6.v1.api.collections.query.Filter;
 import io.weaviate.client6.v1.api.collections.tenants.Tenant;
 import io.weaviate.client6.v1.api.collections.query.Metadata;
+import io.weaviate.client6.v1.api.collections.query.NearVectorTarget;
 import io.weaviate.client6.v1.api.collections.query.QueryResponse;
 import io.weaviate.client6.v1.api.collections.query.SortBy;
+import io.weaviate.client6.v1.api.collections.query.Target;
 import io.weaviate.client6.v1.api.collections.query.WeaviateQueryClient;
 import io.weaviate.client6.v1.internal.json.JSON;
 import org.jkiss.code.NotNull;
@@ -445,8 +447,15 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
 
         WeaviateQuerySpec spec = getQuerySpec();
         List<WeaviateProperty> attributes = getProperties(monitor);
-        List<String> vectorNames = includeVectors(session, spec) ? getVectorNames() : Collections.emptyList();
-        boolean singleVector = vectorNames.size() <= 1;
+        List<String> declaredVectors = getVectorNames();
+        List<String> vectorNames = includeVectors(session, spec)
+            ? narrowToTargets(spec, declaredVectors)
+            : Collections.emptyList();
+        // Derived from what the collection declares, not from what this query asked for: the
+        // column name collapses to a bare "_vector" when a collection has only one, so reading it
+        // off the narrowed list would relabel _vector_title as _vector the moment a user targeted
+        // one of three.
+        boolean singleVector = declaredVectors.size() <= 1;
 
         List<String> columnNames = new ArrayList<>(attributes.size() + 3 + vectorNames.size());
         columnNames.add(WeaviateColumns.UUID);
@@ -653,6 +662,17 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
             case NEAR_TEXT: {
                 String text = requireQuery(spec, "Near Text");
                 Float distance = spec.getDistance();
+                // A target is chosen by swapping the first argument, not by a builder call: the
+                // Target record carries the query text as well as the vectors it applies to.
+                if (spec.hasTargets()) {
+                    Target target = buildTextTarget(spec, text);
+                    return query.nearText(target, b -> {
+                        applyCommon(b, spec, filter, limit, offset);
+                        b.returnMetadata(Metadata.DISTANCE);
+                        if (distance != null) b.distance(distance);
+                        return b;
+                    });
+                }
                 return query.nearText(text, b -> {
                     applyCommon(b, spec, filter, limit, offset);
                     b.returnMetadata(Metadata.DISTANCE);
@@ -661,6 +681,16 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 });
             }
             case NEAR_VECTOR: {
+                Float nearVectorDistance = spec.getDistance();
+                if (spec.hasTargets()) {
+                    NearVectorTarget target = buildVectorTarget(spec);
+                    return query.nearVector(target, b -> {
+                        applyCommon(b, spec, filter, limit, offset);
+                        b.returnMetadata(Metadata.DISTANCE);
+                        if (nearVectorDistance != null) b.distance(nearVectorDistance);
+                        return b;
+                    });
+                }
                 float[] vector = spec.getVector();
                 if (vector == null || vector.length == 0) {
                     throw new IllegalStateException("Near Vector mode requires a non-empty vector");
@@ -694,6 +724,16 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 String text = requireQuery(spec, "Hybrid");
                 Float alpha = spec.getAlpha();
                 WeaviateHybridFusion fusion = spec.getFusionType();
+                if (spec.hasTargets()) {
+                    Target target = buildTextTarget(spec, text);
+                    return query.hybrid(target, b -> {
+                        applyCommon(b, spec, filter, limit, offset);
+                        b.returnMetadata(scoreMetadata(spec));
+                        if (alpha != null) b.alpha(alpha);
+                        if (fusion != null) b.fusionType(fusion.toClientType());
+                        return b;
+                    });
+                }
                 return query.hybrid(text, b -> {
                     applyCommon(b, spec, filter, limit, offset);
                     b.returnMetadata(scoreMetadata(spec));
@@ -712,6 +752,67 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         }
     }
 
+    /**
+     * The Target for a text-driven search -- Near Text or Hybrid -- carrying both the query text
+     * and the named vectors to embed it against.
+     * <p>
+     * A single target sends no join strategy: there is nothing to join, and the client's combined
+     * record would insist on one anyway.
+     */
+    @NotNull
+    private static Target buildTextTarget(@NotNull WeaviateQuerySpec spec, @NotNull String text) {
+        List<WeaviateVectorTarget> targets = spec.getTargets();
+        List<String> queries = List.of(text);
+        if (targets.size() == 1) {
+            return new Target.TextTarget(weightOf(targets.get(0)), queries);
+        }
+        List<Target.VectorWeight> weights = new ArrayList<>(targets.size());
+        for (WeaviateVectorTarget target : targets) {
+            weights.add(weightOf(target));
+        }
+        return new Target.CombinedTextTarget(queries, combinationOf(spec), weights);
+    }
+
+    /**
+     * The Target for Near Vector, where each named vector is searched with its own query vector.
+     * Different vector spaces have different shapes, so there is no one vector to share.
+     */
+    @NotNull
+    private static NearVectorTarget buildVectorTarget(@NotNull WeaviateQuerySpec spec) {
+        List<WeaviateVectorTarget> targets = spec.getTargets();
+        List<Target.VectorTarget> vectorTargets = new ArrayList<>(targets.size());
+        for (WeaviateVectorTarget target : targets) {
+            Object vector = target.queryVectorForClient();
+            if (vector == null) {
+                throw new IllegalStateException(
+                    "Near Vector target " + target.getName() + " has no query vector");
+            }
+            vectorTargets.add(new Target.VectorTarget(target.getName(), target.getWeight(), vector));
+        }
+        if (vectorTargets.size() == 1) {
+            return vectorTargets.get(0);
+        }
+        return new Target.CombinedVectorTarget(combinationOf(spec), vectorTargets);
+    }
+
+    @NotNull
+    private static Target.VectorWeight weightOf(@NotNull WeaviateVectorTarget target) {
+        return new Target.VectorWeight(target.getName(), target.getWeight());
+    }
+
+    /**
+     * The join strategy to send for a multi-target search. Defaults to MIN, which is what Weaviate
+     * itself falls back to -- the client's combined records require a strategy, so there is no way
+     * to send "unspecified" and let the server decide.
+     */
+    @NotNull
+    private static Target.CombinationMethod combinationOf(@NotNull WeaviateQuerySpec spec) {
+        WeaviateVectorCombination combination = spec.getCombination();
+        return combination == null
+            ? WeaviateVectorCombination.MIN.toClientType()
+            : combination.toClientType();
+    }
+
     private static <B extends io.weaviate.client6.v1.api.collections.query.BaseQueryOptions.Builder<B, ?>>
     void applyCommon(
         @NotNull B b,
@@ -723,12 +824,61 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (limit > 0) b.limit(limit);
         if (offset > 0) b.offset(offset);
         if (filter != null) b.filters(filter);
-        if (spec.isIncludeVector()) b.includeVector();
+        if (spec.isIncludeVector()) {
+            // Ask for only the targeted vectors when the search names any, so the grid columns
+            // built from the same list in readData are the ones that actually come back.
+            List<String> requested = targetVectorNames(spec);
+            if (requested.isEmpty()) {
+                b.includeVector();
+            } else {
+                b.includeVector(requested);
+            }
+        }
         // The client calls Weaviate's autocut "autolimit"; the wire field is autocut.
         Integer autoCut = spec.getAutoCut();
         if (autoCut != null && autoCut > 0 && spec.getMode().supportsAutoCut()) {
             b.autolimit(autoCut);
         }
+    }
+
+    /**
+     * The declared vectors a query is about: its targets when it names any, all of them otherwise.
+     * A target the collection no longer declares is dropped rather than turned into a blank column.
+     */
+    @NotNull
+    private static List<String> narrowToTargets(
+        @NotNull WeaviateQuerySpec spec,
+        @NotNull List<String> declared
+    ) {
+        List<String> targets = targetVectorNames(spec);
+        if (targets.isEmpty()) {
+            return declared;
+        }
+        List<String> out = new ArrayList<>(targets.size());
+        for (String name : targets) {
+            if (declared.contains(name)) {
+                out.add(name);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Distinct target names of a spec, in order, or empty when it names none.
+     * <p>
+     * The one rule for which vectors a query is about: readData builds the grid's vector columns
+     * from it and applyCommon asks the server for exactly those. Deriving the two separately is
+     * how columns come to be permanently blank, or data to arrive with nowhere to go.
+     */
+    @NotNull
+    private static List<String> targetVectorNames(@NotNull WeaviateQuerySpec spec) {
+        List<String> names = new ArrayList<>(spec.getTargets().size());
+        for (WeaviateVectorTarget target : spec.getTargets()) {
+            if (!names.contains(target.getName())) {
+                names.add(target.getName());
+            }
+        }
+        return names;
     }
 
     /**
@@ -888,7 +1038,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 break;
             case NEAR_VECTOR:
                 function = "nearVector";
-                args.add("dim=" + (spec.getVector() == null ? 0 : spec.getVector().length));
+                if (!spec.hasTargets()) {
+                    args.add("dim=" + (spec.getVector() == null ? 0 : spec.getVector().length));
+                }
                 break;
             case NEAR_OBJECT:
                 function = "nearObject";
@@ -904,11 +1056,45 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 function = "fetchObjects";
                 break;
         }
+        describeTargets(spec, args);
         if (limit > 0) args.add("limit=" + limit);
         if (offset > 0) args.add("offset=" + offset);
         if (filter != null) args.add("filter=" + filter);
         if (!sortBy.isEmpty()) args.add("sort=" + sortBy);
         return function + "(" + String.join(", ", args) + ")";
+    }
+
+    /**
+     * Add the target vectors and their join strategy to the statement shown in the result tab, so
+     * what is on screen says which vectors were actually searched and how they were weighed.
+     */
+    private static void describeTargets(@NotNull WeaviateQuerySpec spec, @NotNull List<String> args) {
+        if (!spec.hasTargets()) {
+            return;
+        }
+        WeaviateVectorCombination combination = spec.getCombination();
+        boolean weighted = combination != null && combination.usesWeights();
+        List<String> described = new ArrayList<>(spec.getTargets().size());
+        for (WeaviateVectorTarget target : spec.getTargets()) {
+            StringBuilder sb = new StringBuilder(target.getName());
+            // The weight only shows where it does something -- see WeaviateVectorCombination.
+            if (weighted && target.getWeight() != null) {
+                sb.append(':').append(target.getWeight());
+            }
+            if (target.isMulti()) {
+                float[][] multi = target.getMultiVector();
+                sb.append("[").append(multi.length).append('x')
+                    .append(multi.length == 0 ? 0 : multi[0].length).append(']');
+            } else if (target.getVector() != null) {
+                sb.append("[").append(target.getVector().length).append(']');
+            }
+            described.add(sb.toString());
+        }
+        args.add("targets=[" + String.join(", ", described) + "]");
+        // One target is not joined with anything, so naming a strategy would be noise.
+        if (spec.getTargets().size() > 1) {
+            args.add("join=" + (combination == null ? WeaviateVectorCombination.MIN : combination).name());
+        }
     }
 
     @NotNull

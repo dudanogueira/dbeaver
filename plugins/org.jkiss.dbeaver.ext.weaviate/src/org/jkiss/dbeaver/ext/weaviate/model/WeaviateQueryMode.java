@@ -71,6 +71,19 @@ public enum WeaviateQueryMode {
     }
 
     /**
+     * Whether this mode can name the vectors it searches.
+     * <p>
+     * The three that reach a vector index: Near Text and Hybrid have the server embed the query
+     * text, Near Vector is handed the vectors outright. Fetch ranks nothing, BM25 is keyword-only
+     * and never touches a vector, and Near Object is left out for a duller reason -- Weaviate
+     * supports targets there, but client 6.3.0 exposes no Target overload of {@code nearObject}
+     * to send them with.
+     */
+    public boolean supportsTargetVectors() {
+        return this == NEAR_TEXT || this == NEAR_VECTOR || this == HYBRID;
+    }
+
+    /**
      * Whether autocut applies.
      * <p>
      * Autocut trims where the ranking metric jumps, so it needs a ranking: every mode except a

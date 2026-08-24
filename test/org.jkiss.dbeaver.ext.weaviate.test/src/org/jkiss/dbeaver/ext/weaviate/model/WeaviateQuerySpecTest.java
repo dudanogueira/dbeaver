@@ -256,22 +256,24 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
     @Test
     public void everyModeDeclaresItsOwnCapabilities() {
         record Expected(WeaviateQueryMode mode, boolean score, boolean distance,
-                        boolean explain, boolean autoCut) { }
+                        boolean explain, boolean autoCut, boolean targets) { }
         java.util.List<Expected> matrix = java.util.List.of(
-            new Expected(WeaviateQueryMode.FETCH, false, false, false, false),
-            new Expected(WeaviateQueryMode.BM25, true, false, true, true),
-            new Expected(WeaviateQueryMode.NEAR_TEXT, false, true, false, true),
-            new Expected(WeaviateQueryMode.NEAR_VECTOR, false, true, false, true),
-            new Expected(WeaviateQueryMode.NEAR_OBJECT, false, true, false, true),
-            new Expected(WeaviateQueryMode.HYBRID, true, false, true, true));
+            new Expected(WeaviateQueryMode.FETCH, false, false, false, false, false),
+            new Expected(WeaviateQueryMode.BM25, true, false, true, true, false),
+            new Expected(WeaviateQueryMode.NEAR_TEXT, false, true, false, true, true),
+            new Expected(WeaviateQueryMode.NEAR_VECTOR, false, true, false, true, true),
+            new Expected(WeaviateQueryMode.NEAR_OBJECT, false, true, false, true, false),
+            new Expected(WeaviateQueryMode.HYBRID, true, false, true, true, true));
 
         Assertions.assertEquals(WeaviateQueryMode.values().length, matrix.size(),
-            "a mode was added without deciding its score/distance/explain/autocut behaviour");
+            "a mode was added without deciding its score/distance/explain/autocut/target behaviour");
         for (Expected e : matrix) {
             Assertions.assertEquals(e.score(), e.mode().hasScore(), e.mode() + ".hasScore");
             Assertions.assertEquals(e.distance(), e.mode().hasDistance(), e.mode() + ".hasDistance");
             Assertions.assertEquals(e.explain(), e.mode().hasExplainScore(), e.mode() + ".hasExplainScore");
             Assertions.assertEquals(e.autoCut(), e.mode().supportsAutoCut(), e.mode() + ".supportsAutoCut");
+            Assertions.assertEquals(e.targets(), e.mode().supportsTargetVectors(),
+                e.mode() + ".supportsTargetVectors");
         }
     }
 
@@ -348,6 +350,61 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
         }
     }
 
+    @Test
+    public void targetsDefaultToNone() {
+        WeaviateQuerySpec spec = WeaviateQuerySpec.fetch();
+        Assertions.assertTrue(spec.getTargets().isEmpty());
+        Assertions.assertFalse(spec.hasTargets());
+        Assertions.assertNull(spec.getCombination());
+    }
+
+    @Test
+    public void targetsRoundTripThroughTheBuilder() {
+        WeaviateVectorTarget title = WeaviateVectorTarget.of("title", 0.7f);
+        WeaviateVectorTarget body = WeaviateVectorTarget.of("body", 0.3f);
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_TEXT)
+            .query("shoes")
+            .targets(java.util.List.of(title, body))
+            .combination(WeaviateVectorCombination.MANUAL_WEIGHTS)
+            .build();
+
+        Assertions.assertTrue(spec.hasTargets());
+        Assertions.assertEquals(java.util.List.of(title, body), spec.getTargets());
+        Assertions.assertEquals(WeaviateVectorCombination.MANUAL_WEIGHTS, spec.getCombination());
+    }
+
+    @Test
+    public void nearVectorTargetsCarryTheirOwnVectors() {
+        WeaviateVectorTarget flat = WeaviateVectorTarget.of("title", null, new float[]{0.1f, 0.2f});
+        WeaviateVectorTarget matrix =
+            WeaviateVectorTarget.of("colbert", null, new float[][]{{0.1f, 0.2f}, {0.3f, 0.4f}});
+
+        Assertions.assertFalse(flat.isMulti());
+        Assertions.assertTrue(flat.hasQueryVector());
+        Assertions.assertArrayEquals(new float[]{0.1f, 0.2f}, flat.getVector(), 0.0001f);
+        Assertions.assertTrue(matrix.isMulti());
+        Assertions.assertArrayEquals(new float[]{0.3f, 0.4f}, matrix.getMultiVector()[1], 0.0001f);
+    }
+
+    /**
+     * A target holds arrays, so without copies a caller could reach in and change a spec that is
+     * supposed to be immutable -- and the spec is shared across reads and the panel.
+     */
+    @Test
+    public void targetCopiesItsVectors() {
+        float[] source = {0.1f, 0.2f};
+        WeaviateVectorTarget target = WeaviateVectorTarget.of("title", null, source);
+        source[0] = 99f;
+        target.getVector()[1] = 99f;
+        Assertions.assertArrayEquals(new float[]{0.1f, 0.2f}, target.getVector(), 0.0001f);
+    }
+
+    @Test
+    public void aTargetMustBeNamed() {
+        Assertions.assertThrows(IllegalArgumentException.class,
+            () -> WeaviateVectorTarget.of("  ", null));
+    }
+
     /**
      * withIncludeVector used to enumerate the fields to copy by hand and had fallen behind by
      * four of them, so toggling vectors silently reset the tenant, the reference object, autocut
@@ -355,12 +412,15 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
      */
     @Test
     public void withIncludeVectorKeepsEveryOtherField() {
+        WeaviateVectorTarget title = WeaviateVectorTarget.of("title", 0.7f);
         WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_OBJECT)
             .objectId("11111111-2222-3333-4444-555555555555")
             .tenant("acme")
             .autoCut(3)
             .explainScore(true)
             .distance(0.25f)
+            .targets(java.util.List.of(title))
+            .combination(WeaviateVectorCombination.RELATIVE_SCORE)
             .includeVector(false)
             .build();
 
@@ -372,5 +432,26 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
         Assertions.assertEquals(Integer.valueOf(3), copy.getAutoCut());
         Assertions.assertTrue(copy.isExplainScore());
         Assertions.assertEquals(Float.valueOf(0.25f), copy.getDistance());
+        Assertions.assertEquals(java.util.List.of(title), copy.getTargets());
+        Assertions.assertEquals(WeaviateVectorCombination.RELATIVE_SCORE, copy.getCombination());
+    }
+
+    @Test
+    public void withTenantKeepsTheTargets() {
+        WeaviateVectorTarget title = WeaviateVectorTarget.of("title", null);
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.HYBRID)
+            .query("shoes")
+            .alpha(0.4f)
+            .targets(java.util.List.of(title))
+            .combination(WeaviateVectorCombination.AVERAGE)
+            .build();
+
+        WeaviateQuerySpec copy = spec.withTenant("acme");
+
+        Assertions.assertEquals("acme", copy.getTenant());
+        Assertions.assertEquals("shoes", copy.getQuery());
+        Assertions.assertEquals(Float.valueOf(0.4f), copy.getAlpha());
+        Assertions.assertEquals(java.util.List.of(title), copy.getTargets());
+        Assertions.assertEquals(WeaviateVectorCombination.AVERAGE, copy.getCombination());
     }
 }

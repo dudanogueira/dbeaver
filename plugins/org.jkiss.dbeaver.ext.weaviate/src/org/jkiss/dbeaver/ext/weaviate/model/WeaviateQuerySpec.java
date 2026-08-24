@@ -44,6 +44,10 @@ public final class WeaviateQuerySpec {
     private final List<WeaviateFilterRow> filterRows;
     private final boolean anyFilter;
     private final boolean includeVector;
+    /** Named vectors to search, with their weights. Empty means "let the server pick". */
+    private final List<WeaviateVectorTarget> targets;
+    /** How several targets are joined into one ranking; null when there is only one. */
+    private final WeaviateVectorCombination combination;
 
     public WeaviateQuerySpec(@NotNull Builder b) {
         this.mode = b.mode;
@@ -60,6 +64,8 @@ public final class WeaviateQuerySpec {
         this.filterRows = b.filterRows == null ? Collections.emptyList() : List.copyOf(b.filterRows);
         this.anyFilter = b.anyFilter;
         this.includeVector = b.includeVector;
+        this.targets = b.targets == null ? Collections.emptyList() : List.copyOf(b.targets);
+        this.combination = b.combination;
     }
 
     /**
@@ -204,6 +210,34 @@ public final class WeaviateQuerySpec {
     }
 
     /**
+     * The named vectors this search targets, in the order the user listed them.
+     * <p>
+     * Empty means no target was given and the server chooses -- fine for a collection with a
+     * single vector, ambiguous or rejected outright once it declares several. When this is
+     * non-empty it supersedes {@link #getVector()}: each target carries its own query vector,
+     * because vectors of different named spaces have different shapes.
+     */
+    @NotNull
+    public List<WeaviateVectorTarget> getTargets() {
+        return targets;
+    }
+
+    public boolean hasTargets() {
+        return !targets.isEmpty();
+    }
+
+    /**
+     * The join strategy for a multi-target search, or null.
+     * <p>
+     * Only meaningful with two or more targets; with one there is nothing to join. Left null
+     * rather than defaulted so a single-target search sends no strategy at all.
+     */
+    @Nullable
+    public WeaviateVectorCombination getCombination() {
+        return combination;
+    }
+
+    /**
      * A builder seeded with every field of this spec.
      * <p>
      * Exists so the {@code with*} copies cannot silently drop a field. Enumerating them by hand
@@ -225,7 +259,9 @@ public final class WeaviateQuerySpec {
             .fusionType(fusionType)
             .filterRows(filterRows)
             .anyFilter(anyFilter)
-            .includeVector(includeVector);
+            .includeVector(includeVector)
+            .targets(targets)
+            .combination(combination);
     }
 
     /**
@@ -256,6 +292,8 @@ public final class WeaviateQuerySpec {
         private List<WeaviateFilterRow> filterRows;
         private boolean anyFilter;
         private boolean includeVector;
+        private List<WeaviateVectorTarget> targets;
+        private WeaviateVectorCombination combination;
 
         private Builder(@NotNull WeaviateQueryMode mode) {
             this.mode = mode;
@@ -323,6 +361,16 @@ public final class WeaviateQuerySpec {
 
         public Builder includeVector(boolean include) {
             this.includeVector = include;
+            return this;
+        }
+
+        public Builder targets(@Nullable List<WeaviateVectorTarget> targets) {
+            this.targets = targets;
+            return this;
+        }
+
+        public Builder combination(@Nullable WeaviateVectorCombination combination) {
+            this.combination = combination;
             return this;
         }
 

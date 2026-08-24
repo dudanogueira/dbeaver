@@ -17,6 +17,8 @@
 package org.jkiss.dbeaver.ext.weaviate.model;
 
 import io.weaviate.client6.v1.api.collections.VectorConfig;
+import io.weaviate.client6.v1.api.collections.VectorIndex;
+import io.weaviate.client6.v1.api.collections.vectorindex.MultiVector;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
@@ -48,6 +50,31 @@ public class WeaviateVectorizer implements DBSObject, DBSObjectContainer {
     public String getName() {
         Object kind = vectorConfig._kind();
         return kind == null ? vectorName : vectorName + " (" + kind + ")";
+    }
+
+    /**
+     * The bare vector name, without the kind suffix {@link #getName()} adds for the navigator
+     * label. This is what a query names as its target, so it has to round-trip exactly.
+     */
+    @NotNull
+    public String getVectorName() {
+        return vectorName;
+    }
+
+    /**
+     * Whether this vector's index stores a matrix per object (ColBERT-style) rather than a single
+     * embedding, in which case a Near Vector search against it must supply a matrix too.
+     * <p>
+     * Only HNSW carries a multiVector component -- flat, dynamic and hFresh indexes have no such
+     * setting -- so the isHnsw check is the whole story.
+     */
+    public boolean isMultiVector() {
+        VectorIndex index = vectorConfig.vectorIndex();
+        if (index == null || !index.isHnsw()) {
+            return false;
+        }
+        MultiVector multiVector = index.asHnsw().multiVector();
+        return multiVector != null && multiVector.enabled();
     }
 
     @Nullable
