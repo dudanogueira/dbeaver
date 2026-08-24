@@ -195,9 +195,10 @@ final class WeaviateRerankSupport {
     /**
      * Read every rerank score in a reply into {@code scoresOut}, keyed by uuid.
      * <p>
-     * Package-private and separate from the Rpc so it can be tested against a hand-built reply:
-     * the paths that reach it -- plain and generative -- share this one method, and a live
-     * generative provider is not always available to exercise the second.
+     * Package-private and separate from the Rpc so it can be tested against a hand-built reply,
+     * which is cheaper than standing up a provider for every case. Both paths that reach it --
+     * plain and generative -- share this one method, and both are verified live against Cohere,
+     * which reranks and generates.
      */
     static void collectScores(@NotNull SearchReply reply, @NotNull Map<String, Float> scoresOut) {
         for (var result : reply.getResultsList()) {
