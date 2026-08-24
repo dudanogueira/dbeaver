@@ -19,7 +19,6 @@ package org.jkiss.dbeaver.ext.weaviate.ui;
 import org.eclipse.jface.action.IContributionManager;
 import org.eclipse.osgi.util.NLS;
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.custom.StackLayout;
 import org.eclipse.swt.events.DisposeEvent;
 import org.eclipse.swt.events.DisposeListener;
 import org.eclipse.swt.events.SelectionAdapter;
@@ -44,6 +43,12 @@ import org.jkiss.dbeaver.Log;
 import org.eclipse.swt.widgets.Group;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
+import org.eclipse.jface.dialogs.IDialogSettings;
+import org.eclipse.swt.custom.ScrolledComposite;
+import org.eclipse.ui.forms.events.ExpansionAdapter;
+import org.eclipse.ui.forms.events.ExpansionEvent;
+import org.eclipse.ui.forms.widgets.ExpandableComposite;
+import org.jkiss.dbeaver.ui.controls.ExpandableCompositeEx;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterRow;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateHybridFusion;
@@ -87,7 +92,10 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Combo tenantCombo;
     /** One include-vectors toggle per mode, beside that mode's other result options. */
     private final Map<WeaviateQueryMode, Button> includeVectorChecks = new EnumMap<>(WeaviateQueryMode.class);
-    private StackLayout fieldsLayout;
+    /** Guards reflow against the resize it can itself provoke. */
+    private boolean reflowing;
+    private ScrolledComposite scroller;
+    private Composite content;
     private Composite fieldsHolder;
     private Composite emptyComposite;
     private Composite bm25Composite;
@@ -112,7 +120,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Color errorBg;
     private Color infoBg;
     private Font bannerFont;
-    private Group filtersGroup;
+    private Composite filtersGroup;
     private Composite filterRowsHolder;
     private Button filterAndRadio;
     private Button filterOrRadio;
@@ -201,14 +209,35 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
 
         banner = createBanner(root);
 
-        fieldsHolder = new Composite(root, SWT.NONE);
-        // No fixed height. StackLayout#computeSize already reports the tallest child, so the
-        // holder sizes to whichever mode needs the most room and every mode gets the same
-        // height -- no jumping as you switch. A fixed hint clipped the taller panels instead:
-        // Hybrid needs four rows and ran underneath the filter section below it.
+        // Everything below the mode row scrolls. The sections stack rather than share the space --
+        // mode inputs, then target vectors, then filters, with reranker and generative to follow --
+        // so on a short panel the later ones have to be reachable rather than clipped.
+        scroller = new ScrolledComposite(root, SWT.V_SCROLL);
+        scroller.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        scroller.setExpandHorizontal(true);
+        scroller.setExpandVertical(true);
+
+        // Narrowing the panel makes wrapped content taller, so the scroll extent has to follow.
+        scroller.addListener(SWT.Resize, e -> reflow());
+
+        content = new Composite(scroller, SWT.NONE);
+        GridLayout contentLayout = new GridLayout(1, false);
+        contentLayout.marginWidth = 0;
+        contentLayout.marginHeight = 0;
+        content.setLayout(contentLayout);
+        scroller.setContent(content);
+
+        fieldsHolder = new Composite(content, SWT.NONE);
+        // Not a StackLayout. That sizes to the tallest mode, so every mode was as tall as the
+        // roomiest one, and it reported a stale height when a target row was added -- which is how
+        // the mode panel came to overlap the filters below it. Showing one child and excluding the
+        // rest lets the holder size to the mode actually on screen, and re-excluding is what
+        // reflow() then measures.
         fieldsHolder.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
-        fieldsLayout = new StackLayout();
-        fieldsHolder.setLayout(fieldsLayout);
+        GridLayout holderLayout = new GridLayout(1, false);
+        holderLayout.marginWidth = 0;
+        holderLayout.marginHeight = 0;
+        fieldsHolder.setLayout(holderLayout);
 
         emptyComposite = createEmptyFields(fieldsHolder);
         bm25Composite = createBm25Fields(fieldsHolder);
@@ -216,8 +245,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         nearVectorComposite = createNearVectorFields(fieldsHolder);
         nearObjectComposite = createNearObjectFields(fieldsHolder);
         hybridComposite = createHybridFields(fieldsHolder);
+        for (Composite mode : modeComposites()) {
+            mode.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
+        }
 
-        createFilterSection(root);
+        createFilterSection(content);
 
         // Must run here as well as in activatePanel(): the row starts hidden, and on first
         // display of the panel activatePanel() has not necessarily fired yet, so without this
@@ -228,6 +260,79 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         refreshStatusFromCollection();
 
         return root;
+    }
+
+    /**
+     * A collapsible section with a twistie and a title, returning the composite to fill.
+     * <p>
+     * The shape every optional block of the panel takes -- target vectors, filters, and the
+     * reranker and generative blocks still to come. Collapsed sections cost one line each, which
+     * is what keeps the panel usable once there are several; the expansion state is remembered per
+     * section, so whichever ones you work with stay open across sessions.
+     *
+     * @param persistKey identity under which the expansion state is stored; stable per section
+     */
+    @NotNull
+    private Composite createSection(
+        @NotNull Composite parent,
+        @NotNull String title,
+        @NotNull String persistKey,
+        int columns,
+        boolean expandedByDefault
+    ) {
+        ExpandableCompositeEx section = UIUtils.createExpandableCompositeWithSeparator(
+            parent, ExpandableComposite.CLIENT_INDENT, ExpandableComposite.TWISTIE);
+        section.setText(title);
+        section.setShowTextAsTitle(true);
+        section.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
+        // Seed the stored state before handing over the key. setPersistenceKey restores whatever
+        // is on file, and an absent setting reads as false -- so without this an expanded-by-default
+        // section would collapse itself the moment it became persistent.
+        IDialogSettings settings = UIUtils.getDialogSettings(ExpandableCompositeEx.class.getName());
+        if (settings.get(persistKey) == null) {
+            settings.put(persistKey, expandedByDefault);
+        }
+        section.setPersistenceKey(persistKey);
+
+        Composite client = new Composite(section, SWT.NONE);
+        GridLayout gl = new GridLayout(columns, false);
+        gl.marginWidth = 0;
+        gl.marginHeight = 0;
+        client.setLayout(gl);
+        section.setClient(client);
+        // Folding changes the height of everything below it, so the scroller has to be re-measured.
+        section.addExpansionListener(new ExpansionAdapter() {
+            @Override
+            public void expansionStateChanged(ExpansionEvent e) {
+                reflow();
+            }
+        });
+        return client;
+    }
+
+    @NotNull
+    private List<Composite> modeComposites() {
+        return List.of(emptyComposite, bm25Composite, nearTextComposite,
+            nearVectorComposite, nearObjectComposite, hybridComposite);
+    }
+
+    private void reflow() {
+        if (reflowing || content == null || content.isDisposed() || scroller == null || scroller.isDisposed()) {
+            return;
+        }
+        reflowing = true;
+        try {
+            content.layout(true, true);
+            // Width drives how the wrapping labels and fill fields report their height, so the
+            // minimum has to be measured at the width the content actually gets. Before the first
+            // layout there is no client area yet; DEFAULT then means "as wide as you like", which
+            // is the only honest answer until there is a width to measure against.
+            int width = scroller.getClientArea().width;
+            scroller.setMinSize(content.computeSize(width > 0 ? width : SWT.DEFAULT, SWT.DEFAULT));
+            content.getParent().layout(true, true);
+        } finally {
+            reflowing = false;
+        }
     }
 
     private static GridLayout twoColumnLayout() {
@@ -657,13 +762,15 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             default:
                 top = emptyComposite;
         }
-        fieldsLayout.topControl = top;
-        fieldsHolder.layout();
-        // The holder's preferred height can change when panels are rebuilt, so re-flow the
-        // whole panel rather than just the holder's children.
-        if (fieldsHolder.getParent() != null && !fieldsHolder.getParent().isDisposed()) {
-            fieldsHolder.getParent().layout(true, true);
+        for (Composite candidate : modeComposites()) {
+            if (candidate == null || candidate.isDisposed()) {
+                continue;
+            }
+            boolean showing = candidate == top;
+            candidate.setVisible(showing);
+            ((GridData) candidate.getLayoutData()).exclude = !showing;
         }
+        reflow();
     }
 
     private void refreshBm25PropertyList() {
@@ -702,13 +809,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     }
 
     private void createFilterSection(Composite parent) {
-        filtersGroup = new Group(parent, SWT.NONE);
-        filtersGroup.setText(WeaviateUIMessages.query_filters);
-        GridLayout gl = new GridLayout(1, false);
-        gl.marginWidth = 6;
-        gl.marginHeight = 6;
-        filtersGroup.setLayout(gl);
-        filtersGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        // Last of the stacked sections and collapsed by default: a query is usually run without
+        // filters, and the rows below are the panel's tallest block when they are used.
+        filtersGroup = createSection(parent, WeaviateUIMessages.query_filters, "filters", 1, false);
 
         Composite header = new Composite(filtersGroup, SWT.NONE);
         GridLayout hl = new GridLayout(4, false);
@@ -748,7 +851,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         FilterRowUi ui = new FilterRowUi(filterRowsHolder, currentPropertyNames(), seed);
         filterRowUis.add(ui);
         filterRowsHolder.layout(true, true);
-        filtersGroup.layout(true, true);
+        reflow();
     }
 
     private void clearFilterRows() {
@@ -804,7 +907,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         // copy text over the values just loaded.
         displayedMode = spec.getMode();
         loadAutoCutIntoUi(spec);
-
 
         // Filter rows
         if (filterRowsHolder != null && !filterRowsHolder.isDisposed()) {
@@ -1205,7 +1307,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                     dispose();
                     filterRowUis.remove(FilterRowUi.this);
                     filterRowsHolder.layout(true, true);
-                    filtersGroup.layout(true, true);
+                    reflow();
                 }
             });
 
