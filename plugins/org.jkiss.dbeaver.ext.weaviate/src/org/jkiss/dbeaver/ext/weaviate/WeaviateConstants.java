@@ -24,7 +24,7 @@ public class WeaviateConstants {
      * Must match the jar in {@code lib/} and the {@code Bundle-ClassPath} entry in
      * {@code META-INF/MANIFEST.MF}; those three are updated together when the client is upgraded.
      */
-    public static final String CLIENT_VERSION = "6.3.0";
+    public static final String CLIENT_VERSION = "6.3.1";
 
     public static final String DEFAULT_HTTP_HOST = "localhost";
     public static final int DEFAULT_HTTP_PORT = 8080;

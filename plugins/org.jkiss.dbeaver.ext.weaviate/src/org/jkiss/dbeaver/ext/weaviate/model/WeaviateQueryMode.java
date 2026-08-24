@@ -73,7 +73,7 @@ public enum WeaviateQueryMode {
     /**
      * Whether a reranker can reorder this mode's results.
      * <p>
-     * A client limitation, not a server one: client 6.3.0 exposes rerank only on the vector
+     * A client limitation, not a server one: client 6.3.1 exposes rerank only on the vector
      * search builders, so BM25 and Hybrid -- which the server could rerank -- have nowhere to
      * attach it. Fetch is unranked either way. Revisit on a client upgrade.
      */
@@ -98,7 +98,7 @@ public enum WeaviateQueryMode {
      * The three that reach a vector index: Near Text and Hybrid have the server embed the query
      * text, Near Vector is handed the vectors outright. Fetch ranks nothing, BM25 is keyword-only
      * and never touches a vector, and Near Object is left out for a duller reason -- Weaviate
-     * supports targets there, but client 6.3.0 exposes no Target overload of {@code nearObject}
+     * supports targets there, but client 6.3.1 exposes no Target overload of {@code nearObject}
      * to send them with.
      */
     public boolean supportsTargetVectors() {

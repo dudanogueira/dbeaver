@@ -10,8 +10,8 @@ The Weaviate Java client is **not** committed to this repository. Download it in
 building:
 
 ```bash
-curl -L -o plugins/org.jkiss.dbeaver.ext.weaviate/lib/client6-6.3.0-all.jar \
-  https://repo1.maven.org/maven2/io/weaviate/client6/6.3.0/client6-6.3.0-all.jar
+curl -L -o plugins/org.jkiss.dbeaver.ext.weaviate/lib/client6-6.3.1-all.jar \
+  https://repo1.maven.org/maven2/io/weaviate/client6/6.3.1/client6-6.3.1-all.jar
 ```
 
 The version must match `Bundle-ClassPath` in `META-INF/MANIFEST.MF` and

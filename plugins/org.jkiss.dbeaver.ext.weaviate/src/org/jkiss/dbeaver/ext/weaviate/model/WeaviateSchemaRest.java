@@ -43,7 +43,7 @@ import java.time.Duration;
  * fields the client's version does not know about and fills in defaults for ones it does - so a
  * definition can reach the server looking different from what the user typed, and configurations
  * the client cannot model become impossible to create at all (a {@code dynamic} vector index is one
- * such case as of 6.3.0).
+ * such case as of 6.3.1).
  * <p>
  * Sending the raw bytes avoids all of that: the server sees the user's document verbatim and its
  * response - success or refusal - is reported unchanged. Validation here is limited to "is this

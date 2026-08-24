@@ -226,7 +226,7 @@ public final class WeaviateQuerySpec {
      * The rerank request, or null for none.
      * <p>
      * Reranking reorders the result slice server-side by handing each object's property to the
-     * collection's reranker module. The reranked order is all that comes back -- client 6.3.0
+     * collection's reranker module. The reranked order is all that comes back -- client 6.3.1
      * never unmarshals the rerank score, so there is no column for it.
      */
     @Nullable

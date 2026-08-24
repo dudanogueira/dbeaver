@@ -1005,7 +1005,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
 
     /**
      * The spec's rerank request as the client type, or null for none. Attached inline in the
-     * near_* dispatch arms -- only their builders expose rerank in client 6.3.0 (see
+     * near_* dispatch arms -- only their builders expose rerank in client 6.3.1 (see
      * {@link WeaviateQueryMode#supportsRerank()}), and their common ancestor carrying the
      * setter is package-private, so there is no type to write a shared helper against.
      */
