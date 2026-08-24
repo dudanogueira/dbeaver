@@ -328,6 +328,46 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             nearVectorComposite, nearObjectComposite, hybridComposite);
     }
 
+    /**
+     * Re-measure the whole scrollable area after anything changes height.
+     * <p>
+     * One entry point on purpose. Laying out only the composite that changed leaves its ancestors
+     * holding the old preferred size, which is how a grown mode panel came to be drawn over the
+     * section beneath it instead of pushing it down.
+     */
+    /**
+     * Show how many rows a section holds alongside its title.
+     * <p>
+     * The point of the count is the collapsed state: folded shut, the title is all there is, and
+     * "Filters" alone cannot say whether anything is filtering. Left bare rather than "(0)" when
+     * empty -- nothing configured is the ordinary case, and a zero on every section is noise.
+     *
+     * @param client the composite handed back by {@link #createSection}, whose parent is the
+     *               section carrying the title
+     */
+    private void setSectionCount(@Nullable Composite client, @NotNull String title, int count) {
+        if (client == null || client.isDisposed()
+            || !(client.getParent() instanceof ExpandableCompositeEx section)
+            || section.isDisposed()
+        ) {
+            return;
+        }
+        section.setText(count > 0 ? title + " (" + count + ")" : title);
+        // The title is part of the section's own layout, and a longer one can need more width.
+        section.layout(true, true);
+        reflow();
+    }
+
+    private void updateFilterCount() {
+        setSectionCount(filtersGroup, WeaviateUIMessages.query_filters, filterRowUis.size());
+    }
+
+    private void updateTargetCount(@NotNull WeaviateQueryMode mode) {
+        List<TargetRowUi> rows = targetRowUis.get(mode);
+        setSectionCount(targetGroups.get(mode), WeaviateUIMessages.query_targets,
+            rows == null ? 0 : rows.size());
+    }
+
     private void reflow() {
         if (reflowing || content == null || content.isDisposed() || scroller == null || scroller.isDisposed()) {
             return;
@@ -813,6 +853,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             row.dispose();
         }
         rows.clear();
+        // As with the filters: loading a spec that names no targets clears the rows without adding
+        // any, and the title would otherwise still advertise the previous spec's count.
+        updateTargetCount(mode);
     }
 
     private void relayoutTargets(@NotNull WeaviateQueryMode mode) {
@@ -820,7 +863,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         if (holder != null && !holder.isDisposed()) {
             holder.layout(true, true);
         }
-        reflow();
+        // Reflows as part of retitling, so there is no separate reflow to make here.
+        updateTargetCount(mode);
     }
 
     /**
@@ -1098,7 +1142,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         FilterRowUi ui = new FilterRowUi(filterRowsHolder, currentPropertyNames(), seed);
         filterRowUis.add(ui);
         filterRowsHolder.layout(true, true);
-        reflow();
+        updateFilterCount();
     }
 
     private void clearFilterRows() {
@@ -1106,6 +1150,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             ui.dispose();
         }
         filterRowUis.clear();
+        // Needed on its own account: loading a spec with no filters at all clears the rows without
+        // adding any, and the title would otherwise keep the previous spec's count.
+        updateFilterCount();
     }
 
     private List<WeaviateFilterRow> collectFilterRows() {
@@ -1590,7 +1637,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                     dispose();
                     filterRowUis.remove(FilterRowUi.this);
                     filterRowsHolder.layout(true, true);
-                    reflow();
+                    updateFilterCount();
                 }
             });
 
