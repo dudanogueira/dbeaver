@@ -114,6 +114,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private final Map<WeaviateQueryMode, Text> generativeMaxTokensFields = new EnumMap<>(WeaviateQueryMode.class);
     private final Map<WeaviateQueryMode, Button> generativeMetadataChecks = new EnumMap<>(WeaviateQueryMode.class);
     private final Map<WeaviateQueryMode, Text> generativeResultFields = new EnumMap<>(WeaviateQueryMode.class);
+    /** Section rows revealed once generation is switched on, and once a provider is named. */
+    private final Map<WeaviateQueryMode, List<Control>> generativeWhenGenerating = new EnumMap<>(WeaviateQueryMode.class);
+    private final Map<WeaviateQueryMode, List<Control>> generativeWhenProviderNamed = new EnumMap<>(WeaviateQueryMode.class);
     /** Opt-in metadata checkboxes per mode: created / updated / (near_* only) certainty. */
     private final Map<WeaviateQueryMode, Button> createdChecks = new EnumMap<>(WeaviateQueryMode.class);
     private final Map<WeaviateQueryMode, Button> updatedChecks = new EnumMap<>(WeaviateQueryMode.class);
@@ -890,17 +893,39 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         group.setToolTipText(WeaviateUIMessages.query_generative_tip);
         ((GridData) group.getParent().getLayoutData()).horizontalSpan = 2;
 
-        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_generative_single);
+        // The provider leads, and doubles as the section's on/off switch: with "(no generation)"
+        // selected there is nothing to prompt, so the rest of the section is not merely disabled
+        // but absent. Choosing anything reveals it.
+        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_generative_provider);
+        Combo providerCombo = new Combo(group, SWT.READ_ONLY);
+        providerCombo.setLayoutData(fillFieldData());
+        providerCombo.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                syncGenerativeVisibility(mode);
+                updateGenerativeCount(mode);
+            }
+        });
+
+        // Shown whenever generation is on at all.
+        List<Control> whenGenerating = new ArrayList<>();
+        Label singleLabel = new Label(group, SWT.NONE);
+        singleLabel.setText(WeaviateUIMessages.query_generative_single);
         Text singleField = new Text(group, SWT.BORDER);
         singleField.setLayoutData(fillFieldData());
         singleField.setMessage(WeaviateUIMessages.query_generative_single_hint);
         singleField.addListener(SWT.Modify, e -> updateGenerativeCount(mode));
+        whenGenerating.add(singleLabel);
+        whenGenerating.add(singleField);
 
-        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_generative_grouped);
+        Label groupedLabel = new Label(group, SWT.NONE);
+        groupedLabel.setText(WeaviateUIMessages.query_generative_grouped);
         Text groupedField = new Text(group, SWT.BORDER);
         groupedField.setLayoutData(fillFieldData());
         groupedField.setMessage(WeaviateUIMessages.query_generative_grouped_hint);
         groupedField.addListener(SWT.Modify, e -> updateGenerativeCount(mode));
+        whenGenerating.add(groupedLabel);
+        whenGenerating.add(groupedField);
 
         Label propsLabel = new Label(group, SWT.NONE);
         propsLabel.setText(WeaviateUIMessages.query_generative_properties);
@@ -911,33 +936,40 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         plGd.heightHint = 60;
         propertyList.setLayoutData(plGd);
         propertyList.setToolTipText(WeaviateUIMessages.query_generative_properties_tip);
+        whenGenerating.add(propsLabel);
+        whenGenerating.add(propertyList);
 
-        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_generative_provider);
-        Combo providerCombo = new Combo(group, SWT.READ_ONLY);
-        providerCombo.setLayoutData(fillFieldData());
-        providerCombo.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                syncGenerativeParamsEnabled(mode);
-            }
-        });
-
-        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_generative_model);
+        // Shown only for a named provider: with the collection default the server never sees
+        // these, so they would be three boxes whose values go nowhere.
+        List<Control> whenProviderNamed = new ArrayList<>();
+        Label modelLabel = new Label(group, SWT.NONE);
+        modelLabel.setText(WeaviateUIMessages.query_generative_model);
         Text modelField = new Text(group, SWT.BORDER);
         modelField.setLayoutData(fillFieldData());
+        whenProviderNamed.add(modelLabel);
+        whenProviderNamed.add(modelField);
 
-        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_generative_temperature);
+        Label temperatureLabel = new Label(group, SWT.NONE);
+        temperatureLabel.setText(WeaviateUIMessages.query_generative_temperature);
         Text temperatureField = new Text(group, SWT.BORDER);
         temperatureField.setLayoutData(fillFieldData());
+        whenProviderNamed.add(temperatureLabel);
+        whenProviderNamed.add(temperatureField);
 
-        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_generative_max_tokens);
+        Label maxTokensLabel = new Label(group, SWT.NONE);
+        maxTokensLabel.setText(WeaviateUIMessages.query_generative_max_tokens);
         Text maxTokensField = new Text(group, SWT.BORDER);
         maxTokensField.setLayoutData(fillFieldData());
+        whenProviderNamed.add(maxTokensLabel);
+        whenProviderNamed.add(maxTokensField);
 
-        new Label(group, SWT.NONE).setText("");
+        Label metadataSpacer = new Label(group, SWT.NONE);
+        metadataSpacer.setText("");
         Button metadataCheck = new Button(group, SWT.CHECK);
         metadataCheck.setText(WeaviateUIMessages.query_generative_metadata);
         metadataCheck.setToolTipText(WeaviateUIMessages.query_generative_metadata_tip);
+        whenGenerating.add(metadataSpacer);
+        whenGenerating.add(metadataCheck);
 
         Label resultLabel = new Label(group, SWT.NONE);
         resultLabel.setText(WeaviateUIMessages.query_generative_grouped_result);
@@ -948,6 +980,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         GridData rfGd = new GridData(SWT.FILL, SWT.FILL, true, false);
         rfGd.heightHint = 60;
         resultField.setLayoutData(rfGd);
+        whenGenerating.add(resultLabel);
+        whenGenerating.add(resultField);
 
         generativeGroups.put(mode, group);
         generativeSingleFields.put(mode, singleField);
@@ -959,7 +993,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         generativeMaxTokensFields.put(mode, maxTokensField);
         generativeMetadataChecks.put(mode, metadataCheck);
         generativeResultFields.put(mode, resultField);
-        syncGenerativeParamsEnabled(mode);
+        generativeWhenGenerating.put(mode, whenGenerating);
+        generativeWhenProviderNamed.put(mode, whenProviderNamed);
+        syncGenerativeVisibility(mode);
     }
 
     /**
@@ -988,6 +1024,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             }
             int selected = combo.getSelectionIndex();
             combo.removeAll();
+            combo.add(WeaviateUIMessages.query_generative_provider_none);
             combo.add(defaultEntry);
             for (WeaviateGenerativeProvider provider : WeaviateGenerativeProvider.values()) {
                 combo.add(provider.getLabel());
@@ -1005,37 +1042,73 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                     if (idx >= 0) list.select(idx);
                 }
             }
-            syncGenerativeParamsEnabled(mode);
+            syncGenerativeVisibility(mode);
             updateGenerativeCount(mode);
         }
     }
 
     /**
-     * Model, temperature and max tokens only mean something with a provider chosen: with the
-     * collection default the server never sees them, so the fields grey out rather than
-     * accepting values that would be silently dropped.
+     * Reveal as much of the section as the provider choice justifies.
+     * <p>
+     * Hidden rather than disabled: with no generation chosen there is nothing to prompt, and a
+     * column of greyed-out boxes reads as broken rather than as not-applicable. The rows keep
+     * their contents while hidden, so flipping the provider back brings the prompts with it.
      */
-    private void syncGenerativeParamsEnabled(@NotNull WeaviateQueryMode mode) {
-        boolean overridden = selectedGenerativeProvider(mode) != null;
-        for (Map<WeaviateQueryMode, Text> fields
-            : List.of(generativeModelFields, generativeTemperatureFields, generativeMaxTokensFields)) {
-            Text field = fields.get(mode);
-            if (field != null && !field.isDisposed()) {
-                field.setEnabled(overridden);
+    private void syncGenerativeVisibility(@NotNull WeaviateQueryMode mode) {
+        int idx = providerIndex(mode);
+        setRowsVisible(generativeWhenGenerating.get(mode), idx > 0);
+        setRowsVisible(generativeWhenProviderNamed.get(mode), idx > 1);
+        Composite group = generativeGroups.get(mode);
+        if (group != null && !group.isDisposed()) {
+            group.layout(true, true);
+        }
+        reflow();
+    }
+
+    private static void setRowsVisible(@Nullable List<Control> rows, boolean visible) {
+        if (rows == null) {
+            return;
+        }
+        for (Control control : rows) {
+            if (control == null || control.isDisposed()) {
+                continue;
+            }
+            control.setVisible(visible);
+            Object data = control.getLayoutData();
+            if (data instanceof GridData gd) {
+                gd.exclude = !visible;
+            } else {
+                GridData gd = new GridData();
+                gd.exclude = !visible;
+                control.setLayoutData(gd);
             }
         }
     }
 
-    /** The chosen provider override, or null while the collection-default entry is selected. */
+    private int providerIndex(@NotNull WeaviateQueryMode mode) {
+        Combo combo = generativeProviderCombos.get(mode);
+        if (combo == null || combo.isDisposed()) {
+            return 0;
+        }
+        return Math.max(0, combo.getSelectionIndex());
+    }
+
+    /**
+     * The chosen provider override, or null for both "no generation" and "collection default" --
+     * neither sends one. Use {@link #providerIndex} to tell those two apart.
+     */
     @Nullable
     private WeaviateGenerativeProvider selectedGenerativeProvider(@NotNull WeaviateQueryMode mode) {
-        Combo combo = generativeProviderCombos.get(mode);
-        int idx = combo == null || combo.isDisposed() ? 0 : combo.getSelectionIndex();
-        return idx <= 0 ? null : WeaviateGenerativeProvider.values()[idx - 1];
+        int idx = providerIndex(mode);
+        return idx <= 1 ? null : WeaviateGenerativeProvider.values()[idx - 2];
     }
 
     /** Count = prompts filled in (0-2), so the folded title says whether anything will generate. */
     private void updateGenerativeCount(@NotNull WeaviateQueryMode mode) {
+        if (providerIndex(mode) == 0) {
+            setSectionCount(generativeGroups.get(mode), WeaviateUIMessages.query_generative, 0);
+            return;
+        }
         int count = 0;
         Text single = generativeSingleFields.get(mode);
         Text grouped = generativeGroupedFields.get(mode);
@@ -1057,6 +1130,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         if (singleField == null || singleField.isDisposed()
             || groupedField == null || groupedField.isDisposed()
         ) {
+            return null;
+        }
+        if (providerIndex(mode) == 0) {
+            // Generation switched off. The prompt fields are hidden but keep their text, so this
+            // is deliberate rather than a half-filled state worth complaining about.
             return null;
         }
         String single = singleField.getText();
@@ -1081,11 +1159,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         if (grouped.isBlank() && !groupedProperties.isEmpty()) {
             throw new IllegalArgumentException(
                 WeaviateUIMessages.query_generative_props_without_grouped);
-        }
-        if (provider == null
-            && (!model.isBlank() || !temperatureRaw.isBlank() || !maxTokensRaw.isBlank())) {
-            throw new IllegalArgumentException(
-                WeaviateUIMessages.query_generative_params_without_provider);
         }
         Float temperature = null;
         if (!temperatureRaw.isBlank()) {
@@ -1805,7 +1878,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         Combo providerCombo = generativeProviderCombos.get(mode);
         if (providerCombo != null && !providerCombo.isDisposed()) {
             WeaviateGenerativeProvider provider = task == null ? null : task.getProvider();
-            providerCombo.select(provider == null ? 0 : provider.ordinal() + 1);
+            int idx = task == null ? 0 : provider == null ? 1 : provider.ordinal() + 2;
+            providerCombo.select(idx);
         }
         setFieldText(generativeModelFields.get(mode), task == null ? null : task.getModel());
         setFieldText(generativeTemperatureFields.get(mode),
@@ -1813,7 +1887,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         setFieldText(generativeMaxTokensFields.get(mode),
             task == null || task.getMaxTokens() == null ? null : task.getMaxTokens().toString());
         setCheck(generativeMetadataChecks.get(mode), task != null && task.isReturnMetadata());
-        syncGenerativeParamsEnabled(mode);
+        syncGenerativeVisibility(mode);
         updateGenerativeCount(mode);
     }
 

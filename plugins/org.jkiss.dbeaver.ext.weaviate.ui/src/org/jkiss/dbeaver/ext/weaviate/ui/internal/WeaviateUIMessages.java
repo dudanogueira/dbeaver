@@ -146,6 +146,7 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_generative_properties;
     public static String query_generative_properties_tip;
     public static String query_generative_provider;
+    public static String query_generative_provider_none;
     public static String query_generative_provider_default;
     public static String query_generative_provider_default_none;
     public static String query_generative_model;
@@ -155,7 +156,6 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_generative_metadata_tip;
     public static String query_generative_grouped_result;
     public static String query_generative_props_without_grouped;
-    public static String query_generative_params_without_provider;
     public static String query_generative_invalid_temperature;
     public static String query_generative_invalid_max_tokens;
     public static String query_rerank;
