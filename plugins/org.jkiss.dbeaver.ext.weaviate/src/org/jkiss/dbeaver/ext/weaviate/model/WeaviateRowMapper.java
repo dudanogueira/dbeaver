@@ -84,7 +84,21 @@ public final class WeaviateRowMapper {
         @NotNull GenerativeObject<Map<String, Object>> obj,
         @Nullable String defaultVectorName
     ) {
-        return toRow(columns, RowSource.of(obj), defaultVectorName);
+        return toRow(columns, obj, defaultVectorName, null);
+    }
+
+    /**
+     * @param rerankScore score for this object, read off the reply by the model rather than by
+     *                    the client, or null when the search was not reranked
+     */
+    @NotNull
+    public static Object[] toRow(
+        @NotNull List<String> columns,
+        @NotNull GenerativeObject<Map<String, Object>> obj,
+        @Nullable String defaultVectorName,
+        @Nullable Float rerankScore
+    ) {
+        return toRow(columns, RowSource.of(obj, rerankScore), defaultVectorName);
     }
 
     @NotNull
@@ -120,9 +134,9 @@ public final class WeaviateRowMapper {
                 obj.createdAt(), obj.lastUpdatedAt(), null, rerankScore);
         }
 
-        static RowSource of(@NotNull GenerativeObject<Map<String, Object>> obj) {
+        static RowSource of(@NotNull GenerativeObject<Map<String, Object>> obj, @Nullable Float rerankScore) {
             return new RowSource(obj.uuid(), obj.properties(), obj.vectors(), obj.metadata(),
-                null, null, obj.generative(), null);
+                null, null, obj.generative(), rerankScore);
         }
     }
 

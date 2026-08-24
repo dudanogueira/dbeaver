@@ -618,7 +618,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 lastGenerativeGroupedResult =
                     response.generative() == null ? null : response.generative().text();
                 for (GenerativeObject<Map<String, Object>> obj : response.objects()) {
-                    rows.add(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName));
+                    rows.add(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName,
+                        lastRerankScores.get(obj.uuid())));
                 }
             } else {
                 lastGenerativeGroupedResult = null;
@@ -810,27 +811,38 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
             handle(spec.getTenant()).generate;
         Function<GenerativeTask.Builder, ObjectBuilder<GenerativeTask>> task =
             t -> configureTask(t, spec.getGenerative());
+        // The near_* arms need the task as an object, not a builder function: the score-reading
+        // path constructs the request itself.
+        GenerativeTask taskObject = GenerativeTask.of(task);
         switch (spec.getMode()) {
             case BM25:
                 return generate.bm25(requireQuery(spec, "BM25"),
                     b -> bm25Options(b, spec, filter, limit, offset), task);
             case NEAR_TEXT: {
                 String text = requireQuery(spec, "Near Text");
-                return spec.hasTargets()
-                    ? generate.nearText(buildTextTarget(spec, text),
-                        b -> nearTextOptions(b, spec, filter, limit, offset), task)
-                    : generate.nearText(text,
-                        b -> nearTextOptions(b, spec, filter, limit, offset), task);
+                NearText nearText = spec.hasTargets()
+                    ? NearText.of(buildTextTarget(spec, text),
+                        b -> nearTextOptions(b, spec, filter, limit, offset))
+                    : NearText.of(text,
+                        b -> nearTextOptions(b, spec, filter, limit, offset));
+                return runNearGenerative(generate, nearText, taskObject, spec,
+                    () -> generate.nearText(nearText, taskObject));
             }
-            case NEAR_VECTOR:
-                return spec.hasTargets()
-                    ? generate.nearVector(buildVectorTarget(spec),
-                        b -> nearVectorOptions(b, spec, filter, limit, offset), task)
-                    : generate.nearVector(requireVector(spec),
-                        b -> nearVectorOptions(b, spec, filter, limit, offset), task);
-            case NEAR_OBJECT:
-                return generate.nearObject(requireObjectId(spec),
-                    b -> nearObjectOptions(b, spec, filter, limit, offset), task);
+            case NEAR_VECTOR: {
+                NearVector nearVector = spec.hasTargets()
+                    ? NearVector.of(buildVectorTarget(spec),
+                        b -> nearVectorOptions(b, spec, filter, limit, offset))
+                    : NearVector.of(requireVector(spec),
+                        b -> nearVectorOptions(b, spec, filter, limit, offset));
+                return runNearGenerative(generate, nearVector, taskObject, spec,
+                    () -> generate.nearVector(nearVector, taskObject));
+            }
+            case NEAR_OBJECT: {
+                NearObject nearObject = NearObject.of(requireObjectId(spec),
+                    b -> nearObjectOptions(b, spec, filter, limit, offset));
+                return runNearGenerative(generate, nearObject, taskObject, spec,
+                    () -> generate.nearObject(nearObject, taskObject));
+            }
             case HYBRID: {
                 String text = requireQuery(spec, "Hybrid");
                 return spec.hasTargets()
@@ -867,6 +879,28 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         Map<String, Float> scores = new HashMap<>();
         QueryResponse<Map<String, Object>> response =
             WeaviateRerankSupport.search(query, operator, scores);
+        if (response == null) {
+            return plain.get();
+        }
+        lastRerankScores = scores;
+        return response;
+    }
+
+    /** {@link #runNear} for a generative search; same seam, different request type. */
+    @NotNull
+    private GenerativeResponse<Map<String, Object>> runNearGenerative(
+        @NotNull WeaviateGenerateClient<Map<String, Object>> generate,
+        @NotNull QueryOperator operator,
+        @NotNull GenerativeTask task,
+        @NotNull WeaviateQuerySpec spec,
+        @NotNull java.util.function.Supplier<GenerativeResponse<Map<String, Object>>> plain
+    ) {
+        if (spec.getRerank() == null || !WeaviateRerankSupport.isGenerativeAvailable()) {
+            return plain.get();
+        }
+        Map<String, Float> scores = new HashMap<>();
+        GenerativeResponse<Map<String, Object>> response =
+            WeaviateRerankSupport.generate(generate, operator, task, scores);
         if (response == null) {
             return plain.get();
         }
@@ -1140,9 +1174,13 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
      * client uses its own Rpc, which this does not wrap.
      */
     private static boolean hasRerankScore(@NotNull WeaviateQuerySpec spec) {
-        return spec.getRerank() != null
-            && spec.getGenerative() == null
-            && WeaviateRerankSupport.isAvailable();
+        if (spec.getRerank() == null) {
+            return false;
+        }
+        // Each path has its own seam, and either can resolve without the other.
+        return spec.getGenerative() != null
+            ? WeaviateRerankSupport.isGenerativeAvailable()
+            : WeaviateRerankSupport.isAvailable();
     }
 
     /**
