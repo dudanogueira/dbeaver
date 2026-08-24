@@ -92,4 +92,36 @@ public class WeaviateRowMapperTest extends DBeaverUnitTest {
         Assertions.assertEquals("u", row[1]);
         Assertions.assertEquals(1, row[2]);
     }
+
+    @Test
+    public void flatVectorRendersAsABracketedList() {
+        WeaviateObject<Map<String, Object>> obj = WeaviateObject.of(b -> b
+            .uuid("u")
+            .properties(new HashMap<>())
+            .vectors(io.weaviate.client6.v1.api.collections.Vectors.of("title", new float[]{0.1f, 0.2f})));
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.VECTOR_PREFIX + "title"), obj);
+        Assertions.assertEquals("[0.1, 0.2]", row[0]);
+    }
+
+    /**
+     * A multi-vector embedding used to be bracketed twice -- once by the formatter and again by
+     * the caller -- rendering as [[[0.1, 0.2]], [[0.3, 0.4]]]. It has to come out in the form a
+     * Near Vector query accepts back, or a value copied from the grid cannot be pasted into one.
+     */
+    @Test
+    public void multiVectorRendersInTheFormTheParserAccepts() {
+        WeaviateObject<Map<String, Object>> obj = WeaviateObject.of(b -> b
+            .uuid("u")
+            .properties(new HashMap<>())
+            .vectors(io.weaviate.client6.v1.api.collections.Vectors.of(
+                "colbert", new float[][]{{0.1f, 0.2f}, {0.3f, 0.4f}})));
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.VECTOR_PREFIX + "colbert"), obj);
+
+        Assertions.assertEquals("[[0.1, 0.2], [0.3, 0.4]]", row[0]);
+        Assertions.assertArrayEquals(
+            new float[][]{{0.1f, 0.2f}, {0.3f, 0.4f}},
+            WeaviateVectorParser.parseMulti((String) row[0]));
+    }
 }

@@ -102,20 +102,19 @@ public final class WeaviateRowMapper {
         if (vectors == null || !vectors.contains(vectorName)) {
             return null;
         }
-        float[] single = vectors.getSingle(vectorName);
-        if (single != null) {
+        // Read the raw value and branch on what it actually is. getSingle is a bare cast to
+        // float[], so on a multi-vector it throws ClassCastException rather than returning null
+        // -- asking it first made the multi-vector branch below unreachable and turned a ColBERT
+        // column into a failed read of the whole row.
+        Object value = vectors.asMap().get(vectorName);
+        if (value instanceof float[] single) {
             return WeaviateVectorParser.format(single);
         }
-        float[][] multi = vectors.getMulti(vectorName);
-        if (multi == null) {
+        if (!(value instanceof float[][] multi)) {
             return null;
         }
-        // Multi-vector (ColBERT-style) embeddings: one bracketed vector per token.
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < multi.length; i++) {
-            if (i > 0) sb.append(", ");
-            sb.append('[').append(WeaviateVectorParser.format(multi[i])).append(']');
-        }
-        return sb.append(']').toString();
+        // Multi-vector (ColBERT-style) embeddings: one bracketed vector per token. Formatted by
+        // the parser so what is shown is what a Near Vector query accepts back.
+        return WeaviateVectorParser.formatMulti(multi);
     }
 }

@@ -77,4 +77,97 @@ public class WeaviateVectorParserTest extends DBeaverUnitTest {
         Assertions.assertEquals("", WeaviateVectorParser.format(null));
         Assertions.assertEquals("", WeaviateVectorParser.format(new float[0]));
     }
+
+    @Test
+    public void parsesMultiVectorMatrix() {
+        float[][] m = WeaviateVectorParser.parseMulti("[[0.1, 0.2], [0.3, 0.4]]");
+        Assertions.assertNotNull(m);
+        Assertions.assertEquals(2, m.length);
+        Assertions.assertArrayEquals(new float[]{0.1f, 0.2f}, m[0], 0.0001f);
+        Assertions.assertArrayEquals(new float[]{0.3f, 0.4f}, m[1], 0.0001f);
+    }
+
+    /**
+     * The outer brackets are decoration; the inner ones are what separates one vector from the
+     * next, so a bare comma-separated run of rows has to parse the same way.
+     */
+    @Test
+    public void outerBracketsAreOptionalOnAMatrix() {
+        Assertions.assertArrayEquals(
+            WeaviateVectorParser.parseMulti("[[1, 2], [3, 4]]"),
+            WeaviateVectorParser.parseMulti("[1, 2], [3, 4]"));
+    }
+
+    /**
+     * A single flat vector is one vector, not a one-row matrix: "[0.1, 0.2]" must keep both
+     * components rather than being read as the matrix "[0.1, 0.2]" of two 1-component rows.
+     */
+    @Test
+    public void singleRowKeepsItsComponents() {
+        float[][] m = WeaviateVectorParser.parseMulti("[[0.1, 0.2]]");
+        Assertions.assertEquals(1, m.length);
+        Assertions.assertArrayEquals(new float[]{0.1f, 0.2f}, m[0], 0.0001f);
+    }
+
+    @Test
+    public void rejectsRaggedMatrix() {
+        NumberFormatException e = Assertions.assertThrows(NumberFormatException.class,
+            () -> WeaviateVectorParser.parseMulti("[[1, 2], [3]]"));
+        Assertions.assertTrue(e.getMessage().contains("Vector 2"),
+            "the message should name the offending row, was: " + e.getMessage());
+    }
+
+    @Test
+    public void rejectsMatrixRowWithoutBrackets() {
+        Assertions.assertThrows(NumberFormatException.class,
+            () -> WeaviateVectorParser.parseMulti("[1, 2, [3, 4]]"));
+    }
+
+    @Test
+    public void rejectsUnclosedMatrixRow() {
+        Assertions.assertThrows(NumberFormatException.class,
+            () -> WeaviateVectorParser.parseMulti("[[1, 2], [3, 4"));
+    }
+
+    @Test
+    public void emptyMatrixInputIsNull() {
+        Assertions.assertNull(WeaviateVectorParser.parseMulti(null));
+        Assertions.assertNull(WeaviateVectorParser.parseMulti("   "));
+    }
+
+    /**
+     * A matrix shown in the result grid has to be pastable straight back into a Near Vector
+     * query, which only holds while format and parse agree on the shape.
+     */
+    @Test
+    public void formatMultiRoundTrips() {
+        float[][] original = {{0.1f, 0.2f}, {0.3f, 0.4f}};
+        Assertions.assertArrayEquals(original,
+            WeaviateVectorParser.parseMulti(WeaviateVectorParser.formatMulti(original)));
+    }
+
+    @Test
+    public void formatMultiOfEmptyIsBlank() {
+        Assertions.assertEquals("", WeaviateVectorParser.formatMulti(null));
+        Assertions.assertEquals("", WeaviateVectorParser.formatMulti(new float[0][]));
+    }
+
+    @Test
+    public void toleratesSpacedOuterBrackets() {
+        float[][] m = WeaviateVectorParser.parseMulti("[ [1, 2], [3, 4] ]");
+        Assertions.assertEquals(2, m.length);
+        Assertions.assertArrayEquals(new float[]{3f, 4f}, m[1], 0.0001f);
+    }
+
+    /**
+     * A single bracketed run reads as a matrix of one vector, which is what a one-token ColBERT
+     * query is. Telling that apart from a flat vector is not the parser's job -- the panel knows
+     * the target's index and picks the parser accordingly.
+     */
+    @Test
+    public void singleBracketedRunIsAOneVectorMatrix() {
+        float[][] m = WeaviateVectorParser.parseMulti("[0.1, 0.2]");
+        Assertions.assertEquals(1, m.length);
+        Assertions.assertArrayEquals(new float[]{0.1f, 0.2f}, m[0], 0.0001f);
+    }
 }
