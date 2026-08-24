@@ -124,4 +124,42 @@ public class WeaviateRowMapperTest extends DBeaverUnitTest {
             new float[][]{{0.1f, 0.2f}, {0.3f, 0.4f}},
             WeaviateVectorParser.parseMulti((String) row[0]));
     }
+
+    /**
+     * Timestamps render as ISO-8601 rather than raw epoch millis: readable, and still sorts
+     * correctly as text. Null when the query did not ask for them.
+     */
+    @Test
+    public void timestampsRenderAsIso8601() {
+        // The record constructor: the builder exposes no timestamp setters, since writes never
+        // send them -- they are server-assigned.
+        WeaviateObject<Map<String, Object>> obj = new WeaviateObject<>(
+            "u", null, null, new HashMap<>(), null,
+            1735689600000L, 1735776000000L, null, null);
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.CREATED, WeaviateColumns.UPDATED), obj);
+        Assertions.assertEquals("2025-01-01T00:00:00Z", row[0]);
+        Assertions.assertEquals("2025-01-02T00:00:00Z", row[1]);
+    }
+
+    @Test
+    public void timestampsAreNullWhenNotRequested() {
+        WeaviateObject<Map<String, Object>> obj = WeaviateObject.of(b -> b
+            .uuid("u")
+            .properties(new HashMap<>()));
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.CREATED, WeaviateColumns.UPDATED, WeaviateColumns.CERTAINTY), obj);
+        Assertions.assertNull(row[0]);
+        Assertions.assertNull(row[1]);
+        Assertions.assertNull(row[2]);
+    }
+
+    @Test
+    public void certaintyComesFromQueryMetadata() {
+        WeaviateObject<Map<String, Object>> obj = new WeaviateObject<>(
+            "u", null, null, new HashMap<>(), null, null, null,
+            new QueryMetadata(0.25f, 0.875f, null, null), null);
+        Object[] row = WeaviateRowMapper.toRow(List.of(WeaviateColumns.CERTAINTY), obj);
+        Assertions.assertEquals(0.875f, row[0]);
+    }
 }

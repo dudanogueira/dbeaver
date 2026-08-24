@@ -256,14 +256,14 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
     @Test
     public void everyModeDeclaresItsOwnCapabilities() {
         record Expected(WeaviateQueryMode mode, boolean score, boolean distance,
-                        boolean explain, boolean autoCut, boolean targets) { }
+                        boolean explain, boolean autoCut, boolean targets, boolean certainty) { }
         java.util.List<Expected> matrix = java.util.List.of(
-            new Expected(WeaviateQueryMode.FETCH, false, false, false, false, false),
-            new Expected(WeaviateQueryMode.BM25, true, false, true, true, false),
-            new Expected(WeaviateQueryMode.NEAR_TEXT, false, true, false, true, true),
-            new Expected(WeaviateQueryMode.NEAR_VECTOR, false, true, false, true, true),
-            new Expected(WeaviateQueryMode.NEAR_OBJECT, false, true, false, true, false),
-            new Expected(WeaviateQueryMode.HYBRID, true, false, true, true, true));
+            new Expected(WeaviateQueryMode.FETCH, false, false, false, false, false, false),
+            new Expected(WeaviateQueryMode.BM25, true, false, true, true, false, false),
+            new Expected(WeaviateQueryMode.NEAR_TEXT, false, true, false, true, true, true),
+            new Expected(WeaviateQueryMode.NEAR_VECTOR, false, true, false, true, true, true),
+            new Expected(WeaviateQueryMode.NEAR_OBJECT, false, true, false, true, false, true),
+            new Expected(WeaviateQueryMode.HYBRID, true, false, true, true, true, false));
 
         Assertions.assertEquals(WeaviateQueryMode.values().length, matrix.size(),
             "a mode was added without deciding its score/distance/explain/autocut/target behaviour");
@@ -274,6 +274,8 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
             Assertions.assertEquals(e.autoCut(), e.mode().supportsAutoCut(), e.mode() + ".supportsAutoCut");
             Assertions.assertEquals(e.targets(), e.mode().supportsTargetVectors(),
                 e.mode() + ".supportsTargetVectors");
+            Assertions.assertEquals(e.certainty(), e.mode().supportsCertainty(),
+                e.mode() + ".supportsCertainty");
         }
     }
 
@@ -296,6 +298,18 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
             if (mode != WeaviateQueryMode.FETCH) {
                 Assertions.assertTrue(mode.supportsAutoCut(), mode + " is ranked, so autocut applies");
             }
+        }
+    }
+
+    /**
+     * Certainty is a normalisation of the distance, so a mode cannot report one without the
+     * other.
+     */
+    @Test
+    public void certaintyExistsExactlyWhereDistanceDoes() {
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            Assertions.assertEquals(mode.hasDistance(), mode.supportsCertainty(),
+                mode + ": certainty without distance (or the reverse)");
         }
     }
 
@@ -421,6 +435,9 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
             .distance(0.25f)
             .targets(java.util.List.of(title))
             .combination(WeaviateVectorCombination.RELATIVE_SCORE)
+            .withCreated(true)
+            .withUpdated(true)
+            .withCertainty(true)
             .includeVector(false)
             .build();
 
@@ -434,6 +451,9 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
         Assertions.assertEquals(Float.valueOf(0.25f), copy.getDistance());
         Assertions.assertEquals(java.util.List.of(title), copy.getTargets());
         Assertions.assertEquals(WeaviateVectorCombination.RELATIVE_SCORE, copy.getCombination());
+        Assertions.assertTrue(copy.isWithCreated());
+        Assertions.assertTrue(copy.isWithUpdated());
+        Assertions.assertTrue(copy.isWithCertainty());
     }
 
     @Test

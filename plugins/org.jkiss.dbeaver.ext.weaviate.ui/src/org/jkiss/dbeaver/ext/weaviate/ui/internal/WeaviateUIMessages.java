@@ -137,6 +137,11 @@ public final class WeaviateUIMessages extends NLS {
     // Autocut
     public static String query_autocut;
     public static String query_autocut_tip;
+    public static String query_metadata;
+    public static String query_metadata_created;
+    public static String query_metadata_updated;
+    public static String query_metadata_certainty;
+    public static String query_metadata_tip;
     public static String query_targets;
     public static String query_targets_tip;
     public static String query_target_add;

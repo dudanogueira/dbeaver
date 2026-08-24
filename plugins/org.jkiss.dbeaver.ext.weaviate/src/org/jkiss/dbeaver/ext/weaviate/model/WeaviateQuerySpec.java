@@ -44,6 +44,10 @@ public final class WeaviateQuerySpec {
     private final List<WeaviateFilterRow> filterRows;
     private final boolean anyFilter;
     private final boolean includeVector;
+    /** Opt-in metadata columns; each adds a request field and a grid column. */
+    private final boolean withCreated;
+    private final boolean withUpdated;
+    private final boolean withCertainty;
     /** Named vectors to search, with their weights. Empty means "let the server pick". */
     private final List<WeaviateVectorTarget> targets;
     /** How several targets are joined into one ranking; null when there is only one. */
@@ -64,6 +68,9 @@ public final class WeaviateQuerySpec {
         this.filterRows = b.filterRows == null ? Collections.emptyList() : List.copyOf(b.filterRows);
         this.anyFilter = b.anyFilter;
         this.includeVector = b.includeVector;
+        this.withCreated = b.withCreated;
+        this.withUpdated = b.withUpdated;
+        this.withCertainty = b.withCertainty;
         this.targets = b.targets == null ? Collections.emptyList() : List.copyOf(b.targets);
         this.combination = b.combination;
     }
@@ -209,6 +216,24 @@ public final class WeaviateQuerySpec {
         return anyFilter;
     }
 
+    /** Whether to fetch and show the object creation time. */
+    public boolean isWithCreated() {
+        return withCreated;
+    }
+
+    /** Whether to fetch and show the last update time. */
+    public boolean isWithUpdated() {
+        return withUpdated;
+    }
+
+    /**
+     * Whether to fetch and show certainty. Only meaningful where
+     * {@link WeaviateQueryMode#supportsCertainty()} holds; ignored elsewhere.
+     */
+    public boolean isWithCertainty() {
+        return withCertainty;
+    }
+
     /**
      * The named vectors this search targets, in the order the user listed them.
      * <p>
@@ -260,6 +285,9 @@ public final class WeaviateQuerySpec {
             .filterRows(filterRows)
             .anyFilter(anyFilter)
             .includeVector(includeVector)
+            .withCreated(withCreated)
+            .withUpdated(withUpdated)
+            .withCertainty(withCertainty)
             .targets(targets)
             .combination(combination);
     }
@@ -292,6 +320,9 @@ public final class WeaviateQuerySpec {
         private List<WeaviateFilterRow> filterRows;
         private boolean anyFilter;
         private boolean includeVector;
+        private boolean withCreated;
+        private boolean withUpdated;
+        private boolean withCertainty;
         private List<WeaviateVectorTarget> targets;
         private WeaviateVectorCombination combination;
 
@@ -361,6 +392,21 @@ public final class WeaviateQuerySpec {
 
         public Builder includeVector(boolean include) {
             this.includeVector = include;
+            return this;
+        }
+
+        public Builder withCreated(boolean withCreated) {
+            this.withCreated = withCreated;
+            return this;
+        }
+
+        public Builder withUpdated(boolean withUpdated) {
+            this.withUpdated = withUpdated;
+            return this;
+        }
+
+        public Builder withCertainty(boolean withCertainty) {
+            this.withCertainty = withCertainty;
             return this;
         }
 

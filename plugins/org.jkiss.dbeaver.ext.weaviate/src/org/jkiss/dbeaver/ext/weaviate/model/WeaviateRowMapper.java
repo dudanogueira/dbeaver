@@ -79,6 +79,14 @@ public final class WeaviateRowMapper {
                 return meta == null ? null : meta.distance();
             case WeaviateColumns.EXPLAIN_SCORE:
                 return meta == null ? null : meta.explainScore();
+            case WeaviateColumns.CERTAINTY:
+                return meta == null ? null : meta.certainty();
+            // Timestamps live on the object, not on QueryMetadata, which is why readColumn is
+            // handed both.
+            case WeaviateColumns.CREATED:
+                return formatTimestamp(obj.createdAt());
+            case WeaviateColumns.UPDATED:
+                return formatTimestamp(obj.lastUpdatedAt());
             default:
                 String vectorName = WeaviateColumns.vectorNameOf(column, defaultVectorName);
                 if (vectorName != null) {
@@ -86,6 +94,19 @@ public final class WeaviateRowMapper {
                 }
                 return properties == null ? null : properties.get(column);
         }
+    }
+
+    /**
+     * Epoch milliseconds as ISO-8601 UTC, or null when the query did not ask for the timestamp.
+     * A string rather than a raw long: the number is unreadable, and ISO-8601 still sorts
+     * correctly as text.
+     */
+    @Nullable
+    private static String formatTimestamp(@Nullable Long epochMillis) {
+        if (epochMillis == null) {
+            return null;
+        }
+        return java.time.Instant.ofEpochMilli(epochMillis).toString();
     }
 
     /**

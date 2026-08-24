@@ -95,6 +95,10 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Combo tenantCombo;
     /** One include-vectors toggle per mode, beside that mode's other result options. */
     private final Map<WeaviateQueryMode, Button> includeVectorChecks = new EnumMap<>(WeaviateQueryMode.class);
+    /** Opt-in metadata checkboxes per mode: created / updated / (near_* only) certainty. */
+    private final Map<WeaviateQueryMode, Button> createdChecks = new EnumMap<>(WeaviateQueryMode.class);
+    private final Map<WeaviateQueryMode, Button> updatedChecks = new EnumMap<>(WeaviateQueryMode.class);
+    private final Map<WeaviateQueryMode, Button> certaintyChecks = new EnumMap<>(WeaviateQueryMode.class);
     /** Target-vector section per mode that can carry one; see WeaviateQueryMode#supportsTargetVectors. */
     private final Map<WeaviateQueryMode, Composite> targetGroups = new EnumMap<>(WeaviateQueryMode.class);
     private final Map<WeaviateQueryMode, Combo> targetJoinCombos = new EnumMap<>(WeaviateQueryMode.class);
@@ -463,6 +467,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         Label l = new Label(c, SWT.WRAP);
         l.setText(WeaviateUIMessages.query_fetch_hint);
         addIncludeVectorField(c, WeaviateQueryMode.FETCH);
+        addMetadataFields(c, WeaviateQueryMode.FETCH);
         l.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
         return c;
     }
@@ -486,6 +491,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         bm25PropertiesList.setLayoutData(lgd);
         bm25PropertiesList.setToolTipText(WeaviateUIMessages.query_bm25_properties_tip);
         addIncludeVectorField(c, WeaviateQueryMode.BM25);
+        addMetadataFields(c, WeaviateQueryMode.BM25);
         addExplainScoreField(c, WeaviateQueryMode.BM25);
         addAutoCutField(c, WeaviateQueryMode.BM25);
         return c;
@@ -507,6 +513,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         nearTextDistanceField.setMessage(WeaviateUIMessages.query_distance_hint);
         runOnEnter(nearTextDistanceField);
         addIncludeVectorField(c, WeaviateQueryMode.NEAR_TEXT);
+        addMetadataFields(c, WeaviateQueryMode.NEAR_TEXT);
         addAutoCutField(c, WeaviateQueryMode.NEAR_TEXT);
         addTargetVectorField(c, WeaviateQueryMode.NEAR_TEXT);
         return c;
@@ -531,6 +538,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         nearVectorDistanceField.setMessage(WeaviateUIMessages.query_distance_hint);
         runOnEnter(nearVectorDistanceField);
         addIncludeVectorField(c, WeaviateQueryMode.NEAR_VECTOR);
+        addMetadataFields(c, WeaviateQueryMode.NEAR_VECTOR);
         addAutoCutField(c, WeaviateQueryMode.NEAR_VECTOR);
         addTargetVectorField(c, WeaviateQueryMode.NEAR_VECTOR);
         return c;
@@ -553,6 +561,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         nearObjectDistanceField.setMessage(WeaviateUIMessages.query_distance_hint);
         runOnEnter(nearObjectDistanceField);
         addIncludeVectorField(c, WeaviateQueryMode.NEAR_OBJECT);
+        addMetadataFields(c, WeaviateQueryMode.NEAR_OBJECT);
         addAutoCutField(c, WeaviateQueryMode.NEAR_OBJECT);
         return c;
     }
@@ -612,6 +621,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         hybridFusionCombo.select(0);
         hybridFusionCombo.setLayoutData(fillFieldData());
         addIncludeVectorField(c, WeaviateQueryMode.HYBRID);
+        addMetadataFields(c, WeaviateQueryMode.HYBRID);
         addExplainScoreField(c, WeaviateQueryMode.HYBRID);
         addAutoCutField(c, WeaviateQueryMode.HYBRID);
         addTargetVectorField(c, WeaviateQueryMode.HYBRID);
@@ -1015,6 +1025,43 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
     }
 
+    /**
+     * Adds the opt-in metadata checkboxes to a mode's own field panel, beside the other options
+     * that decide what comes back. Certainty appears only where the mode can produce one --
+     * same reasoning as the explain-score toggle.
+     */
+    private void addMetadataFields(@NotNull Composite c, @NotNull WeaviateQueryMode mode) {
+        Label label = new Label(c, SWT.NONE);
+        label.setText(WeaviateUIMessages.query_metadata);
+        label.setToolTipText(WeaviateUIMessages.query_metadata_tip);
+
+        Composite row = new Composite(c, SWT.NONE);
+        GridLayout gl = new GridLayout(3, false);
+        gl.marginWidth = 0;
+        gl.marginHeight = 0;
+        row.setLayout(gl);
+        row.setLayoutData(fillFieldData());
+
+        Button created = new Button(row, SWT.CHECK);
+        created.setText(WeaviateUIMessages.query_metadata_created);
+        createdChecks.put(mode, created);
+
+        Button updated = new Button(row, SWT.CHECK);
+        updated.setText(WeaviateUIMessages.query_metadata_updated);
+        updatedChecks.put(mode, updated);
+
+        if (mode.supportsCertainty()) {
+            Button certainty = new Button(row, SWT.CHECK);
+            certainty.setText(WeaviateUIMessages.query_metadata_certainty);
+            certaintyChecks.put(mode, certainty);
+        }
+    }
+
+    private boolean currentCheck(@NotNull Map<WeaviateQueryMode, Button> checks) {
+        Button check = checks.get(currentMode());
+        return check != null && !check.isDisposed() && check.getSelection();
+    }
+
     private boolean currentIncludeVector() {
         Button check = includeVectorChecks.get(currentMode());
         return check != null && !check.isDisposed() && check.getSelection();
@@ -1252,6 +1299,15 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         if (vectors != null && !vectors.isDisposed()) {
             vectors.setSelection(spec.isIncludeVector());
         }
+        setCheck(createdChecks.get(spec.getMode()), spec.isWithCreated());
+        setCheck(updatedChecks.get(spec.getMode()), spec.isWithUpdated());
+        setCheck(certaintyChecks.get(spec.getMode()), spec.isWithCertainty());
+    }
+
+    private static void setCheck(@Nullable Button check, boolean selected) {
+        if (check != null && !check.isDisposed()) {
+            check.setSelection(selected);
+        }
     }
 
     /**
@@ -1456,6 +1512,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             .autoCut(currentAutoCut())
             .explainScore(currentExplainScore())
             .includeVector(currentIncludeVector())
+            .withCreated(currentCheck(createdChecks))
+            .withUpdated(currentCheck(updatedChecks))
+            .withCertainty(currentCheck(certaintyChecks))
             .targets(targets)
             // Only sent when there is more than one target to join; with one there is nothing
             // to join and the model leaves the strategy off the request entirely.

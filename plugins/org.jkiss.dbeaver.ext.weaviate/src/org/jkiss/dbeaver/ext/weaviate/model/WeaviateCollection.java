@@ -476,6 +476,15 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (spec.getMode().hasDistance()) {
             columnNames.add(WeaviateColumns.DISTANCE);
         }
+        if (spec.isWithCertainty() && spec.getMode().supportsCertainty()) {
+            columnNames.add(WeaviateColumns.CERTAINTY);
+        }
+        if (spec.isWithCreated()) {
+            columnNames.add(WeaviateColumns.CREATED);
+        }
+        if (spec.isWithUpdated()) {
+            columnNames.add(WeaviateColumns.UPDATED);
+        }
 
         // A multi-tenant collection has no queryable "all tenants" view; Weaviate errors out.
         // Asked once, when no tenant has been chosen yet -- asking on every read means a dialog
@@ -561,7 +570,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         try (LocalStatement statement = new LocalStatement(session, queryText)) {
             statement.setStatementSource(source);
             LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
-            populateColumns(resultSet, attributes, vectorNames, singleVector, spec.getMode(), spec.isExplainScore());
+            populateColumns(resultSet, attributes, vectorNames, singleVector, spec);
             String defaultVectorName = singleVector && !vectorNames.isEmpty() ? vectorNames.get(0) : null;
             for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
                 resultSet.addRow(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName));
@@ -602,12 +611,16 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         try (LocalStatement statement = new LocalStatement(session, queryText)) {
             statement.setStatementSource(source);
             LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
-            populateColumns(resultSet, attributes, vectorNames, singleVector, spec.getMode(), spec.isExplainScore());
+            populateColumns(resultSet, attributes, vectorNames, singleVector, spec);
             try {
                 Paginator<Map<String, Object>> paginator =
                     handle(spec.getTenant()).paginate(b -> {
                         if (filter != null) b.filters(filter);
                         if (spec.isIncludeVector()) b.includeVector();
+                        // The export path must return the same columns the grid shows, so the
+                        // opt-in metadata rides along here as well.
+                        List<Metadata> extra = extraMetadata(spec);
+                        if (!extra.isEmpty()) b.returnMetadata(extra);
                         return b;
                     });
                 for (WeaviateObject<Map<String, Object>> obj : paginator) {
@@ -839,6 +852,28 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (autoCut != null && autoCut > 0 && spec.getMode().supportsAutoCut()) {
             b.autolimit(autoCut);
         }
+        // Opt-in metadata. returnMetadata is additive across calls on the same builder, so this
+        // does not disturb the per-mode SCORE/DISTANCE requests made at the dispatch sites.
+        List<Metadata> extra = extraMetadata(spec);
+        if (!extra.isEmpty()) {
+            b.returnMetadata(extra);
+        }
+    }
+
+    /**
+     * The metadata the user opted into beyond what the mode itself needs, ready to request.
+     * Certainty is gated on the mode: the server derives it from vector distance, so asking for
+     * it elsewhere returns nothing and the flag is simply ignored.
+     */
+    @NotNull
+    private static List<Metadata> extraMetadata(@NotNull WeaviateQuerySpec spec) {
+        List<Metadata> extra = new ArrayList<>(3);
+        if (spec.isWithCreated()) extra.add(Metadata.CREATION_TIME_UNIX);
+        if (spec.isWithUpdated()) extra.add(Metadata.LAST_UPDATE_TIME_UNIX);
+        if (spec.isWithCertainty() && spec.getMode().supportsCertainty()) {
+            extra.add(Metadata.CERTAINTY);
+        }
+        return extra;
     }
 
     /**
@@ -942,9 +977,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         @NotNull List<WeaviateProperty> attributes,
         @NotNull List<String> vectorNames,
         boolean singleVector,
-        @NotNull WeaviateQueryMode mode,
-        boolean explainScore
+        @NotNull WeaviateQuerySpec spec
     ) {
+        WeaviateQueryMode mode = spec.getMode();
         rs.addColumn(WeaviateColumns.UUID, DBPDataKind.STRING);
         for (WeaviateProperty p : attributes) {
             rs.addColumn(p.getName(), p.getDataKind());
@@ -958,11 +993,20 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (mode.hasScore()) {
             rs.addColumn(WeaviateColumns.SCORE, DBPDataKind.NUMERIC);
         }
-        if (mode.hasExplainScore() && explainScore) {
+        if (mode.hasExplainScore() && spec.isExplainScore()) {
             rs.addColumn(WeaviateColumns.EXPLAIN_SCORE, DBPDataKind.STRING);
         }
         if (mode.hasDistance()) {
             rs.addColumn(WeaviateColumns.DISTANCE, DBPDataKind.NUMERIC);
+        }
+        if (spec.isWithCertainty() && mode.supportsCertainty()) {
+            rs.addColumn(WeaviateColumns.CERTAINTY, DBPDataKind.NUMERIC);
+        }
+        if (spec.isWithCreated()) {
+            rs.addColumn(WeaviateColumns.CREATED, DBPDataKind.STRING);
+        }
+        if (spec.isWithUpdated()) {
+            rs.addColumn(WeaviateColumns.UPDATED, DBPDataKind.STRING);
         }
     }
 

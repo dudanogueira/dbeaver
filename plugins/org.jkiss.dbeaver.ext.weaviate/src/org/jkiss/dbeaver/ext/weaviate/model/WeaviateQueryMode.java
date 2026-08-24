@@ -71,6 +71,17 @@ public enum WeaviateQueryMode {
     }
 
     /**
+     * Whether the server can report a certainty for this mode's results.
+     * <p>
+     * Certainty is a normalisation of the vector distance, so it exists exactly where distance
+     * does: the three near_* searches. The keyword and fused scores have no distance to derive
+     * it from -- the server leaves it null there, so offering the column would only add a blank.
+     */
+    public boolean supportsCertainty() {
+        return hasDistance();
+    }
+
+    /**
      * Whether this mode can name the vectors it searches.
      * <p>
      * The three that reach a vector index: Near Text and Hybrid have the server embed the query

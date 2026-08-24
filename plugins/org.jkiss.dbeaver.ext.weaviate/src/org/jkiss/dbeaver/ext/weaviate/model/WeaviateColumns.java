@@ -24,6 +24,16 @@ public final class WeaviateColumns {
     /** Server's explanation of how {@link #SCORE} was arrived at. Keyword modes only. */
     public static final String EXPLAIN_SCORE = "_explainScore";
 
+    /** Object creation time, rendered ISO-8601. Opt-in via the metadata checkboxes. */
+    public static final String CREATED = "_created";
+    /** Last update time, rendered ISO-8601. Opt-in via the metadata checkboxes. */
+    public static final String UPDATED = "_updated";
+    /**
+     * Certainty: the vector distance normalised to [0, 1]. Near_* modes only -- keyword and
+     * fused scores have no distance to derive it from.
+     */
+    public static final String CERTAINTY = "_certainty";
+
     /** Column holding the embedding when a collection has a single (or unnamed) vector. */
     public static final String VECTOR = "_vector";
     /** Prefix for per-vector columns when a collection declares several named vectors. */
