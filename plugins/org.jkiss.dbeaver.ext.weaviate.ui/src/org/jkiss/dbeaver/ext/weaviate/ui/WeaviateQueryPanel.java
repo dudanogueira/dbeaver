@@ -99,6 +99,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private final Map<WeaviateQueryMode, Composite> targetGroups = new EnumMap<>(WeaviateQueryMode.class);
     private final Map<WeaviateQueryMode, Combo> targetJoinCombos = new EnumMap<>(WeaviateQueryMode.class);
     private final Map<WeaviateQueryMode, Composite> targetRowsHolders = new EnumMap<>(WeaviateQueryMode.class);
+    private final Map<WeaviateQueryMode, Button> targetAddButtons = new EnumMap<>(WeaviateQueryMode.class);
     private final Map<WeaviateQueryMode, java.util.List<TargetRowUi>> targetRowUis = new EnumMap<>(WeaviateQueryMode.class);
     /** Guards reflow against the resize it can itself provoke. */
     private boolean reflowing;
@@ -360,6 +361,59 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
 
     private void updateFilterCount() {
         setSectionCount(filtersGroup, WeaviateUIMessages.query_filters, filterRowUis.size());
+    }
+
+    /**
+     * Per mode, because the target section is: each mode owns its own rows, so each carries its
+     * own count. It matters more here than on the filters -- a search of a collection with several
+     * named vectors has to name a target, so "(0)" folded away is a query that will not run.
+     */
+    /**
+     * Leave each row's dropdown offering only the vectors no other row has taken, plus its own.
+     * <p>
+     * A vector can only be targeted once -- naming it twice is not a heavier weighting, it is a
+     * malformed query -- so the choice is removed rather than offered and then rejected. The
+     * Add button switches off once every vector is spoken for, since the row it would add could
+     * name nothing.
+     */
+    private void syncTargetChoices(@NotNull WeaviateQueryMode mode) {
+        List<TargetRowUi> rows = targetRowUis.get(mode);
+        if (rows == null) {
+            return;
+        }
+        List<String> taken = new ArrayList<>(rows.size());
+        for (TargetRowUi row : rows) {
+            String name = row.selectedName();
+            if (!name.isBlank()) {
+                taken.add(name);
+            }
+        }
+        for (TargetRowUi row : rows) {
+            row.refreshChoices(taken);
+        }
+        Button add = targetAddButtons.get(mode);
+        if (add != null && !add.isDisposed()) {
+            add.setEnabled(rows.size() < currentVectorizers().size());
+        }
+    }
+
+    /**
+     * Vector names no row has claimed yet, in declared order. Seeds a new row so it opens on a
+     * free choice rather than on one already in use.
+     */
+    @NotNull
+    private List<String> freeTargetNames(@NotNull WeaviateQueryMode mode) {
+        List<TargetRowUi> rows = targetRowUis.get(mode);
+        List<String> free = new ArrayList<>();
+        for (WeaviateVectorizer vectorizer : currentVectorizers()) {
+            free.add(vectorizer.getVectorName());
+        }
+        if (rows != null) {
+            for (TargetRowUi row : rows) {
+                free.remove(row.selectedName());
+            }
+        }
+        return free;
     }
 
     private void updateTargetCount(@NotNull WeaviateQueryMode mode) {
@@ -762,6 +816,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 addTargetRow(mode, null);
             }
         });
+        targetAddButtons.put(mode, addTarget);
 
         Composite rowsHolder = new Composite(group, SWT.NONE);
         GridLayout rl = new GridLayout(1, false);
@@ -796,6 +851,10 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             ((GridData) section.getLayoutData()).exclude = !visible;
             if (!visible) {
                 clearTargetRows(entry.getKey());
+            } else {
+                // The collection may have changed under the panel, so what is on offer -- and
+                // whether there is anything left to add -- has to be recomputed.
+                syncTargetChoices(entry.getKey());
             }
         }
         // Near Vector's single unnamed vector box only makes sense while the server can guess
@@ -838,9 +897,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         if (holder == null || holder.isDisposed()) {
             return;
         }
-        TargetRowUi row = new TargetRowUi(holder, mode, currentVectorizers(), seed);
+        TargetRowUi row = new TargetRowUi(
+            holder, mode, currentVectorizers(), freeTargetNames(mode), seed);
         targetRowUis.get(mode).add(row);
         syncTargetWeightsEnabled(mode);
+        syncTargetChoices(mode);
         relayoutTargets(mode);
     }
 
@@ -853,6 +914,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             row.dispose();
         }
         rows.clear();
+        syncTargetChoices(mode);
         // As with the filters: loading a spec that names no targets clears the rows without adding
         // any, and the title would otherwise still advertise the previous spec's count.
         updateTargetCount(mode);
@@ -1222,6 +1284,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         displayedMode = spec.getMode();
         loadAutoCutIntoUi(spec);
         loadTargetsIntoUi(spec);
+
 
         // Filter rows
         if (filterRowsHolder != null && !filterRowsHolder.isDisposed()) {
@@ -1692,6 +1755,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             @NotNull Composite parent,
             @NotNull WeaviateQueryMode mode,
             @NotNull List<WeaviateVectorizer> vectorizers,
+            @NotNull List<String> freeNames,
             @Nullable WeaviateVectorTarget seed
         ) {
             this.vectorizers = vectorizers;
@@ -1707,8 +1771,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             container.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
             nameCombo = new Combo(container, SWT.READ_ONLY);
-            for (WeaviateVectorizer vectorizer : vectorizers) {
-                nameCombo.add(vectorizer.getVectorName());
+            for (String free : freeNames) {
+                nameCombo.add(free);
             }
             GridData ncGd = new GridData(SWT.LEFT, SWT.CENTER, false, false);
             ncGd.widthHint = 140;
@@ -1717,6 +1781,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 @Override
                 public void widgetSelected(SelectionEvent e) {
                     syncVectorHint();
+                    // This row just claimed a name and gave up another; both moves change what
+                    // the other rows may offer.
+                    syncTargetChoices(mode);
                 }
             });
 
@@ -1742,11 +1809,18 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 public void widgetSelected(SelectionEvent e) {
                     dispose();
                     targetRowUis.get(mode).remove(TargetRowUi.this);
+                    // The name this row held is free again, so it returns to the other dropdowns.
+                    syncTargetChoices(mode);
                     relayoutTargets(mode);
                 }
             });
 
             if (seed != null) {
+                // A seeded name is this row's own, so it belongs in its list even though the
+                // caller counted it as taken.
+                if (nameCombo.indexOf(seed.getName()) < 0) {
+                    nameCombo.add(seed.getName());
+                }
                 nameCombo.setText(seed.getName());
                 if (seed.getWeight() != null) weightField.setText(seed.getWeight().toString());
                 if (vectorField != null) {
@@ -1756,7 +1830,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                         vectorField.setText(WeaviateVectorParser.format(seed.getVector()));
                     }
                 }
-            } else if (!vectorizers.isEmpty()) {
+            } else if (nameCombo.getItemCount() > 0) {
                 nameCombo.select(0);
             }
             syncVectorHint();
@@ -1783,6 +1857,46 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 }
             }
             return false;
+        }
+
+        @NotNull
+        String selectedName() {
+            String name = nameCombo.isDisposed() ? null : nameCombo.getText();
+            return name == null ? "" : name;
+        }
+
+        /**
+         * Re-offer only the vectors still free, keeping this row's own choice in the list.
+         * <p>
+         * Rebuilt only when the options actually differ: setItems clears the selection, and doing
+         * that on every keystroke elsewhere in the panel would make the combo flicker.
+         */
+        void refreshChoices(@NotNull List<String> taken) {
+            if (nameCombo.isDisposed()) {
+                return;
+            }
+            String mine = selectedName();
+            List<String> available = new ArrayList<>();
+            for (WeaviateVectorizer vectorizer : vectorizers) {
+                String name = vectorizer.getVectorName();
+                if (name.equals(mine) || !taken.contains(name)) {
+                    available.add(name);
+                }
+            }
+            // A name the collection no longer declares -- a spec saved before the schema changed
+            // -- stays on the list. Dropping it would silently turn a target the user configured
+            // into a blank row that is quietly ignored; left in place they can see it and change
+            // it, and running it says plainly that the server does not know that vector.
+            if (!mine.isBlank() && !available.contains(mine)) {
+                available.add(mine);
+            }
+            if (available.equals(List.of(nameCombo.getItems()))) {
+                return;
+            }
+            nameCombo.setItems(available.toArray(new String[0]));
+            if (!mine.isBlank()) {
+                nameCombo.setText(mine);
+            }
         }
 
         void setWeightEnabled(boolean enabled) {
