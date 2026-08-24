@@ -137,6 +137,27 @@ public final class WeaviateUIMessages extends NLS {
     // Autocut
     public static String query_autocut;
     public static String query_autocut_tip;
+    public static String query_generative;
+    public static String query_generative_tip;
+    public static String query_generative_single;
+    public static String query_generative_single_hint;
+    public static String query_generative_grouped;
+    public static String query_generative_grouped_hint;
+    public static String query_generative_properties;
+    public static String query_generative_properties_tip;
+    public static String query_generative_provider;
+    public static String query_generative_provider_default;
+    public static String query_generative_provider_default_none;
+    public static String query_generative_model;
+    public static String query_generative_temperature;
+    public static String query_generative_max_tokens;
+    public static String query_generative_metadata;
+    public static String query_generative_metadata_tip;
+    public static String query_generative_grouped_result;
+    public static String query_generative_props_without_grouped;
+    public static String query_generative_params_without_provider;
+    public static String query_generative_invalid_temperature;
+    public static String query_generative_invalid_max_tokens;
     public static String query_rerank;
     public static String query_rerank_tip;
     public static String query_rerank_property;
