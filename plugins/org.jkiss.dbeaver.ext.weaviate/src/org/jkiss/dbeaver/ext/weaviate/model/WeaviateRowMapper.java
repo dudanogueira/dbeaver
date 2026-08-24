@@ -18,6 +18,9 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 
 import io.weaviate.client6.v1.api.collections.Vectors;
 import io.weaviate.client6.v1.api.collections.WeaviateObject;
+import io.weaviate.client6.v1.api.collections.generate.GenerativeObject;
+import io.weaviate.client6.v1.api.collections.generate.TaskOutput;
+import io.weaviate.client6.v1.api.collections.generative.ProviderMetadata;
 import io.weaviate.client6.v1.api.collections.query.QueryMetadata;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
@@ -53,26 +56,71 @@ public final class WeaviateRowMapper {
         @NotNull WeaviateObject<Map<String, Object>> obj,
         @Nullable String defaultVectorName
     ) {
+        return toRow(columns, RowSource.of(obj), defaultVectorName);
+    }
+
+    /**
+     * The generative twin of the object overload. {@code GenerativeObject} is not a
+     * {@code WeaviateObject} -- it adds the generated output but has no timestamps -- so the two
+     * meet in {@link RowSource} rather than one adapting to the other.
+     */
+    @NotNull
+    public static Object[] toRow(
+        @NotNull List<String> columns,
+        @NotNull GenerativeObject<Map<String, Object>> obj,
+        @Nullable String defaultVectorName
+    ) {
+        return toRow(columns, RowSource.of(obj), defaultVectorName);
+    }
+
+    @NotNull
+    private static Object[] toRow(
+        @NotNull List<String> columns,
+        @NotNull RowSource source,
+        @Nullable String defaultVectorName
+    ) {
         Object[] row = new Object[columns.size()];
-        Map<String, Object> properties = obj.properties();
-        QueryMetadata meta = obj.queryMetadata();
         for (int i = 0; i < columns.size(); i++) {
-            row[i] = readColumn(columns.get(i), obj, properties, meta, defaultVectorName);
+            row[i] = readColumn(columns.get(i), source, defaultVectorName);
         }
         return row;
+    }
+
+    /**
+     * Everything a row can be built from, regardless of which response type delivered it.
+     * Timestamps are null on the generative path -- the client's GenerativeObject simply does
+     * not carry them -- and the generated output is null on the plain one.
+     */
+    private record RowSource(
+        @Nullable String uuid,
+        @Nullable Map<String, Object> properties,
+        @Nullable Vectors vectors,
+        @Nullable QueryMetadata meta,
+        @Nullable Long createdAt,
+        @Nullable Long updatedAt,
+        @Nullable TaskOutput generated
+    ) {
+        static RowSource of(@NotNull WeaviateObject<Map<String, Object>> obj) {
+            return new RowSource(obj.uuid(), obj.properties(), obj.vectors(), obj.queryMetadata(),
+                obj.createdAt(), obj.lastUpdatedAt(), null);
+        }
+
+        static RowSource of(@NotNull GenerativeObject<Map<String, Object>> obj) {
+            return new RowSource(obj.uuid(), obj.properties(), obj.vectors(), obj.metadata(),
+                null, null, obj.generative());
+        }
     }
 
     @Nullable
     private static Object readColumn(
         @NotNull String column,
-        @NotNull WeaviateObject<Map<String, Object>> obj,
-        @Nullable Map<String, Object> properties,
-        @Nullable QueryMetadata meta,
+        @NotNull RowSource source,
         @Nullable String defaultVectorName
     ) {
+        QueryMetadata meta = source.meta();
         switch (column) {
             case WeaviateColumns.UUID:
-                return obj.uuid();
+                return source.uuid();
             case WeaviateColumns.SCORE:
                 return meta == null ? null : meta.score();
             case WeaviateColumns.DISTANCE:
@@ -81,19 +129,33 @@ public final class WeaviateRowMapper {
                 return meta == null ? null : meta.explainScore();
             case WeaviateColumns.CERTAINTY:
                 return meta == null ? null : meta.certainty();
-            // Timestamps live on the object, not on QueryMetadata, which is why readColumn is
-            // handed both.
             case WeaviateColumns.CREATED:
-                return formatTimestamp(obj.createdAt());
+                return formatTimestamp(source.createdAt());
             case WeaviateColumns.UPDATED:
-                return formatTimestamp(obj.lastUpdatedAt());
+                return formatTimestamp(source.updatedAt());
+            case WeaviateColumns.GENERATED:
+                return source.generated() == null ? null : source.generated().text();
+            case WeaviateColumns.GENERATIVE_META:
+                return source.generated() == null ? null
+                    : formatGenerativeMeta(source.generated().metadata());
             default:
                 String vectorName = WeaviateColumns.vectorNameOf(column, defaultVectorName);
                 if (vectorName != null) {
-                    return readVector(obj, vectorName);
+                    return readVector(source.vectors(), vectorName);
                 }
-                return properties == null ? null : properties.get(column);
+                return source.properties() == null ? null : source.properties().get(column);
         }
+    }
+
+    /**
+     * Provider usage as text. The client types this as a marker interface with one concrete
+     * record per provider, and even their usage sub-records share no common type -- so rather
+     * than 14 instanceof branches, the record's own toString is used: for every provider it
+     * reads as Metadata[usage=Usage[promptTokens=.., completionTokens=.., totalTokens=..]].
+     */
+    @Nullable
+    static String formatGenerativeMeta(@Nullable ProviderMetadata metadata) {
+        return metadata == null ? null : metadata.toString();
     }
 
     /**
@@ -118,8 +180,7 @@ public final class WeaviateRowMapper {
      * visibly empty instead of misreported as a zero-length one.
      */
     @Nullable
-    private static String readVector(@NotNull WeaviateObject<Map<String, Object>> obj, @NotNull String vectorName) {
-        Vectors vectors = obj.vectors();
+    private static String readVector(@Nullable Vectors vectors, @NotNull String vectorName) {
         if (vectors == null || !vectors.contains(vectorName)) {
             return null;
         }

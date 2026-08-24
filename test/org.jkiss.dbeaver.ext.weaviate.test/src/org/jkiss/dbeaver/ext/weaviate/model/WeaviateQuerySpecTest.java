@@ -504,4 +504,45 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
         Assertions.assertEquals(new WeaviateRerankSpec("title", null),
             new WeaviateRerankSpec("title", ""));
     }
+
+    @Test
+    public void generativeTaskNeedsAPrompt() {
+        Assertions.assertThrows(IllegalArgumentException.class,
+            () -> WeaviateGenerativeTask.builder().build());
+        Assertions.assertThrows(IllegalArgumentException.class,
+            () -> WeaviateGenerativeTask.builder().singlePrompt("   ").build());
+    }
+
+    @Test
+    public void generativeTaskNormalisesBlanks() {
+        WeaviateGenerativeTask task = WeaviateGenerativeTask.builder()
+            .singlePrompt("Summarize {title}")
+            .groupedTask("  ")
+            .model("   ")
+            .build();
+        Assertions.assertEquals("Summarize {title}", task.getSinglePrompt());
+        Assertions.assertNull(task.getGroupedTask());
+        Assertions.assertNull(task.getModel());
+        Assertions.assertTrue(task.getGroupedProperties().isEmpty());
+    }
+
+    @Test
+    public void generativeSurvivesTheCopies() {
+        WeaviateGenerativeTask task = WeaviateGenerativeTask.builder()
+            .singlePrompt("Summarize {title}")
+            .groupedTask("What do these share?")
+            .groupedProperties(java.util.List.of("title", "body"))
+            .provider(WeaviateGenerativeProvider.OPENAI)
+            .model("gpt-4o")
+            .temperature(0.2f)
+            .maxTokens(128)
+            .returnMetadata(true)
+            .build();
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.HYBRID)
+            .query("q")
+            .generative(task)
+            .build();
+        Assertions.assertEquals(task, spec.withTenant("acme").getGenerative());
+        Assertions.assertEquals(task, spec.withIncludeVector(true).getGenerative());
+    }
 }

@@ -26,7 +26,19 @@ import io.weaviate.client6.v1.api.collections.WeaviateObject;
 import io.weaviate.client6.v1.api.collections.aggregate.AggregateResponse;
 import io.weaviate.client6.v1.api.collections.pagination.Paginator;
 import io.weaviate.client6.v1.api.collections.data.DeleteManyResponse;
+import io.weaviate.client6.v1.api.collections.generate.GenerativeResponse;
+import io.weaviate.client6.v1.api.collections.generate.GenerativeTask;
+import io.weaviate.client6.v1.api.collections.generate.GenerativeProvider;
+import io.weaviate.client6.v1.api.collections.generate.GenerativeObject;
+import io.weaviate.client6.v1.api.collections.generate.WeaviateGenerateClient;
+import io.weaviate.client6.v1.api.collections.query.Bm25;
+import io.weaviate.client6.v1.api.collections.query.FetchObjects;
 import io.weaviate.client6.v1.api.collections.query.Filter;
+import io.weaviate.client6.v1.api.collections.query.Hybrid;
+import io.weaviate.client6.v1.api.collections.query.NearObject;
+import io.weaviate.client6.v1.api.collections.query.NearText;
+import io.weaviate.client6.v1.api.collections.query.NearVector;
+import io.weaviate.client6.v1.internal.ObjectBuilder;
 import io.weaviate.client6.v1.api.collections.tenants.Tenant;
 import io.weaviate.client6.v1.api.collections.query.Metadata;
 import io.weaviate.client6.v1.api.collections.query.NearVectorTarget;
@@ -73,6 +85,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.TreeMap;
 
 public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
@@ -105,6 +118,12 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
     private WeaviateUuidConstraint uuidConstraint;
 
     private volatile String lastQueryError;
+    /**
+     * The last grouped-task generative output, or null. One text for the whole result set, so
+     * it has no row to live on -- the Query panel shows it in the Generative section, polling
+     * this after each run exactly as it polls {@link #lastQueryError}.
+     */
+    private volatile String lastGenerativeGroupedResult;
     private volatile String pendingSchemaJson;
     private volatile List<WeaviateJsonNode> definitionNodes;
 
@@ -339,6 +358,21 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         return WeaviateRecordIntrospect.toFields(this, config.objectTtl());
     }
 
+    /**
+     * Kind of the collection's configured generative module ("OPENAI", ...), or null when none
+     * is. What a generative query uses when no runtime provider override is sent -- the Query
+     * panel names it in the provider dropdown's default entry.
+     */
+    @Nullable
+    public String getGenerativeModuleKind() {
+        var module = config.generativeModule();
+        if (module == null) {
+            return null;
+        }
+        Object kind = module._kind();
+        return kind == null ? null : kind.toString();
+    }
+
     @Association
     public List<WeaviateMetadataField> getGenerativeFields(@NotNull DBRProgressMonitor monitor) {
         return WeaviateRecordIntrospect.toFields(this, config.generativeModule());
@@ -486,6 +520,12 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (spec.isWithUpdated()) {
             columnNames.add(WeaviateColumns.UPDATED);
         }
+        if (spec.getGenerative() != null && spec.getGenerative().getSinglePrompt() != null) {
+            columnNames.add(WeaviateColumns.GENERATED);
+            if (spec.getGenerative().isReturnMetadata()) {
+                columnNames.add(WeaviateColumns.GENERATIVE_META);
+            }
+        }
 
         // A multi-tenant collection has no queryable "all tenants" view; Weaviate errors out.
         // Asked once, when no tenant has been chosen yet -- asking on every read means a dialog
@@ -530,16 +570,36 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         // serve it: Weaviate refuses offsets past QUERY_MAXIMUM_RESULTS (10000 by default), so a
         // large collection would fail partway through. The cursor paginator walks the whole
         // collection server-side instead, with no such ceiling.
-        if (maxRows <= 0 && spec.getMode() == WeaviateQueryMode.FETCH) {
+        if (maxRows <= 0 && spec.getMode() == WeaviateQueryMode.FETCH && spec.getGenerative() == null) {
+            // (Generative fetches never take this path: the paginator cannot carry a task, and
+            // prompting a model once per object across an entire collection is not an export
+            // anyone means to run by accident.)
             return readAllViaCursor(
                 source, session, dataReceiver, statistics, spec, filter,
                 attributes, columnNames, vectorNames, singleVector, queryText, firstRow);
         }
 
         long startTime = System.currentTimeMillis();
-        QueryResponse<Map<String, Object>> response;
+        List<Object[]> rows;
+        String defaultVectorName = singleVector && !vectorNames.isEmpty() ? vectorNames.get(0) : null;
         try {
-            response = executeQuery(spec, filter, sortBy, limit, offset);
+            rows = new ArrayList<>();
+            if (spec.getGenerative() != null) {
+                GenerativeResponse<Map<String, Object>> response =
+                    executeGenerativeQuery(spec, filter, sortBy, limit, offset);
+                lastGenerativeGroupedResult =
+                    response.generative() == null ? null : response.generative().text();
+                for (GenerativeObject<Map<String, Object>> obj : response.objects()) {
+                    rows.add(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName));
+                }
+            } else {
+                lastGenerativeGroupedResult = null;
+                QueryResponse<Map<String, Object>> response =
+                    executeQuery(spec, filter, sortBy, limit, offset);
+                for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
+                    rows.add(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName));
+                }
+            }
             lastQueryError = null;
         } catch (IllegalStateException e) {
             // Pre-flight validation (missing query text / empty vector). The user is still
@@ -572,9 +632,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
             statement.setStatementSource(source);
             LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
             populateColumns(resultSet, attributes, vectorNames, singleVector, spec);
-            String defaultVectorName = singleVector && !vectorNames.isEmpty() ? vectorNames.get(0) : null;
-            for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
-                resultSet.addRow(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName));
+            for (Object[] row : rows) {
+                resultSet.addRow(row);
             }
             DBDDataReceiver.startFetchWorkflow(dataReceiver, session, resultSet, firstRow, maxRows);
             DBDDataReceiver.fetchRowsWithStatistics(dataReceiver, session, resultSet, statistics);
@@ -662,114 +721,223 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
     ) {
         WeaviateQueryClient<Map<String, Object>> query =
             handle(spec.getTenant()).query;
-        Rerank rerank = buildRerank(spec);
         switch (spec.getMode()) {
-            case BM25: {
-                String text = requireQuery(spec, "BM25");
-                List<String> queryProperties = spec.getQueryProperties();
-                return query.bm25(text, b -> {
-                    applyCommon(b, spec, filter, limit, offset);
-                    b.returnMetadata(scoreMetadata(spec));
-                    if (!queryProperties.isEmpty()) b.queryProperties(queryProperties);
-                    return b;
-                });
-            }
+            case BM25:
+                return query.bm25(requireQuery(spec, "BM25"),
+                    b -> bm25Options(b, spec, filter, limit, offset));
             case NEAR_TEXT: {
                 String text = requireQuery(spec, "Near Text");
-                Float distance = spec.getDistance();
                 // A target is chosen by swapping the first argument, not by a builder call: the
                 // Target record carries the query text as well as the vectors it applies to.
-                if (spec.hasTargets()) {
-                    Target target = buildTextTarget(spec, text);
-                    return query.nearText(target, b -> {
-                        applyCommon(b, spec, filter, limit, offset);
-                        if (rerank != null) b.rerank(rerank);
-                        b.returnMetadata(Metadata.DISTANCE);
-                        if (distance != null) b.distance(distance);
-                        return b;
-                    });
-                }
-                return query.nearText(text, b -> {
-                    applyCommon(b, spec, filter, limit, offset);
-                    if (rerank != null) b.rerank(rerank);
-                    b.returnMetadata(Metadata.DISTANCE);
-                    if (distance != null) b.distance(distance);
-                    return b;
-                });
+                return spec.hasTargets()
+                    ? query.nearText(buildTextTarget(spec, text),
+                        b -> nearTextOptions(b, spec, filter, limit, offset))
+                    : query.nearText(text,
+                        b -> nearTextOptions(b, spec, filter, limit, offset));
             }
-            case NEAR_VECTOR: {
-                Float nearVectorDistance = spec.getDistance();
-                if (spec.hasTargets()) {
-                    NearVectorTarget target = buildVectorTarget(spec);
-                    return query.nearVector(target, b -> {
-                        applyCommon(b, spec, filter, limit, offset);
-                        if (rerank != null) b.rerank(rerank);
-                        b.returnMetadata(Metadata.DISTANCE);
-                        if (nearVectorDistance != null) b.distance(nearVectorDistance);
-                        return b;
-                    });
-                }
-                float[] vector = spec.getVector();
-                if (vector == null || vector.length == 0) {
-                    throw new IllegalStateException("Near Vector mode requires a non-empty vector");
-                }
-                Float distance = spec.getDistance();
-                return query.nearVector(vector, b -> {
-                    applyCommon(b, spec, filter, limit, offset);
-                    if (rerank != null) b.rerank(rerank);
-                    b.returnMetadata(Metadata.DISTANCE);
-                    if (distance != null) b.distance(distance);
-                    return b;
-                });
-            }
-            case NEAR_OBJECT: {
-                // Near Vector is handed a vector; Near Object is handed an object id and the
-                // server resolves that object's stored vector itself, so this works even when
-                // the reference object's vector is never returned to the client.
-                String uuid = spec.getObjectId();
-                if (uuid == null || uuid.isBlank()) {
-                    throw new IllegalStateException(
-                        "Near Object mode requires the UUID of a reference object");
-                }
-                Float distance = spec.getDistance();
-                return query.nearObject(uuid, b -> {
-                    applyCommon(b, spec, filter, limit, offset);
-                    if (rerank != null) b.rerank(rerank);
-                    b.returnMetadata(Metadata.DISTANCE);
-                    if (distance != null) b.distance(distance);
-                    return b;
-                });
-            }
+            case NEAR_VECTOR:
+                return spec.hasTargets()
+                    ? query.nearVector(buildVectorTarget(spec),
+                        b -> nearVectorOptions(b, spec, filter, limit, offset))
+                    : query.nearVector(requireVector(spec),
+                        b -> nearVectorOptions(b, spec, filter, limit, offset));
+            case NEAR_OBJECT:
+                return query.nearObject(requireObjectId(spec),
+                    b -> nearObjectOptions(b, spec, filter, limit, offset));
             case HYBRID: {
                 String text = requireQuery(spec, "Hybrid");
-                Float alpha = spec.getAlpha();
-                WeaviateHybridFusion fusion = spec.getFusionType();
-                if (spec.hasTargets()) {
-                    Target target = buildTextTarget(spec, text);
-                    return query.hybrid(target, b -> {
-                        applyCommon(b, spec, filter, limit, offset);
-                        b.returnMetadata(scoreMetadata(spec));
-                        if (alpha != null) b.alpha(alpha);
-                        if (fusion != null) b.fusionType(fusion.toClientType());
-                        return b;
-                    });
-                }
-                return query.hybrid(text, b -> {
-                    applyCommon(b, spec, filter, limit, offset);
-                    b.returnMetadata(scoreMetadata(spec));
-                    if (alpha != null) b.alpha(alpha);
-                    if (fusion != null) b.fusionType(fusion.toClientType());
-                    return b;
-                });
+                return spec.hasTargets()
+                    ? query.hybrid(buildTextTarget(spec, text),
+                        b -> hybridOptions(b, spec, filter, limit, offset))
+                    : query.hybrid(text,
+                        b -> hybridOptions(b, spec, filter, limit, offset));
             }
             case FETCH:
             default:
-                return query.fetchObjects(b -> {
-                    applyCommon(b, spec, filter, limit, offset);
-                    if (!sortBy.isEmpty()) b.sort(sortBy);
-                    return b;
-                });
+                return query.fetchObjects(b -> fetchOptions(b, spec, filter, sortBy, limit, offset));
         }
+    }
+
+    /**
+     * The generative twin of {@link #executeQuery}: the same operators through the generate
+     * client, which mirrors every overload with a trailing task argument. The two dispatchers
+     * share the per-mode options methods below, so a query behaves identically with and without
+     * a generative task attached.
+     */
+    @NotNull
+    private GenerativeResponse<Map<String, Object>> executeGenerativeQuery(
+        @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter,
+        @NotNull List<SortBy> sortBy,
+        int limit,
+        int offset
+    ) {
+        WeaviateGenerateClient<Map<String, Object>> generate =
+            handle(spec.getTenant()).generate;
+        Function<GenerativeTask.Builder, ObjectBuilder<GenerativeTask>> task =
+            t -> configureTask(t, spec.getGenerative());
+        switch (spec.getMode()) {
+            case BM25:
+                return generate.bm25(requireQuery(spec, "BM25"),
+                    b -> bm25Options(b, spec, filter, limit, offset), task);
+            case NEAR_TEXT: {
+                String text = requireQuery(spec, "Near Text");
+                return spec.hasTargets()
+                    ? generate.nearText(buildTextTarget(spec, text),
+                        b -> nearTextOptions(b, spec, filter, limit, offset), task)
+                    : generate.nearText(text,
+                        b -> nearTextOptions(b, spec, filter, limit, offset), task);
+            }
+            case NEAR_VECTOR:
+                return spec.hasTargets()
+                    ? generate.nearVector(buildVectorTarget(spec),
+                        b -> nearVectorOptions(b, spec, filter, limit, offset), task)
+                    : generate.nearVector(requireVector(spec),
+                        b -> nearVectorOptions(b, spec, filter, limit, offset), task);
+            case NEAR_OBJECT:
+                return generate.nearObject(requireObjectId(spec),
+                    b -> nearObjectOptions(b, spec, filter, limit, offset), task);
+            case HYBRID: {
+                String text = requireQuery(spec, "Hybrid");
+                return spec.hasTargets()
+                    ? generate.hybrid(buildTextTarget(spec, text),
+                        b -> hybridOptions(b, spec, filter, limit, offset), task)
+                    : generate.hybrid(text,
+                        b -> hybridOptions(b, spec, filter, limit, offset), task);
+            }
+            case FETCH:
+            default:
+                return generate.fetchObjects(
+                    b -> fetchOptions(b, spec, filter, sortBy, limit, offset), task);
+        }
+    }
+
+    // One options method per mode, shared verbatim by the plain and generative dispatchers.
+    // Concrete builder types throughout: the ancestors carrying the shared setters are
+    // package-private in the client, so there is no common type to abstract over.
+
+    private static Bm25.Builder bm25Options(
+        @NotNull Bm25.Builder b, @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter, int limit, int offset
+    ) {
+        applyCommon(b, spec, filter, limit, offset);
+        b.returnMetadata(scoreMetadata(spec));
+        List<String> queryProperties = spec.getQueryProperties();
+        if (!queryProperties.isEmpty()) b.queryProperties(queryProperties);
+        return b;
+    }
+
+    private static NearText.Builder nearTextOptions(
+        @NotNull NearText.Builder b, @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter, int limit, int offset
+    ) {
+        applyCommon(b, spec, filter, limit, offset);
+        Rerank rerank = buildRerank(spec);
+        if (rerank != null) b.rerank(rerank);
+        b.returnMetadata(Metadata.DISTANCE);
+        if (spec.getDistance() != null) b.distance(spec.getDistance());
+        return b;
+    }
+
+    private static NearVector.Builder nearVectorOptions(
+        @NotNull NearVector.Builder b, @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter, int limit, int offset
+    ) {
+        applyCommon(b, spec, filter, limit, offset);
+        Rerank rerank = buildRerank(spec);
+        if (rerank != null) b.rerank(rerank);
+        b.returnMetadata(Metadata.DISTANCE);
+        if (spec.getDistance() != null) b.distance(spec.getDistance());
+        return b;
+    }
+
+    private static NearObject.Builder nearObjectOptions(
+        @NotNull NearObject.Builder b, @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter, int limit, int offset
+    ) {
+        applyCommon(b, spec, filter, limit, offset);
+        Rerank rerank = buildRerank(spec);
+        if (rerank != null) b.rerank(rerank);
+        b.returnMetadata(Metadata.DISTANCE);
+        if (spec.getDistance() != null) b.distance(spec.getDistance());
+        return b;
+    }
+
+    private static Hybrid.Builder hybridOptions(
+        @NotNull Hybrid.Builder b, @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter, int limit, int offset
+    ) {
+        applyCommon(b, spec, filter, limit, offset);
+        b.returnMetadata(scoreMetadata(spec));
+        if (spec.getAlpha() != null) b.alpha(spec.getAlpha());
+        if (spec.getFusionType() != null) b.fusionType(spec.getFusionType().toClientType());
+        return b;
+    }
+
+    private static FetchObjects.Builder fetchOptions(
+        @NotNull FetchObjects.Builder b, @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter, @NotNull List<SortBy> sortBy, int limit, int offset
+    ) {
+        applyCommon(b, spec, filter, limit, offset);
+        if (!sortBy.isEmpty()) b.sort(sortBy);
+        return b;
+    }
+
+    @NotNull
+    private static float[] requireVector(@NotNull WeaviateQuerySpec spec) {
+        float[] vector = spec.getVector();
+        if (vector == null || vector.length == 0) {
+            throw new IllegalStateException("Near Vector mode requires a non-empty vector");
+        }
+        return vector;
+    }
+
+    /**
+     * Near Vector is handed a vector; Near Object is handed an object id and the server
+     * resolves that object's stored vector itself, so this works even when the reference
+     * object's vector is never returned to the client.
+     */
+    @NotNull
+    private static String requireObjectId(@NotNull WeaviateQuerySpec spec) {
+        String uuid = spec.getObjectId();
+        if (uuid == null || uuid.isBlank()) {
+            throw new IllegalStateException(
+                "Near Object mode requires the UUID of a reference object");
+        }
+        return uuid;
+    }
+
+    /**
+     * The spec's generative task as the client wants it. The provider override only rides along
+     * when one was chosen -- with none sent, the server falls back to the collection's own
+     * generative module, which is the ordinary case.
+     */
+    @NotNull
+    private static ObjectBuilder<GenerativeTask> configureTask(
+        @NotNull GenerativeTask.Builder t,
+        @NotNull WeaviateGenerativeTask spec
+    ) {
+        GenerativeProvider provider = spec.getProvider() == null ? null
+            : spec.getProvider().toClientProvider(
+                spec.getModel(), spec.getTemperature(), spec.getMaxTokens());
+        if (spec.getSinglePrompt() != null) {
+            t.singlePrompt(spec.getSinglePrompt(), sb -> {
+                if (spec.isReturnMetadata()) sb.metadata(true);
+                if (provider != null) sb.generativeProvider(provider);
+                return sb;
+            });
+        }
+        if (spec.getGroupedTask() != null) {
+            t.groupedTask(spec.getGroupedTask(), gb -> {
+                if (!spec.getGroupedProperties().isEmpty()) {
+                    gb.properties(spec.getGroupedProperties());
+                }
+                if (spec.isReturnMetadata()) gb.metadata(true);
+                if (provider != null) gb.generativeProvider(provider);
+                return gb;
+            });
+        }
+        return t;
     }
 
     /**
@@ -1033,6 +1201,12 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (spec.isWithUpdated()) {
             rs.addColumn(WeaviateColumns.UPDATED, DBPDataKind.STRING);
         }
+        if (spec.getGenerative() != null && spec.getGenerative().getSinglePrompt() != null) {
+            rs.addColumn(WeaviateColumns.GENERATED, DBPDataKind.STRING);
+            if (spec.getGenerative().isReturnMetadata()) {
+                rs.addColumn(WeaviateColumns.GENERATIVE_META, DBPDataKind.STRING);
+            }
+        }
     }
 
     /**
@@ -1128,6 +1302,16 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         describeTargets(spec, args);
         if (spec.getRerank() != null) {
             args.add("rerank=" + spec.getRerank());
+        }
+        WeaviateGenerativeTask generative = spec.getGenerative();
+        if (generative != null) {
+            String kind = generative.getSinglePrompt() != null && generative.getGroupedTask() != null
+                ? "single+grouped"
+                : generative.getSinglePrompt() != null ? "single" : "grouped";
+            args.add("generate=" + kind);
+            if (generative.getProvider() != null) {
+                args.add("provider=" + generative.getProvider().name());
+            }
         }
         if (limit > 0) args.add("limit=" + limit);
         if (offset > 0) args.add("offset=" + offset);
@@ -1484,5 +1668,10 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
 
     public void clearLastQueryError() {
         this.lastQueryError = null;
+    }
+
+    @Nullable
+    public String getLastGenerativeGroupedResult() {
+        return lastGenerativeGroupedResult;
     }
 }

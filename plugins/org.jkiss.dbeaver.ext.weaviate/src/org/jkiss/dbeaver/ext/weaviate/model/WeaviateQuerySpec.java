@@ -46,6 +46,8 @@ public final class WeaviateQuerySpec {
     private final boolean includeVector;
     /** Rerank request, or null. Only meaningful where the mode supports rerank. */
     private final WeaviateRerankSpec rerank;
+    /** Generative task, or null. Applies to every mode; routes through the generate client. */
+    private final WeaviateGenerativeTask generative;
     /** Opt-in metadata columns; each adds a request field and a grid column. */
     private final boolean withCreated;
     private final boolean withUpdated;
@@ -71,6 +73,7 @@ public final class WeaviateQuerySpec {
         this.anyFilter = b.anyFilter;
         this.includeVector = b.includeVector;
         this.rerank = b.rerank;
+        this.generative = b.generative;
         this.withCreated = b.withCreated;
         this.withUpdated = b.withUpdated;
         this.withCertainty = b.withCertainty;
@@ -231,6 +234,17 @@ public final class WeaviateQuerySpec {
         return rerank;
     }
 
+    /**
+     * The generative task, or null for a plain query.
+     * <p>
+     * Every mode can carry one -- the generate client mirrors every query operator -- so unlike
+     * rerank there is no mode predicate to consult.
+     */
+    @Nullable
+    public WeaviateGenerativeTask getGenerative() {
+        return generative;
+    }
+
     /** Whether to fetch and show the object creation time. */
     public boolean isWithCreated() {
         return withCreated;
@@ -301,6 +315,7 @@ public final class WeaviateQuerySpec {
             .anyFilter(anyFilter)
             .includeVector(includeVector)
             .rerank(rerank)
+            .generative(generative)
             .withCreated(withCreated)
             .withUpdated(withUpdated)
             .withCertainty(withCertainty)
@@ -337,6 +352,7 @@ public final class WeaviateQuerySpec {
         private boolean anyFilter;
         private boolean includeVector;
         private WeaviateRerankSpec rerank;
+        private WeaviateGenerativeTask generative;
         private boolean withCreated;
         private boolean withUpdated;
         private boolean withCertainty;
@@ -414,6 +430,11 @@ public final class WeaviateQuerySpec {
 
         public Builder rerank(@Nullable WeaviateRerankSpec rerank) {
             this.rerank = rerank;
+            return this;
+        }
+
+        public Builder generative(@Nullable WeaviateGenerativeTask generative) {
+            this.generative = generative;
             return this;
         }
 

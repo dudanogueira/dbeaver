@@ -34,6 +34,11 @@ public final class WeaviateColumns {
      */
     public static final String CERTAINTY = "_certainty";
 
+    /** Per-object generated text from a single-prompt generative task. */
+    public static final String GENERATED = "_generated";
+    /** Provider usage metadata (token counts) for the generated text. Opt-in. */
+    public static final String GENERATIVE_META = "_generativeMeta";
+
     /** Column holding the embedding when a collection has a single (or unnamed) vector. */
     public static final String VECTOR = "_vector";
     /** Prefix for per-vector columns when a collection declares several named vectors. */
