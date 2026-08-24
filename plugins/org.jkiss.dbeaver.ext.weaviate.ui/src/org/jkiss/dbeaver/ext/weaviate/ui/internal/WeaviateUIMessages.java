@@ -137,6 +137,22 @@ public final class WeaviateUIMessages extends NLS {
     // Autocut
     public static String query_autocut;
     public static String query_autocut_tip;
+    public static String query_targets;
+    public static String query_targets_tip;
+    public static String query_target_add;
+    public static String query_target_remove;
+    public static String query_target_join;
+    public static String query_target_join_tip;
+    public static String query_target_weight_hint;
+    public static String query_target_vector_hint;
+    public static String query_target_multi_vector_hint;
+    public static String query_target_duplicate;
+    public static String query_target_required;
+    public static String query_target_weight_required;
+    public static String query_target_weight_invalid;
+    public static String query_target_vector_required;
+    public static String query_target_vector_invalid;
+    public static String query_target_expects_flat;
 
     // Explain score
     public static String query_explain_score;

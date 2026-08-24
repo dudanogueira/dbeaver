@@ -55,7 +55,10 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateHybridFusion;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQueryMode;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQuerySpec;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorCombination;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorParser;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorTarget;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorizer;
 import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
 import org.jkiss.dbeaver.model.DBPDataKind;
 import org.jkiss.dbeaver.model.exec.DBCLogicalOperator;
@@ -92,8 +95,15 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Combo tenantCombo;
     /** One include-vectors toggle per mode, beside that mode's other result options. */
     private final Map<WeaviateQueryMode, Button> includeVectorChecks = new EnumMap<>(WeaviateQueryMode.class);
+    /** Target-vector section per mode that can carry one; see WeaviateQueryMode#supportsTargetVectors. */
+    private final Map<WeaviateQueryMode, Composite> targetGroups = new EnumMap<>(WeaviateQueryMode.class);
+    private final Map<WeaviateQueryMode, Combo> targetJoinCombos = new EnumMap<>(WeaviateQueryMode.class);
+    private final Map<WeaviateQueryMode, Composite> targetRowsHolders = new EnumMap<>(WeaviateQueryMode.class);
+    private final Map<WeaviateQueryMode, java.util.List<TargetRowUi>> targetRowUis = new EnumMap<>(WeaviateQueryMode.class);
     /** Guards reflow against the resize it can itself provoke. */
     private boolean reflowing;
+    /** Whether the collection declares enough named vectors for a target to be a real choice. */
+    private boolean targetsAvailable;
     private ScrolledComposite scroller;
     private Composite content;
     private Composite fieldsHolder;
@@ -105,6 +115,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Text nearTextQueryField;
     private Text nearTextDistanceField;
     private Composite nearVectorComposite;
+    private Label nearVectorLabel;
     private Text nearVectorField;
     private Composite nearObjectComposite;
     private Text nearObjectField;
@@ -255,6 +266,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         // display of the panel activatePanel() has not necessarily fired yet, so without this
         // the tenant picker never appears for a multi-tenant collection.
         refreshTenants();
+        refreshTargetSections();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();
@@ -402,6 +414,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         runOnEnter(nearTextDistanceField);
         addIncludeVectorField(c, WeaviateQueryMode.NEAR_TEXT);
         addAutoCutField(c, WeaviateQueryMode.NEAR_TEXT);
+        addTargetVectorField(c, WeaviateQueryMode.NEAR_TEXT);
         return c;
     }
 
@@ -409,9 +422,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         Composite c = new Composite(parent, SWT.NONE);
         c.setLayout(twoColumnLayout());
 
-        Label vl = new Label(c, SWT.NONE);
-        vl.setText(WeaviateUIMessages.query_vector);
-        vl.setLayoutData(labelTopData());
+        nearVectorLabel = new Label(c, SWT.NONE);
+        nearVectorLabel.setText(WeaviateUIMessages.query_vector);
+        nearVectorLabel.setLayoutData(labelTopData());
         nearVectorField = new Text(c, SWT.BORDER | SWT.MULTI | SWT.V_SCROLL | SWT.WRAP);
         GridData vgd = new GridData(SWT.FILL, SWT.FILL, true, true);
         vgd.heightHint = 80;
@@ -425,6 +438,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         runOnEnter(nearVectorDistanceField);
         addIncludeVectorField(c, WeaviateQueryMode.NEAR_VECTOR);
         addAutoCutField(c, WeaviateQueryMode.NEAR_VECTOR);
+        addTargetVectorField(c, WeaviateQueryMode.NEAR_VECTOR);
         return c;
     }
 
@@ -506,6 +520,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         addIncludeVectorField(c, WeaviateQueryMode.HYBRID);
         addExplainScoreField(c, WeaviateQueryMode.HYBRID);
         addAutoCutField(c, WeaviateQueryMode.HYBRID);
+        addTargetVectorField(c, WeaviateQueryMode.HYBRID);
         return c;
     }
 
@@ -660,6 +675,238 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         check.setText(WeaviateUIMessages.query_include_vector);
         check.setToolTipText(WeaviateUIMessages.query_include_vector_tip);
         includeVectorChecks.put(mode, check);
+    }
+
+    /**
+     * Adds the target-vector section to a mode's own field panel.
+     * <p>
+     * Per mode like the other options, and only for the modes that can carry a target at all --
+     * see {@link WeaviateQueryMode#supportsTargetVectors()}. The section spans both columns of the
+     * mode panel, because a row needs more width than a value cell.
+     */
+    private void addTargetVectorField(@NotNull Composite c, @NotNull WeaviateQueryMode mode) {
+        // Expanded by default: on a collection with several named vectors a search has to name a
+        // target, so this is a choice to make rather than an extra to go looking for.
+        Composite group = createSection(
+            c, WeaviateUIMessages.query_targets, "targets." + mode.name(), 1, true);
+        group.setToolTipText(WeaviateUIMessages.query_targets_tip);
+        ((GridData) group.getParent().getLayoutData()).horizontalSpan = 2;
+
+        Composite header = new Composite(group, SWT.NONE);
+        GridLayout hl = new GridLayout(3, false);
+        hl.marginWidth = 0;
+        hl.marginHeight = 0;
+        header.setLayout(hl);
+        header.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        new Label(header, SWT.NONE).setText(WeaviateUIMessages.query_target_join);
+        Combo joinCombo = new Combo(header, SWT.READ_ONLY);
+        for (WeaviateVectorCombination combination : WeaviateVectorCombination.values()) {
+            joinCombo.add(combination.getLabel());
+        }
+        joinCombo.select(0);
+        joinCombo.setToolTipText(WeaviateUIMessages.query_target_join_tip);
+        joinCombo.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                syncTargetWeightsEnabled(mode);
+            }
+        });
+
+        Button addTarget = new Button(header, SWT.PUSH);
+        addTarget.setText(WeaviateUIMessages.query_target_add);
+        addTarget.setLayoutData(new GridData(SWT.RIGHT, SWT.CENTER, true, false));
+        addTarget.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                addTargetRow(mode, null);
+            }
+        });
+
+        Composite rowsHolder = new Composite(group, SWT.NONE);
+        GridLayout rl = new GridLayout(1, false);
+        rl.marginWidth = 0;
+        rl.marginHeight = 0;
+        rl.verticalSpacing = 3;
+        rowsHolder.setLayout(rl);
+        rowsHolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+
+        targetGroups.put(mode, group);
+        targetJoinCombos.put(mode, joinCombo);
+        targetRowsHolders.put(mode, rowsHolder);
+        targetRowUis.put(mode, new ArrayList<>());
+    }
+
+    /**
+     * Show the target-vector section only where there is a choice to make: a collection declaring
+     * fewer than two vectors has nothing to target, and an empty picker on every ordinary
+     * collection is noise. Same exclude-and-relayout idiom as the tenant row.
+     */
+    private void refreshTargetSections() {
+        boolean visible = currentVectorizers().size() >= 2;
+        targetsAvailable = visible;
+        for (Map.Entry<WeaviateQueryMode, Composite> entry : targetGroups.entrySet()) {
+            Composite group = entry.getValue();
+            if (group == null || group.isDisposed()) {
+                continue;
+            }
+            // The twistie and title are the section itself, one level up from the client we fill.
+            Composite section = group.getParent();
+            section.setVisible(visible);
+            ((GridData) section.getLayoutData()).exclude = !visible;
+            if (!visible) {
+                clearTargetRows(entry.getKey());
+            }
+        }
+        // Near Vector's single unnamed vector box only makes sense while the server can guess
+        // which space to search it in. Once targets are on offer every vector belongs to one of
+        // them, so the lone box would be a second, contradictory way to say the same thing.
+        setNearVectorRowVisible(!visible);
+        reflow();
+    }
+
+    private void setNearVectorRowVisible(boolean visible) {
+        for (Control control : new Control[]{nearVectorLabel, nearVectorField}) {
+            if (control == null || control.isDisposed()) {
+                continue;
+            }
+            control.setVisible(visible);
+            ((GridData) control.getLayoutData()).exclude = !visible;
+        }
+    }
+
+    /**
+     * The collection's named vectors, in the order the model sorts them. Empty when the panel is
+     * not bound to a Weaviate collection, or the schema cannot be read.
+     */
+    @NotNull
+    private List<WeaviateVectorizer> currentVectorizers() {
+        WeaviateCollection collection = currentCollection();
+        if (collection == null) {
+            return Collections.emptyList();
+        }
+        try {
+            return collection.getVectorizers(new VoidProgressMonitor());
+        } catch (Exception e) {
+            log.debug("Failed to load Weaviate named vectors for the target picker", e);
+            return Collections.emptyList();
+        }
+    }
+
+    private void addTargetRow(@NotNull WeaviateQueryMode mode, @Nullable WeaviateVectorTarget seed) {
+        Composite holder = targetRowsHolders.get(mode);
+        if (holder == null || holder.isDisposed()) {
+            return;
+        }
+        TargetRowUi row = new TargetRowUi(holder, mode, currentVectorizers(), seed);
+        targetRowUis.get(mode).add(row);
+        syncTargetWeightsEnabled(mode);
+        relayoutTargets(mode);
+    }
+
+    private void clearTargetRows(@NotNull WeaviateQueryMode mode) {
+        List<TargetRowUi> rows = targetRowUis.get(mode);
+        if (rows == null) {
+            return;
+        }
+        for (TargetRowUi row : new ArrayList<>(rows)) {
+            row.dispose();
+        }
+        rows.clear();
+    }
+
+    private void relayoutTargets(@NotNull WeaviateQueryMode mode) {
+        Composite holder = targetRowsHolders.get(mode);
+        if (holder != null && !holder.isDisposed()) {
+            holder.layout(true, true);
+        }
+        reflow();
+    }
+
+    /**
+     * Grey out every weight cell unless the chosen join strategy actually uses one, so a number
+     * typed there cannot look as though it is doing something it is not.
+     */
+    private void syncTargetWeightsEnabled(@NotNull WeaviateQueryMode mode) {
+        boolean weighted = currentCombination(mode).usesWeights();
+        List<TargetRowUi> rows = targetRowUis.get(mode);
+        if (rows == null) {
+            return;
+        }
+        for (TargetRowUi row : rows) {
+            row.setWeightEnabled(weighted);
+        }
+    }
+
+    @NotNull
+    private WeaviateVectorCombination currentCombination(@NotNull WeaviateQueryMode mode) {
+        Combo combo = targetJoinCombos.get(mode);
+        int idx = combo == null || combo.isDisposed() ? 0 : combo.getSelectionIndex();
+        if (idx < 0) idx = 0;
+        return WeaviateVectorCombination.values()[idx];
+    }
+
+    /**
+     * The targets the current mode's rows describe, validated as a set.
+     *
+     * @throws IllegalArgumentException with a message for the banner, so a query that cannot
+     *                                  succeed is never sent
+     */
+    @NotNull
+    private List<WeaviateVectorTarget> currentTargets(@NotNull WeaviateQueryMode mode) {
+        // Deliberately not gated on the section being visible: a collapsed or off-screen section
+        // still holds real choices, and an incidental false here would drop the targets and quietly
+        // run a different query than the one on screen. refreshTargetSections empties the rows when
+        // it hides the section, so an unusable section has nothing to collect anyway.
+        List<TargetRowUi> rows = targetRowUis.get(mode);
+        if (rows == null || rows.isEmpty()) {
+            requireTargetWhereAmbiguous(mode, 0);
+            return Collections.emptyList();
+        }
+        List<WeaviateVectorTarget> targets = new ArrayList<>(rows.size());
+        List<String> seen = new ArrayList<>(rows.size());
+        for (TargetRowUi row : rows) {
+            WeaviateVectorTarget target = row.toTarget(mode);
+            if (target == null) {
+                continue;
+            }
+            if (seen.contains(target.getName())) {
+                throw new IllegalArgumentException(
+                    NLS.bind(WeaviateUIMessages.query_target_duplicate, target.getName()));
+            }
+            seen.add(target.getName());
+            targets.add(target);
+        }
+        // A weight only matters once there is something to weigh it against, and a strategy that
+        // uses weights needs one on every target -- weighing some and not others is not a thing
+        // the server can do anything sensible with.
+        WeaviateVectorCombination combination = currentCombination(mode);
+        if (targets.size() > 1 && combination.usesWeights()) {
+            for (WeaviateVectorTarget target : targets) {
+                if (target.getWeight() == null) {
+                    throw new IllegalArgumentException(
+                        NLS.bind(WeaviateUIMessages.query_target_weight_required,
+                            new Object[]{combination.getLabel(), target.getName()}));
+                }
+            }
+        }
+        requireTargetWhereAmbiguous(mode, targets.size());
+        return targets;
+    }
+
+    /**
+     * Refuse an untargeted search on a collection with several named vectors.
+     * <p>
+     * Weaviate cannot guess which space to search and rejects the query, but says so in terms of
+     * its own wire format. Nothing is preselected on the user's behalf -- picking a target for
+     * them would return plausible but wrong rows, the same reason the tenant combo starts empty --
+     * so the panel names the missing choice instead.
+     */
+    private void requireTargetWhereAmbiguous(@NotNull WeaviateQueryMode mode, int chosen) {
+        if (chosen == 0 && targetsAvailable && mode.supportsTargetVectors()) {
+            throw new IllegalArgumentException(
+                NLS.bind(WeaviateUIMessages.query_target_required, mode.getLabel()));
+        }
     }
 
     private boolean currentIncludeVector() {
@@ -898,6 +1145,26 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
     }
 
+    /**
+     * Rebuild the target rows from a spec, the same way the filter rows are rebuilt from it.
+     */
+    private void loadTargetsIntoUi(@NotNull WeaviateQuerySpec spec) {
+        WeaviateQueryMode mode = spec.getMode();
+        if (!mode.supportsTargetVectors() || targetRowsHolders.get(mode) == null) {
+            return;
+        }
+        clearTargetRows(mode);
+        Combo joinCombo = targetJoinCombos.get(mode);
+        if (joinCombo != null && !joinCombo.isDisposed()) {
+            WeaviateVectorCombination combination = spec.getCombination();
+            joinCombo.select(combination == null ? 0 : combination.ordinal());
+        }
+        for (WeaviateVectorTarget target : spec.getTargets()) {
+            addTargetRow(mode, target);
+        }
+        syncTargetWeightsEnabled(mode);
+    }
+
     private void loadSpecIntoUi() {
         WeaviateCollection collection = currentCollection();
         if (collection == null) return;
@@ -907,6 +1174,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         // copy text over the values just loaded.
         displayedMode = spec.getMode();
         loadAutoCutIntoUi(spec);
+        loadTargetsIntoUi(spec);
 
         // Filter rows
         if (filterRowsHolder != null && !filterRowsHolder.isDisposed()) {
@@ -1000,6 +1268,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
 
     private WeaviateQuerySpec buildSpec() {
         WeaviateQueryMode mode = currentMode();
+        // Collected before the switch: Near Vector reads them to decide whether its own vector
+        // box is required at all.
+        List<WeaviateVectorTarget> targets = mode.supportsTargetVectors()
+            ? currentTargets(mode)
+            : Collections.emptyList();
         List<WeaviateFilterRow> rows = collectFilterRows();
         boolean any = filterOrRadio != null && filterOrRadio.getSelection();
         WeaviateQuerySpec.Builder builder;
@@ -1021,20 +1294,24 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 break;
             }
             case NEAR_VECTOR: {
-                String raw = nearVectorField.getText();
-                float[] vec;
-                try {
-                    vec = WeaviateVectorParser.parse(raw);
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(NLS.bind(WeaviateUIMessages.query_invalid_vector, e.getMessage()));
-                }
-                if (vec == null || vec.length == 0) {
-                    throw new IllegalArgumentException(WeaviateUIMessages.query_required_vector);
-                }
                 Float distance = parseOptionalFloat(nearVectorDistanceField.getText(), "distance");
                 builder = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_VECTOR)
-                    .vector(vec)
                     .distance(distance);
+                // With targets every vector arrives attached to the space it belongs in and the
+                // lone box is hidden; without them there is one vector and the server picks.
+                if (targets.isEmpty()) {
+                    float[] vec;
+                    try {
+                        vec = WeaviateVectorParser.parse(nearVectorField.getText());
+                    } catch (NumberFormatException e) {
+                        throw new IllegalArgumentException(
+                            NLS.bind(WeaviateUIMessages.query_invalid_vector, e.getMessage()));
+                    }
+                    if (vec == null || vec.length == 0) {
+                        throw new IllegalArgumentException(WeaviateUIMessages.query_required_vector);
+                    }
+                    builder.vector(vec);
+                }
                 break;
             }
             case NEAR_OBJECT: {
@@ -1069,6 +1346,10 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             .autoCut(currentAutoCut())
             .explainScore(currentExplainScore())
             .includeVector(currentIncludeVector())
+            .targets(targets)
+            // Only sent when there is more than one target to join; with one there is nothing
+            // to join and the model leaves the strategy off the request entirely.
+            .combination(targets.size() > 1 ? currentCombination(mode) : null)
             .build();
     }
 
@@ -1227,6 +1508,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     @Override
     public void activatePanel() {
         refreshTenants();
+        refreshTargetSections();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();
@@ -1246,6 +1528,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     @Override
     public void refresh(boolean force) {
         refreshTenants();
+        refreshTargetSections();
         // refreshTenants ran before the read completed the first time round, so re-sync after.
         syncTenantSelection();
         loadSpecIntoUi();
@@ -1340,6 +1623,205 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             String raw = valueField.getText();
             DBPDataKind kind = dataKindForProperty(property);
             return new WeaviateFilterRow(property, op, raw, kind);
+        }
+
+        void dispose() {
+            if (!container.isDisposed()) container.dispose();
+        }
+    }
+
+    /**
+     * SWT controls for a single target-vector row. Owns its container Composite, so disposing it
+     * removes the row from the layout -- same shape as {@link FilterRowUi}.
+     */
+    private final class TargetRowUi {
+        private final Composite container;
+        private final Combo nameCombo;
+        private final Text vectorField;
+        private final Text weightField;
+        private final List<WeaviateVectorizer> vectorizers;
+
+        TargetRowUi(
+            @NotNull Composite parent,
+            @NotNull WeaviateQueryMode mode,
+            @NotNull List<WeaviateVectorizer> vectorizers,
+            @Nullable WeaviateVectorTarget seed
+        ) {
+            this.vectorizers = vectorizers;
+            // Near Vector is the only mode that carries a query vector per target: Near Text and
+            // Hybrid hand the server text and it embeds against each target itself.
+            boolean takesVector = mode == WeaviateQueryMode.NEAR_VECTOR;
+
+            container = new Composite(parent, SWT.NONE);
+            GridLayout gl = new GridLayout(takesVector ? 4 : 3, false);
+            gl.marginWidth = 0;
+            gl.marginHeight = 0;
+            container.setLayout(gl);
+            container.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+            nameCombo = new Combo(container, SWT.READ_ONLY);
+            for (WeaviateVectorizer vectorizer : vectorizers) {
+                nameCombo.add(vectorizer.getVectorName());
+            }
+            GridData ncGd = new GridData(SWT.LEFT, SWT.CENTER, false, false);
+            ncGd.widthHint = 140;
+            nameCombo.setLayoutData(ncGd);
+            nameCombo.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetSelected(SelectionEvent e) {
+                    syncVectorHint();
+                }
+            });
+
+            if (takesVector) {
+                vectorField = new Text(container, SWT.BORDER);
+                vectorField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+            } else {
+                vectorField = null;
+            }
+
+            weightField = new Text(container, SWT.BORDER);
+            GridData wGd = new GridData(SWT.LEFT, SWT.CENTER, false, false);
+            wGd.widthHint = 60;
+            weightField.setLayoutData(wGd);
+            weightField.setMessage(WeaviateUIMessages.query_target_weight_hint);
+            runOnEnter(weightField);
+
+            Button remove = new Button(container, SWT.PUSH | SWT.FLAT);
+            remove.setText("✕");
+            remove.setToolTipText(WeaviateUIMessages.query_target_remove);
+            remove.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetSelected(SelectionEvent e) {
+                    dispose();
+                    targetRowUis.get(mode).remove(TargetRowUi.this);
+                    relayoutTargets(mode);
+                }
+            });
+
+            if (seed != null) {
+                nameCombo.setText(seed.getName());
+                if (seed.getWeight() != null) weightField.setText(seed.getWeight().toString());
+                if (vectorField != null) {
+                    if (seed.isMulti()) {
+                        vectorField.setText(WeaviateVectorParser.formatMulti(seed.getMultiVector()));
+                    } else if (seed.getVector() != null) {
+                        vectorField.setText(WeaviateVectorParser.format(seed.getVector()));
+                    }
+                }
+            } else if (!vectorizers.isEmpty()) {
+                nameCombo.select(0);
+            }
+            syncVectorHint();
+        }
+
+        /**
+         * A multi-vector index stores a matrix per object and has to be queried with one, so the
+         * placeholder follows whichever target is selected rather than showing one shape for both.
+         */
+        private void syncVectorHint() {
+            if (vectorField == null || vectorField.isDisposed()) {
+                return;
+            }
+            vectorField.setMessage(isMultiVectorTarget()
+                ? WeaviateUIMessages.query_target_multi_vector_hint
+                : WeaviateUIMessages.query_target_vector_hint);
+        }
+
+        private boolean isMultiVectorTarget() {
+            String name = nameCombo.getText();
+            for (WeaviateVectorizer vectorizer : vectorizers) {
+                if (vectorizer.getVectorName().equals(name)) {
+                    return vectorizer.isMultiVector();
+                }
+            }
+            return false;
+        }
+
+        void setWeightEnabled(boolean enabled) {
+            if (!weightField.isDisposed()) {
+                weightField.setEnabled(enabled);
+            }
+        }
+
+        /**
+         * This row as a target, or null when no vector is selected -- an empty row is treated as
+         * not filled in yet rather than as an error, matching {@link FilterRowUi#toRow()}.
+         *
+         * @throws IllegalArgumentException when the row names a target but describes it wrongly
+         */
+        @Nullable
+        WeaviateVectorTarget toTarget(@NotNull WeaviateQueryMode mode) {
+            String name = nameCombo.getText();
+            if (name == null || name.isBlank()) {
+                return null;
+            }
+            Float weight = readWeight(name);
+            if (mode != WeaviateQueryMode.NEAR_VECTOR) {
+                return WeaviateVectorTarget.of(name, weight);
+            }
+            String raw = vectorField == null ? "" : vectorField.getText();
+            if (raw == null || raw.isBlank()) {
+                throw new IllegalArgumentException(
+                    NLS.bind(WeaviateUIMessages.query_target_vector_required, name));
+            }
+            boolean multi = isMultiVectorTarget();
+            // Only the flat direction is pre-checked. A matrix handed to a single-vector target
+            // would otherwise fail deep in the flat parser on a stray bracket, whereas the other
+            // way round parseMulti already says plainly that it wanted a bracketed vector -- and
+            // a pre-check there would have to re-derive what counts as a matrix, which is exactly
+            // the judgement the parser is for.
+            if (!multi && looksLikeMatrix(raw)) {
+                throw new IllegalArgumentException(
+                    NLS.bind(WeaviateUIMessages.query_target_expects_flat, name));
+            }
+            try {
+                if (multi) {
+                    float[][] parsed = WeaviateVectorParser.parseMulti(raw);
+                    if (parsed == null || parsed.length == 0) {
+                        throw new IllegalArgumentException(
+                            NLS.bind(WeaviateUIMessages.query_target_vector_required, name));
+                    }
+                    return WeaviateVectorTarget.of(name, weight, parsed);
+                }
+                float[] parsed = WeaviateVectorParser.parse(raw);
+                if (parsed == null || parsed.length == 0) {
+                    throw new IllegalArgumentException(
+                        NLS.bind(WeaviateUIMessages.query_target_vector_required, name));
+                }
+                return WeaviateVectorTarget.of(name, weight, parsed);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                    NLS.bind(WeaviateUIMessages.query_target_vector_invalid,
+                        new Object[]{name, e.getMessage()}));
+            }
+        }
+
+        @Nullable
+        private Float readWeight(@NotNull String name) {
+            String raw = weightField.getText();
+            if (raw == null || raw.isBlank()) {
+                // Whether a missing weight is an error depends on how many targets there are in
+                // total, which only currentTargets can see -- it makes that call.
+                return null;
+            }
+            try {
+                return Float.parseFloat(raw.strip());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                    NLS.bind(WeaviateUIMessages.query_target_weight_invalid,
+                        new Object[]{name, raw.strip()}));
+            }
+        }
+
+        /**
+         * Whether this reads as a matrix rather than one flat vector: a second bracket somewhere
+         * past the optional outer one. Testing for a literal "[[" would miss "[1, 2], [3, 4]",
+         * whose outer brackets parseMulti treats as optional.
+         */
+        private boolean looksLikeMatrix(@NotNull String raw) {
+            String trimmed = raw.strip();
+            return trimmed.indexOf('[', trimmed.startsWith("[") ? 1 : 0) >= 0;
         }
 
         void dispose() {
