@@ -347,4 +347,30 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
             }
         }
     }
+
+    /**
+     * withIncludeVector used to enumerate the fields to copy by hand and had fallen behind by
+     * four of them, so toggling vectors silently reset the tenant, the reference object, autocut
+     * and the explain-score flag. Everything must survive the copy.
+     */
+    @Test
+    public void withIncludeVectorKeepsEveryOtherField() {
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_OBJECT)
+            .objectId("11111111-2222-3333-4444-555555555555")
+            .tenant("acme")
+            .autoCut(3)
+            .explainScore(true)
+            .distance(0.25f)
+            .includeVector(false)
+            .build();
+
+        WeaviateQuerySpec copy = spec.withIncludeVector(true);
+
+        Assertions.assertTrue(copy.isIncludeVector());
+        Assertions.assertEquals("11111111-2222-3333-4444-555555555555", copy.getObjectId());
+        Assertions.assertEquals("acme", copy.getTenant());
+        Assertions.assertEquals(Integer.valueOf(3), copy.getAutoCut());
+        Assertions.assertTrue(copy.isExplainScore());
+        Assertions.assertEquals(Float.valueOf(0.25f), copy.getDistance());
+    }
 }

@@ -82,17 +82,7 @@ public final class WeaviateQuerySpec {
         if (include == this.includeVector) {
             return this;
         }
-        return builder(mode)
-            .query(query)
-            .vector(vector)
-            .alpha(alpha)
-            .queryProperties(queryProperties)
-            .distance(distance)
-            .fusionType(fusionType)
-            .filterRows(filterRows)
-            .anyFilter(anyFilter)
-            .includeVector(include)
-            .build();
+        return copy().includeVector(include).build();
     }
 
     @NotNull
@@ -214,26 +204,37 @@ public final class WeaviateQuerySpec {
     }
 
     /**
-     * A copy of this spec bound to {@code tenant}. Used once the user picks one, so the choice
-     * sticks for later reads without rebuilding the query by hand.
+     * A builder seeded with every field of this spec.
+     * <p>
+     * Exists so the {@code with*} copies cannot silently drop a field. Enumerating them by hand
+     * at each call site is how {@code withIncludeVector} came to lose the tenant, the object id,
+     * autocut and the explain-score flag: a field added later was simply never added here.
      */
     @NotNull
-    public WeaviateQuerySpec withTenant(@Nullable String tenant) {
+    private Builder copy() {
         return builder(mode)
             .query(query)
             .vector(vector)
             .objectId(objectId)
+            .tenant(tenant)
+            .autoCut(autoCut)
+            .explainScore(explainScore)
             .alpha(alpha)
             .queryProperties(queryProperties)
             .distance(distance)
             .fusionType(fusionType)
             .filterRows(filterRows)
             .anyFilter(anyFilter)
-            .includeVector(includeVector)
-            .tenant(tenant)
-            .autoCut(autoCut)
-            .explainScore(explainScore)
-            .build();
+            .includeVector(includeVector);
+    }
+
+    /**
+     * A copy of this spec bound to {@code tenant}. Used once the user picks one, so the choice
+     * sticks for later reads without rebuilding the query by hand.
+     */
+    @NotNull
+    public WeaviateQuerySpec withTenant(@Nullable String tenant) {
+        return copy().tenant(tenant).build();
     }
 
     public boolean rankedResults() {
