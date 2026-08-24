@@ -545,4 +545,68 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
         Assertions.assertEquals(task, spec.withTenant("acme").getGenerative());
         Assertions.assertEquals(task, spec.withIncludeVector(true).getGenerative());
     }
+
+    /**
+     * A viewer executes the remembered spec the moment it opens, so only what browsing means --
+     * a plain fetch with no generative task -- may run unasked. Everything else waits for Run.
+     */
+    @Test
+    public void onlyAPlainFetchIsAutoRunSafe() {
+        Assertions.assertTrue(WeaviateQuerySpec.fetch().isAutoRunSafe());
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            if (mode != WeaviateQueryMode.FETCH) {
+                Assertions.assertFalse(
+                    WeaviateQuerySpec.builder(mode).query("q").build().isAutoRunSafe(),
+                    mode + " must not re-fire on viewer open");
+            }
+        }
+        Assertions.assertFalse(WeaviateQuerySpec.builder(WeaviateQueryMode.FETCH)
+                .generative(WeaviateGenerativeTask.builder().singlePrompt("p").build())
+                .build()
+                .isAutoRunSafe(),
+            "a generative fetch calls a paid model per object; never unasked");
+    }
+
+    /**
+     * Demotion is what makes reopening a viewer cheap without losing the query: the mode drops
+     * to Fetch, every input survives, and Run brings the search back.
+     */
+    @Test
+    public void demotionKeepsEveryInput() {
+        WeaviateVectorTarget target = WeaviateVectorTarget.of("title", 0.7f);
+        WeaviateGenerativeTask task = WeaviateGenerativeTask.builder().singlePrompt("p").build();
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.HYBRID)
+            .query("shoes")
+            .alpha(0.4f)
+            .tenant("acme")
+            .targets(java.util.List.of(target))
+            .rerank(new WeaviateRerankSpec("title", null))
+            .generative(task)
+            .filterRows(java.util.List.of())
+            .includeVector(true)
+            .build();
+
+        WeaviateQuerySpec demoted = spec.demotedToFetch();
+
+        Assertions.assertEquals(WeaviateQueryMode.FETCH, demoted.getMode());
+        Assertions.assertEquals("shoes", demoted.getQuery());
+        Assertions.assertEquals(Float.valueOf(0.4f), demoted.getAlpha());
+        Assertions.assertEquals("acme", demoted.getTenant());
+        Assertions.assertEquals(java.util.List.of(target), demoted.getTargets());
+        Assertions.assertEquals(new WeaviateRerankSpec("title", null), demoted.getRerank());
+        Assertions.assertEquals(task, demoted.getGenerative());
+        Assertions.assertTrue(demoted.isIncludeVector());
+        // A demoted fetch still carries the task, so it is still not safe to run unasked;
+        // the executor strips the task with withoutGenerative instead.
+        Assertions.assertFalse(demoted.isAutoRunSafe());
+        Assertions.assertNull(demoted.withoutGenerative().getGenerative());
+        Assertions.assertTrue(demoted.withoutGenerative().isAutoRunSafe());
+    }
+
+    @Test
+    public void demotingAFetchIsANoOp() {
+        WeaviateQuerySpec fetch = WeaviateQuerySpec.fetch();
+        Assertions.assertSame(fetch, fetch.demotedToFetch());
+        Assertions.assertSame(fetch, fetch.withoutGenerative());
+    }
 }

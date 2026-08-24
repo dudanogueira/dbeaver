@@ -168,6 +168,14 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     public Control createContents(IResultSetPresentation presentation, Composite parent) {
         this.presentation = presentation;
 
+        // A fresh viewer must not re-fire a search or generative task remembered from the last
+        // one -- opening a tab is browsing, not running. Disarmed, the first read demotes the
+        // remembered spec to a plain fetch (keeping its inputs); Run below arms it again.
+        WeaviateCollection openedCollection = currentCollection();
+        if (openedCollection != null) {
+            openedCollection.disarmRun();
+        }
+
         Composite root = new Composite(parent, SWT.NONE);
         GridLayout rootLayout = new GridLayout(1, false);
         rootLayout.marginWidth = 4;
@@ -1694,21 +1702,19 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     }
 
     private void loadAutoCutIntoUi(@NotNull WeaviateQuerySpec spec) {
-        Spinner spinner = autoCutSpinners.get(spec.getMode());
-        if (spinner != null && !spinner.isDisposed()) {
-            spinner.setSelection(spec.getAutoCut() == null ? 0 : spec.getAutoCut());
+        // All modes, not just the spec's: these options are per-mode widgets over one shared
+        // value each, and a demoted spec must leave them configured everywhere.
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            Spinner spinner = autoCutSpinners.get(mode);
+            if (spinner != null && !spinner.isDisposed()) {
+                spinner.setSelection(spec.getAutoCut() == null ? 0 : spec.getAutoCut());
+            }
+            setCheck(explainScoreChecks.get(mode), spec.isExplainScore());
+            setCheck(includeVectorChecks.get(mode), spec.isIncludeVector());
+            setCheck(createdChecks.get(mode), spec.isWithCreated());
+            setCheck(updatedChecks.get(mode), spec.isWithUpdated());
+            setCheck(certaintyChecks.get(mode), spec.isWithCertainty());
         }
-        Button check = explainScoreChecks.get(spec.getMode());
-        if (check != null && !check.isDisposed()) {
-            check.setSelection(spec.isExplainScore());
-        }
-        Button vectors = includeVectorChecks.get(spec.getMode());
-        if (vectors != null && !vectors.isDisposed()) {
-            vectors.setSelection(spec.isIncludeVector());
-        }
-        setCheck(createdChecks.get(spec.getMode()), spec.isWithCreated());
-        setCheck(updatedChecks.get(spec.getMode()), spec.isWithUpdated());
-        setCheck(certaintyChecks.get(spec.getMode()), spec.isWithCertainty());
     }
 
     private static void setCheck(@Nullable Button check, boolean selected) {
@@ -1721,39 +1727,38 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
      * Rebuild the target rows from a spec, the same way the filter rows are rebuilt from it.
      */
     private void loadTargetsIntoUi(@NotNull WeaviateQuerySpec spec) {
-        WeaviateQueryMode mode = spec.getMode();
-        if (!mode.supportsTargetVectors() || targetRowsHolders.get(mode) == null) {
-            return;
+        for (WeaviateQueryMode mode : targetRowsHolders.keySet()) {
+            clearTargetRows(mode);
+            Combo joinCombo = targetJoinCombos.get(mode);
+            if (joinCombo != null && !joinCombo.isDisposed()) {
+                WeaviateVectorCombination combination = spec.getCombination();
+                joinCombo.select(combination == null ? 0 : combination.ordinal());
+            }
+            for (WeaviateVectorTarget target : spec.getTargets()) {
+                addTargetRow(mode, target);
+            }
+            syncTargetWeightsEnabled(mode);
         }
-        clearTargetRows(mode);
-        Combo joinCombo = targetJoinCombos.get(mode);
-        if (joinCombo != null && !joinCombo.isDisposed()) {
-            WeaviateVectorCombination combination = spec.getCombination();
-            joinCombo.select(combination == null ? 0 : combination.ordinal());
-        }
-        for (WeaviateVectorTarget target : spec.getTargets()) {
-            addTargetRow(mode, target);
-        }
-        syncTargetWeightsEnabled(mode);
     }
 
     private void loadRerankIntoUi(@NotNull WeaviateQuerySpec spec) {
-        WeaviateQueryMode mode = spec.getMode();
-        Combo combo = rerankPropertyCombos.get(mode);
-        Text queryField = rerankQueryFields.get(mode);
-        if (combo == null || combo.isDisposed() || queryField == null || queryField.isDisposed()) {
-            return;
-        }
         WeaviateRerankSpec rerank = spec.getRerank();
-        if (rerank == null) {
-            combo.select(0);
-            queryField.setText("");
-        } else {
-            int idx = combo.indexOf(rerank.getProperty());
-            combo.select(Math.max(0, idx));
-            queryField.setText(rerank.getQuery() == null ? "" : rerank.getQuery());
+        for (WeaviateQueryMode mode : rerankPropertyCombos.keySet()) {
+            Combo combo = rerankPropertyCombos.get(mode);
+            Text queryField = rerankQueryFields.get(mode);
+            if (combo == null || combo.isDisposed() || queryField == null || queryField.isDisposed()) {
+                continue;
+            }
+            if (rerank == null) {
+                combo.select(0);
+                queryField.setText("");
+            } else {
+                int idx = combo.indexOf(rerank.getProperty());
+                combo.select(Math.max(0, idx));
+                queryField.setText(rerank.getQuery() == null ? "" : rerank.getQuery());
+            }
+            updateRerankCount(mode);
         }
-        updateRerankCount(mode);
     }
 
     /**
@@ -1771,12 +1776,17 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     }
 
     private void loadGenerativeIntoUi(@NotNull WeaviateQuerySpec spec) {
-        WeaviateQueryMode mode = spec.getMode();
+        WeaviateGenerativeTask task = spec.getGenerative();
+        for (WeaviateQueryMode mode : generativeSingleFields.keySet()) {
+            loadGenerativeIntoUi(mode, task);
+        }
+    }
+
+    private void loadGenerativeIntoUi(@NotNull WeaviateQueryMode mode, @Nullable WeaviateGenerativeTask task) {
         Text singleField = generativeSingleFields.get(mode);
         if (singleField == null || singleField.isDisposed()) {
             return;
         }
-        WeaviateGenerativeTask task = spec.getGenerative();
         singleField.setText(task == null || task.getSinglePrompt() == null ? "" : task.getSinglePrompt());
         Text groupedField = generativeGroupedFields.get(mode);
         if (groupedField != null && !groupedField.isDisposed()) {
@@ -1839,48 +1849,47 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             }
         }
 
-        switch (spec.getMode()) {
-            case BM25:
-                if (spec.getQuery() != null) bm25QueryField.setText(spec.getQuery());
-                refreshBm25PropertyList();
-                if (!spec.getQueryProperties().isEmpty()) {
-                    List<String> selected = spec.getQueryProperties();
-                    String[] items = bm25PropertiesList.getItems();
-                    List<Integer> indices = new ArrayList<>();
-                    for (int i = 0; i < items.length; i++) {
-                        if (selected.contains(items[i])) indices.add(i);
-                    }
-                    int[] idxArr = new int[indices.size()];
-                    for (int i = 0; i < indices.size(); i++) idxArr[i] = indices.get(i);
-                    bm25PropertiesList.select(idxArr);
-                }
-                break;
-            case NEAR_TEXT:
-                if (spec.getQuery() != null) nearTextQueryField.setText(spec.getQuery());
-                if (spec.getDistance() != null) nearTextDistanceField.setText(spec.getDistance().toString());
-                break;
-            case NEAR_VECTOR:
-                if (spec.getVector() != null) nearVectorField.setText(WeaviateVectorParser.format(spec.getVector()));
-                if (spec.getDistance() != null) nearVectorDistanceField.setText(spec.getDistance().toString());
-                break;
-            case NEAR_OBJECT:
-                if (spec.getObjectId() != null) nearObjectField.setText(spec.getObjectId());
-                if (spec.getDistance() != null) nearObjectDistanceField.setText(spec.getDistance().toString());
-                break;
-            case HYBRID:
-                if (spec.getQuery() != null) hybridQueryField.setText(spec.getQuery());
-                if (spec.getAlpha() != null) {
-                    hybridAlphaScale.setSelection(Math.round(spec.getAlpha() * 100));
-                    updateAlphaLabel();
-                }
-                if (spec.getFusionType() != null) {
-                    hybridFusionCombo.setText(spec.getFusionType().name());
-                } else {
-                    hybridFusionCombo.select(0);
-                }
-                break;
-            default:
-                break;
+        // Every mode's inputs load from the one spec, not just the current mode's. A spec
+        // demoted to Fetch on viewer-open still carries the remembered search inputs, and
+        // "the options stay configured" means they are there when the user switches back --
+        // the same sharing carryQueryText already does for the query text.
+        if (spec.getQuery() != null) {
+            bm25QueryField.setText(spec.getQuery());
+            nearTextQueryField.setText(spec.getQuery());
+            hybridQueryField.setText(spec.getQuery());
+        }
+        String distance = spec.getDistance() == null ? null : spec.getDistance().toString();
+        if (distance != null) {
+            nearTextDistanceField.setText(distance);
+            nearVectorDistanceField.setText(distance);
+            nearObjectDistanceField.setText(distance);
+        }
+        if (spec.getVector() != null) {
+            nearVectorField.setText(WeaviateVectorParser.format(spec.getVector()));
+        }
+        if (spec.getObjectId() != null) {
+            nearObjectField.setText(spec.getObjectId());
+        }
+        refreshBm25PropertyList();
+        if (!spec.getQueryProperties().isEmpty()) {
+            List<String> selected = spec.getQueryProperties();
+            String[] items = bm25PropertiesList.getItems();
+            List<Integer> indices = new ArrayList<>();
+            for (int i = 0; i < items.length; i++) {
+                if (selected.contains(items[i])) indices.add(i);
+            }
+            int[] idxArr = new int[indices.size()];
+            for (int i = 0; i < indices.size(); i++) idxArr[i] = indices.get(i);
+            bm25PropertiesList.select(idxArr);
+        }
+        if (spec.getAlpha() != null) {
+            hybridAlphaScale.setSelection(Math.round(spec.getAlpha() * 100));
+            updateAlphaLabel();
+        }
+        if (spec.getFusionType() != null) {
+            hybridFusionCombo.setText(spec.getFusionType().name());
+        } else {
+            hybridFusionCombo.select(0);
         }
     }
 
@@ -1898,6 +1907,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             return;
         }
         collection.setQuerySpec(spec);
+        collection.armRun();
         collection.clearLastQueryError();
         showInfo(WeaviateUIMessages.query_running);
         presentation.getController().refreshData(() -> Display.getDefault().asyncExec(this::refreshStatusFromCollection));
@@ -1910,6 +1920,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             return;
         }
         collection.setQuerySpec(WeaviateQuerySpec.fetch());
+        collection.armRun();
         collection.clearLastQueryError();
         modeCombo.select(WeaviateQueryMode.FETCH.ordinal());
         updateFieldVisibility();

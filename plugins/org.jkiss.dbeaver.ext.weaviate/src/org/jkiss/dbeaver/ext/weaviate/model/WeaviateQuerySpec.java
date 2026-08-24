@@ -300,7 +300,13 @@ public final class WeaviateQuerySpec {
      */
     @NotNull
     private Builder copy() {
-        return builder(mode)
+        return copy(mode);
+    }
+
+    /** {@link #copy()} under a different mode, for {@link #demotedToFetch()}. */
+    @NotNull
+    private Builder copy(@NotNull WeaviateQueryMode newMode) {
+        return builder(newMode)
             .query(query)
             .vector(vector)
             .objectId(objectId)
@@ -334,6 +340,44 @@ public final class WeaviateQuerySpec {
 
     public boolean rankedResults() {
         return mode != WeaviateQueryMode.FETCH;
+    }
+
+    /**
+     * Whether this spec may run without the user asking for it.
+     * <p>
+     * A result viewer executes the remembered spec the moment it opens. A plain fetch is what
+     * browsing means and runs freely; a search re-embeds or re-ranks, and a generative task
+     * calls a paid model per object -- none of which anyone means to do by opening a tab. Those
+     * wait for an explicit Run.
+     */
+    public boolean isAutoRunSafe() {
+        return mode == WeaviateQueryMode.FETCH && generative == null;
+    }
+
+    /**
+     * This spec as a plain fetch, everything else kept: the search inputs, targets, rerank and
+     * generative task all stay configured (and inert under FETCH -- except the generative task,
+     * which the executor strips separately on an unarmed read) so the panel still shows them
+     * and Run brings them back. What a remembered search demotes to when its viewer reopens.
+     */
+    @NotNull
+    public WeaviateQuerySpec demotedToFetch() {
+        if (mode == WeaviateQueryMode.FETCH) {
+            return this;
+        }
+        return copy(WeaviateQueryMode.FETCH).build();
+    }
+
+    /**
+     * A copy that will not generate, for executing an unarmed read while the stored spec keeps
+     * the task configured.
+     */
+    @NotNull
+    public WeaviateQuerySpec withoutGenerative() {
+        if (generative == null) {
+            return this;
+        }
+        return copy().generative(null).build();
     }
 
     public static final class Builder {

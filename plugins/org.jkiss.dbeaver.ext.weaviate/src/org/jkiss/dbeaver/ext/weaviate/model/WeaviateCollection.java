@@ -481,6 +481,18 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         DBRProgressMonitor monitor = session.getProgressMonitor();
 
         WeaviateQuerySpec spec = getQuerySpec();
+        boolean armed = dataSource.isRunArmed(getName());
+        if (!armed && !spec.isAutoRunSafe()) {
+            // Opening a viewer re-reads whatever was remembered, and the remembered spec may be
+            // a search that re-embeds or a generative task that calls a paid model per object.
+            // Unarmed -- no Run pressed for this viewer -- the spec demotes to a plain fetch,
+            // keeping its inputs so the panel still shows them and Run brings the search back.
+            spec = spec.demotedToFetch();
+            setQuerySpec(spec);
+        }
+        // What actually executes: on an unarmed read the generative task is stripped -- it is
+        // the one thing FETCH would still fire -- while the stored spec keeps it configured.
+        WeaviateQuerySpec exec = armed ? spec : spec.withoutGenerative();
         List<WeaviateProperty> attributes = getProperties(monitor);
         List<String> declaredVectors = getVectorNames();
         List<String> vectorNames = includeVectors(session, spec)
@@ -520,9 +532,11 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (spec.isWithUpdated()) {
             columnNames.add(WeaviateColumns.UPDATED);
         }
-        if (spec.getGenerative() != null && spec.getGenerative().getSinglePrompt() != null) {
+        // From exec, not spec: on an unarmed read the task is stripped from execution, and the
+        // columns must describe what actually comes back.
+        if (exec.getGenerative() != null && exec.getGenerative().getSinglePrompt() != null) {
             columnNames.add(WeaviateColumns.GENERATED);
-            if (spec.getGenerative().isReturnMetadata()) {
+            if (exec.getGenerative().isReturnMetadata()) {
                 columnNames.add(WeaviateColumns.GENERATIVE_META);
             }
         }
@@ -541,6 +555,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 return statistics;
             }
             spec = spec.withTenant(chosen);
+            exec = exec.withTenant(chosen);
             // Remember it so the row count, the panel and any delete use the same tenant.
             setQuerySpec(spec);
         }
@@ -563,19 +578,19 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         int limit = maxRows > 0 ? (int) Math.min(maxRows, Integer.MAX_VALUE) : 0;
         int offset = firstRow > 0 ? (int) Math.min(firstRow, Integer.MAX_VALUE) : 0;
 
-        String queryText = describeQuery(spec, filter, sortBy, limit, offset);
+        String queryText = describeQuery(exec, filter, sortBy, limit, offset);
         statistics.setQueryText(queryText);
 
         // An unbounded plain fetch is an export ("extract in a single query"). Offset paging cannot
         // serve it: Weaviate refuses offsets past QUERY_MAXIMUM_RESULTS (10000 by default), so a
         // large collection would fail partway through. The cursor paginator walks the whole
         // collection server-side instead, with no such ceiling.
-        if (maxRows <= 0 && spec.getMode() == WeaviateQueryMode.FETCH && spec.getGenerative() == null) {
+        if (maxRows <= 0 && exec.getMode() == WeaviateQueryMode.FETCH && exec.getGenerative() == null) {
             // (Generative fetches never take this path: the paginator cannot carry a task, and
             // prompting a model once per object across an entire collection is not an export
             // anyone means to run by accident.)
             return readAllViaCursor(
-                source, session, dataReceiver, statistics, spec, filter,
+                source, session, dataReceiver, statistics, exec, filter,
                 attributes, columnNames, vectorNames, singleVector, queryText, firstRow);
         }
 
@@ -584,9 +599,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         String defaultVectorName = singleVector && !vectorNames.isEmpty() ? vectorNames.get(0) : null;
         try {
             rows = new ArrayList<>();
-            if (spec.getGenerative() != null) {
+            if (exec.getGenerative() != null) {
                 GenerativeResponse<Map<String, Object>> response =
-                    executeGenerativeQuery(spec, filter, sortBy, limit, offset);
+                    executeGenerativeQuery(exec, filter, sortBy, limit, offset);
                 lastGenerativeGroupedResult =
                     response.generative() == null ? null : response.generative().text();
                 for (GenerativeObject<Map<String, Object>> obj : response.objects()) {
@@ -595,7 +610,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
             } else {
                 lastGenerativeGroupedResult = null;
                 QueryResponse<Map<String, Object>> response =
-                    executeQuery(spec, filter, sortBy, limit, offset);
+                    executeQuery(exec, filter, sortBy, limit, offset);
                 for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
                     rows.add(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName));
                 }
@@ -631,7 +646,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         try (LocalStatement statement = new LocalStatement(session, queryText)) {
             statement.setStatementSource(source);
             LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
-            populateColumns(resultSet, attributes, vectorNames, singleVector, spec);
+            populateColumns(resultSet, attributes, vectorNames, singleVector, exec);
             for (Object[] row : rows) {
                 resultSet.addRow(row);
             }
@@ -1369,6 +1384,23 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
 
     public void setQuerySpec(@Nullable WeaviateQuerySpec spec) {
         dataSource.setQuerySpec(getName(), spec);
+    }
+
+    /**
+     * Allow the next reads to execute the remembered spec in full. The Query panel calls this
+     * from Run; without it, {@link #readData} demotes an expensive spec to a plain fetch -- see
+     * {@link WeaviateQuerySpec#isAutoRunSafe()}.
+     */
+    public void armRun() {
+        dataSource.armRun(getName());
+    }
+
+    /**
+     * A freshly opened viewer calls this before its first read, so a search or generative task
+     * remembered from the last session does not re-fire just because the tab was reopened.
+     */
+    public void disarmRun() {
+        dataSource.disarmRun(getName());
     }
 
     /**

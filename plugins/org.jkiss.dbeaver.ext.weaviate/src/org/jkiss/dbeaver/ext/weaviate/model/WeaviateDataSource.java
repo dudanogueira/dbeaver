@@ -366,6 +366,26 @@ public class WeaviateDataSource extends AbstractDataSource
     }
 
     /**
+     * Collections whose next reads may execute the full remembered spec. Armed by the Query
+     * panel's Run and disarmed when a fresh viewer opens, so a remembered search or generative
+     * task never re-fires just because its tab was reopened -- see WeaviateQuerySpec#isAutoRunSafe.
+     * Deliberately not persisted: "the user just pressed Run" is only ever true in the moment.
+     */
+    private final java.util.Set<String> armedRuns = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    public void armRun(@NotNull String collectionName) {
+        armedRuns.add(collectionName);
+    }
+
+    public void disarmRun(@NotNull String collectionName) {
+        armedRuns.remove(collectionName);
+    }
+
+    public boolean isRunArmed(@NotNull String collectionName) {
+        return armedRuns.contains(collectionName);
+    }
+
+    /**
      * Query settings previously chosen for {@code collectionName}, or a plain fetch if none.
      */
     @NotNull
