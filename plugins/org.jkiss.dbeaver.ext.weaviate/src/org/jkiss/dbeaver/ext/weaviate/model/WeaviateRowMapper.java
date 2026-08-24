@@ -56,7 +56,21 @@ public final class WeaviateRowMapper {
         @NotNull WeaviateObject<Map<String, Object>> obj,
         @Nullable String defaultVectorName
     ) {
-        return toRow(columns, RowSource.of(obj), defaultVectorName);
+        return toRow(columns, obj, defaultVectorName, null);
+    }
+
+    /**
+     * @param rerankScore score for this object, read off the reply by the model rather than by
+     *                    the client, or null when the search was not reranked
+     */
+    @NotNull
+    public static Object[] toRow(
+        @NotNull List<String> columns,
+        @NotNull WeaviateObject<Map<String, Object>> obj,
+        @Nullable String defaultVectorName,
+        @Nullable Float rerankScore
+    ) {
+        return toRow(columns, RowSource.of(obj, rerankScore), defaultVectorName);
     }
 
     /**
@@ -98,16 +112,17 @@ public final class WeaviateRowMapper {
         @Nullable QueryMetadata meta,
         @Nullable Long createdAt,
         @Nullable Long updatedAt,
-        @Nullable TaskOutput generated
+        @Nullable TaskOutput generated,
+        @Nullable Float rerankScore
     ) {
-        static RowSource of(@NotNull WeaviateObject<Map<String, Object>> obj) {
+        static RowSource of(@NotNull WeaviateObject<Map<String, Object>> obj, @Nullable Float rerankScore) {
             return new RowSource(obj.uuid(), obj.properties(), obj.vectors(), obj.queryMetadata(),
-                obj.createdAt(), obj.lastUpdatedAt(), null);
+                obj.createdAt(), obj.lastUpdatedAt(), null, rerankScore);
         }
 
         static RowSource of(@NotNull GenerativeObject<Map<String, Object>> obj) {
             return new RowSource(obj.uuid(), obj.properties(), obj.vectors(), obj.metadata(),
-                null, null, obj.generative());
+                null, null, obj.generative(), null);
         }
     }
 
@@ -133,6 +148,8 @@ public final class WeaviateRowMapper {
                 return formatTimestamp(source.createdAt());
             case WeaviateColumns.UPDATED:
                 return formatTimestamp(source.updatedAt());
+            case WeaviateColumns.RERANK_SCORE:
+                return source.rerankScore();
             case WeaviateColumns.GENERATED:
                 return source.generated() == null ? null : source.generated().text();
             case WeaviateColumns.GENERATIVE_META:

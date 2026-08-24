@@ -36,6 +36,7 @@ import io.weaviate.client6.v1.api.collections.query.FetchObjects;
 import io.weaviate.client6.v1.api.collections.query.Filter;
 import io.weaviate.client6.v1.api.collections.query.Hybrid;
 import io.weaviate.client6.v1.api.collections.query.NearObject;
+import io.weaviate.client6.v1.api.collections.query.QueryOperator;
 import io.weaviate.client6.v1.api.collections.query.NearText;
 import io.weaviate.client6.v1.api.collections.query.NearVector;
 import io.weaviate.client6.v1.internal.ObjectBuilder;
@@ -84,6 +85,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.TreeMap;
@@ -124,6 +126,11 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
      * this after each run exactly as it polls {@link #lastQueryError}.
      */
     private volatile String lastGenerativeGroupedResult;
+    /**
+     * Rerank scores of the last read, by uuid. Filled only by a reranked near_* search; the row
+     * mapper reads it because the score reaches us outside the typed object.
+     */
+    private volatile Map<String, Float> lastRerankScores = Collections.emptyMap();
     private volatile String pendingSchemaJson;
     private volatile List<WeaviateJsonNode> definitionNodes;
 
@@ -526,6 +533,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (spec.isWithCertainty() && spec.getMode().supportsCertainty()) {
             columnNames.add(WeaviateColumns.CERTAINTY);
         }
+        if (hasRerankScore(exec)) {
+            columnNames.add(WeaviateColumns.RERANK_SCORE);
+        }
         if (spec.isWithCreated()) {
             columnNames.add(WeaviateColumns.CREATED);
         }
@@ -599,6 +609,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         String defaultVectorName = singleVector && !vectorNames.isEmpty() ? vectorNames.get(0) : null;
         try {
             rows = new ArrayList<>();
+            // Cleared per read: a stale map would decorate the next query's rows with the last
+            // one's scores wherever a uuid happened to repeat.
+            lastRerankScores = Collections.emptyMap();
             if (exec.getGenerative() != null) {
                 GenerativeResponse<Map<String, Object>> response =
                     executeGenerativeQuery(exec, filter, sortBy, limit, offset);
@@ -612,7 +625,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 QueryResponse<Map<String, Object>> response =
                     executeQuery(exec, filter, sortBy, limit, offset);
                 for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
-                    rows.add(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName));
+                    rows.add(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName,
+                        lastRerankScores.get(obj.uuid())));
                 }
             }
             lastQueryError = null;
@@ -744,21 +758,26 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 String text = requireQuery(spec, "Near Text");
                 // A target is chosen by swapping the first argument, not by a builder call: the
                 // Target record carries the query text as well as the vectors it applies to.
-                return spec.hasTargets()
-                    ? query.nearText(buildTextTarget(spec, text),
+                NearText nearText = spec.hasTargets()
+                    ? NearText.of(buildTextTarget(spec, text),
                         b -> nearTextOptions(b, spec, filter, limit, offset))
-                    : query.nearText(text,
+                    : NearText.of(text,
                         b -> nearTextOptions(b, spec, filter, limit, offset));
+                return runNear(query, nearText, spec, () -> query.nearText(nearText));
             }
-            case NEAR_VECTOR:
-                return spec.hasTargets()
-                    ? query.nearVector(buildVectorTarget(spec),
+            case NEAR_VECTOR: {
+                NearVector nearVector = spec.hasTargets()
+                    ? NearVector.of(buildVectorTarget(spec),
                         b -> nearVectorOptions(b, spec, filter, limit, offset))
-                    : query.nearVector(requireVector(spec),
+                    : NearVector.of(requireVector(spec),
                         b -> nearVectorOptions(b, spec, filter, limit, offset));
-            case NEAR_OBJECT:
-                return query.nearObject(requireObjectId(spec),
+                return runNear(query, nearVector, spec, () -> query.nearVector(nearVector));
+            }
+            case NEAR_OBJECT: {
+                NearObject nearObject = NearObject.of(requireObjectId(spec),
                     b -> nearObjectOptions(b, spec, filter, limit, offset));
+                return runNear(query, nearObject, spec, () -> query.nearObject(nearObject));
+            }
             case HYBRID: {
                 String text = requireQuery(spec, "Hybrid");
                 return spec.hasTargets()
@@ -825,6 +844,34 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 return generate.fetchObjects(
                     b -> fetchOptions(b, spec, filter, sortBy, limit, offset), task);
         }
+    }
+
+    /**
+     * Run a near_* search, reading the rerank score off the reply when the search was reranked.
+     * <p>
+     * The score is the one thing the typed client drops (see {@link WeaviateRerankSupport}), so
+     * only a reranked query takes the observing path; everything else runs the plain call. If
+     * the seam is unavailable the fallback runs too -- the query still works, the column is just
+     * not offered, which is the same decision readData already made when it built the columns.
+     */
+    @NotNull
+    private QueryResponse<Map<String, Object>> runNear(
+        @NotNull WeaviateQueryClient<Map<String, Object>> query,
+        @NotNull QueryOperator operator,
+        @NotNull WeaviateQuerySpec spec,
+        @NotNull java.util.function.Supplier<QueryResponse<Map<String, Object>>> plain
+    ) {
+        if (spec.getRerank() == null || !WeaviateRerankSupport.isAvailable()) {
+            return plain.get();
+        }
+        Map<String, Float> scores = new HashMap<>();
+        QueryResponse<Map<String, Object>> response =
+            WeaviateRerankSupport.search(query, operator, scores);
+        if (response == null) {
+            return plain.get();
+        }
+        lastRerankScores = scores;
+        return response;
     }
 
     // One options method per mode, shared verbatim by the plain and generative dispatchers.
@@ -1085,6 +1132,20 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
     }
 
     /**
+     * Whether a rerank score column is offered for this spec.
+     * <p>
+     * Everything here is knowable before the query runs, which is what lets the column be
+     * offered only when it will actually be filled: the search must be reranked, the seam that
+     * reads the score must have resolved, and the read must not be generative -- the generate
+     * client uses its own Rpc, which this does not wrap.
+     */
+    private static boolean hasRerankScore(@NotNull WeaviateQuerySpec spec) {
+        return spec.getRerank() != null
+            && spec.getGenerative() == null
+            && WeaviateRerankSupport.isAvailable();
+    }
+
+    /**
      * The declared vectors a query is about: its targets when it names any, all of them otherwise.
      * A target the collection no longer declares is dropped rather than turned into a blank column.
      */
@@ -1209,6 +1270,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         }
         if (spec.isWithCertainty() && mode.supportsCertainty()) {
             rs.addColumn(WeaviateColumns.CERTAINTY, DBPDataKind.NUMERIC);
+        }
+        if (hasRerankScore(spec)) {
+            rs.addColumn(WeaviateColumns.RERANK_SCORE, DBPDataKind.NUMERIC);
         }
         if (spec.isWithCreated()) {
             rs.addColumn(WeaviateColumns.CREATED, DBPDataKind.STRING);

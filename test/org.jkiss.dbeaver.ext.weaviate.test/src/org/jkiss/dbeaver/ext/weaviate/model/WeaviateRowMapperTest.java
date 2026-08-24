@@ -162,4 +162,42 @@ public class WeaviateRowMapperTest extends DBeaverUnitTest {
         Object[] row = WeaviateRowMapper.toRow(List.of(WeaviateColumns.CERTAINTY), obj);
         Assertions.assertEquals(0.875f, row[0]);
     }
+
+    /**
+     * The rerank score reaches the row from outside the typed object -- the client never
+     * unmarshals it -- so the mapper takes it as a separate argument.
+     */
+    @Test
+    public void rerankScoreComesFromTheCapturedValue() {
+        WeaviateObject<Map<String, Object>> obj = WeaviateObject.of(b -> b
+            .uuid("u")
+            .properties(new HashMap<>()));
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.UUID, WeaviateColumns.RERANK_SCORE), obj, null, 0.781f);
+        Assertions.assertEquals("u", row[0]);
+        Assertions.assertEquals(0.781f, row[1]);
+    }
+
+    /**
+     * Zero is a real rerank score, not "absent" -- the reply has a separate present flag for
+     * exactly that reason, so a captured 0 must survive to the grid.
+     */
+    @Test
+    public void zeroRerankScoreIsKept() {
+        WeaviateObject<Map<String, Object>> obj = WeaviateObject.of(b -> b
+            .uuid("u")
+            .properties(new HashMap<>()));
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.RERANK_SCORE), obj, null, 0f);
+        Assertions.assertEquals(0f, row[0]);
+    }
+
+    @Test
+    public void rerankScoreIsNullWhenNotReranked() {
+        WeaviateObject<Map<String, Object>> obj = WeaviateObject.of(b -> b
+            .uuid("u")
+            .properties(new HashMap<>()));
+        Object[] row = WeaviateRowMapper.toRow(List.of(WeaviateColumns.RERANK_SCORE), obj);
+        Assertions.assertNull(row[0]);
+    }
 }

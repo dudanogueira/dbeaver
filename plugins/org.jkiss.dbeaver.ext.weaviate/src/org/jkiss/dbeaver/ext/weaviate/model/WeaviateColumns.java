@@ -34,6 +34,12 @@ public final class WeaviateColumns {
      */
     public static final String CERTAINTY = "_certainty";
 
+    /**
+     * Score the reranker gave the object. Present only on a reranked near_* search, and only
+     * because the plugin reads it off the reply itself -- see WeaviateRerankSupport.
+     */
+    public static final String RERANK_SCORE = "_rerankScore";
+
     /** Per-object generated text from a single-prompt generative task. */
     public static final String GENERATED = "_generated";
     /** Provider usage metadata (token counts) for the generated text. Opt-in. */
