@@ -31,6 +31,7 @@ import io.weaviate.client6.v1.api.collections.tenants.Tenant;
 import io.weaviate.client6.v1.api.collections.query.Metadata;
 import io.weaviate.client6.v1.api.collections.query.NearVectorTarget;
 import io.weaviate.client6.v1.api.collections.query.QueryResponse;
+import io.weaviate.client6.v1.api.collections.query.Rerank;
 import io.weaviate.client6.v1.api.collections.query.SortBy;
 import io.weaviate.client6.v1.api.collections.query.Target;
 import io.weaviate.client6.v1.api.collections.query.WeaviateQueryClient;
@@ -661,6 +662,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
     ) {
         WeaviateQueryClient<Map<String, Object>> query =
             handle(spec.getTenant()).query;
+        Rerank rerank = buildRerank(spec);
         switch (spec.getMode()) {
             case BM25: {
                 String text = requireQuery(spec, "BM25");
@@ -681,6 +683,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                     Target target = buildTextTarget(spec, text);
                     return query.nearText(target, b -> {
                         applyCommon(b, spec, filter, limit, offset);
+                        if (rerank != null) b.rerank(rerank);
                         b.returnMetadata(Metadata.DISTANCE);
                         if (distance != null) b.distance(distance);
                         return b;
@@ -688,6 +691,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 }
                 return query.nearText(text, b -> {
                     applyCommon(b, spec, filter, limit, offset);
+                    if (rerank != null) b.rerank(rerank);
                     b.returnMetadata(Metadata.DISTANCE);
                     if (distance != null) b.distance(distance);
                     return b;
@@ -699,6 +703,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                     NearVectorTarget target = buildVectorTarget(spec);
                     return query.nearVector(target, b -> {
                         applyCommon(b, spec, filter, limit, offset);
+                        if (rerank != null) b.rerank(rerank);
                         b.returnMetadata(Metadata.DISTANCE);
                         if (nearVectorDistance != null) b.distance(nearVectorDistance);
                         return b;
@@ -711,6 +716,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 Float distance = spec.getDistance();
                 return query.nearVector(vector, b -> {
                     applyCommon(b, spec, filter, limit, offset);
+                    if (rerank != null) b.rerank(rerank);
                     b.returnMetadata(Metadata.DISTANCE);
                     if (distance != null) b.distance(distance);
                     return b;
@@ -728,6 +734,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 Float distance = spec.getDistance();
                 return query.nearObject(uuid, b -> {
                     applyCommon(b, spec, filter, limit, offset);
+                    if (rerank != null) b.rerank(rerank);
                     b.returnMetadata(Metadata.DISTANCE);
                     if (distance != null) b.distance(distance);
                     return b;
@@ -811,6 +818,24 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
     @NotNull
     private static Target.VectorWeight weightOf(@NotNull WeaviateVectorTarget target) {
         return new Target.VectorWeight(target.getName(), target.getWeight());
+    }
+
+    /**
+     * The spec's rerank request as the client type, or null for none. Attached inline in the
+     * near_* dispatch arms -- only their builders expose rerank in client 6.3.0 (see
+     * {@link WeaviateQueryMode#supportsRerank()}), and their common ancestor carrying the
+     * setter is package-private, so there is no type to write a shared helper against.
+     */
+    @Nullable
+    private static Rerank buildRerank(@NotNull WeaviateQuerySpec spec) {
+        WeaviateRerankSpec rerank = spec.getRerank();
+        if (rerank == null) {
+            return null;
+        }
+        String query = rerank.getQuery();
+        return query == null
+            ? Rerank.by(rerank.getProperty())
+            : Rerank.by(rerank.getProperty(), rb -> rb.query(query));
     }
 
     /**
@@ -1101,6 +1126,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 break;
         }
         describeTargets(spec, args);
+        if (spec.getRerank() != null) {
+            args.add("rerank=" + spec.getRerank());
+        }
         if (limit > 0) args.add("limit=" + limit);
         if (offset > 0) args.add("offset=" + offset);
         if (filter != null) args.add("filter=" + filter);

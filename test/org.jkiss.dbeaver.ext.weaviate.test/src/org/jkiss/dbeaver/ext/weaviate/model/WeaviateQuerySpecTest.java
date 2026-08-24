@@ -255,15 +255,15 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
      */
     @Test
     public void everyModeDeclaresItsOwnCapabilities() {
-        record Expected(WeaviateQueryMode mode, boolean score, boolean distance,
-                        boolean explain, boolean autoCut, boolean targets, boolean certainty) { }
+        record Expected(WeaviateQueryMode mode, boolean score, boolean distance, boolean explain,
+                        boolean autoCut, boolean targets, boolean certainty, boolean rerank) { }
         java.util.List<Expected> matrix = java.util.List.of(
-            new Expected(WeaviateQueryMode.FETCH, false, false, false, false, false, false),
-            new Expected(WeaviateQueryMode.BM25, true, false, true, true, false, false),
-            new Expected(WeaviateQueryMode.NEAR_TEXT, false, true, false, true, true, true),
-            new Expected(WeaviateQueryMode.NEAR_VECTOR, false, true, false, true, true, true),
-            new Expected(WeaviateQueryMode.NEAR_OBJECT, false, true, false, true, false, true),
-            new Expected(WeaviateQueryMode.HYBRID, true, false, true, true, true, false));
+            new Expected(WeaviateQueryMode.FETCH, false, false, false, false, false, false, false),
+            new Expected(WeaviateQueryMode.BM25, true, false, true, true, false, false, false),
+            new Expected(WeaviateQueryMode.NEAR_TEXT, false, true, false, true, true, true, true),
+            new Expected(WeaviateQueryMode.NEAR_VECTOR, false, true, false, true, true, true, true),
+            new Expected(WeaviateQueryMode.NEAR_OBJECT, false, true, false, true, false, true, true),
+            new Expected(WeaviateQueryMode.HYBRID, true, false, true, true, true, false, false));
 
         Assertions.assertEquals(WeaviateQueryMode.values().length, matrix.size(),
             "a mode was added without deciding its score/distance/explain/autocut/target behaviour");
@@ -276,6 +276,8 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
                 e.mode() + ".supportsTargetVectors");
             Assertions.assertEquals(e.certainty(), e.mode().supportsCertainty(),
                 e.mode() + ".supportsCertainty");
+            Assertions.assertEquals(e.rerank(), e.mode().supportsRerank(),
+                e.mode() + ".supportsRerank");
         }
     }
 
@@ -473,5 +475,33 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
         Assertions.assertEquals(Float.valueOf(0.4f), copy.getAlpha());
         Assertions.assertEquals(java.util.List.of(title), copy.getTargets());
         Assertions.assertEquals(WeaviateVectorCombination.AVERAGE, copy.getCombination());
+    }
+
+    @Test
+    public void rerankSurvivesTheCopies() {
+        WeaviateRerankSpec rerank = new WeaviateRerankSpec("title", "shoes");
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_TEXT)
+            .query("q")
+            .rerank(rerank)
+            .build();
+        Assertions.assertEquals(rerank, spec.withTenant("acme").getRerank());
+        Assertions.assertEquals(rerank, spec.withIncludeVector(true).getRerank());
+    }
+
+    @Test
+    public void rerankNeedsAProperty() {
+        Assertions.assertThrows(IllegalArgumentException.class,
+            () -> new WeaviateRerankSpec("  ", null));
+    }
+
+    /**
+     * A blank rerank query means "rank against the search query" and is stored as null, so two
+     * specs built from an empty box and an untouched one compare equal.
+     */
+    @Test
+    public void blankRerankQueryNormalisesToNull() {
+        Assertions.assertNull(new WeaviateRerankSpec("title", "   ").getQuery());
+        Assertions.assertEquals(new WeaviateRerankSpec("title", null),
+            new WeaviateRerankSpec("title", ""));
     }
 }

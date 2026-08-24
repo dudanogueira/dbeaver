@@ -137,6 +137,15 @@ public final class WeaviateUIMessages extends NLS {
     // Autocut
     public static String query_autocut;
     public static String query_autocut_tip;
+    public static String query_rerank;
+    public static String query_rerank_tip;
+    public static String query_rerank_property;
+    public static String query_rerank_none;
+    public static String query_rerank_query;
+    public static String query_rerank_query_hint;
+    public static String query_rerank_module;
+    public static String query_rerank_no_module;
+    public static String query_rerank_property_required;
     public static String query_metadata;
     public static String query_metadata_created;
     public static String query_metadata_updated;

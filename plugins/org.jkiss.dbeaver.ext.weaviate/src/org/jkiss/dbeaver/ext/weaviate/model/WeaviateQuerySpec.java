@@ -44,6 +44,8 @@ public final class WeaviateQuerySpec {
     private final List<WeaviateFilterRow> filterRows;
     private final boolean anyFilter;
     private final boolean includeVector;
+    /** Rerank request, or null. Only meaningful where the mode supports rerank. */
+    private final WeaviateRerankSpec rerank;
     /** Opt-in metadata columns; each adds a request field and a grid column. */
     private final boolean withCreated;
     private final boolean withUpdated;
@@ -68,6 +70,7 @@ public final class WeaviateQuerySpec {
         this.filterRows = b.filterRows == null ? Collections.emptyList() : List.copyOf(b.filterRows);
         this.anyFilter = b.anyFilter;
         this.includeVector = b.includeVector;
+        this.rerank = b.rerank;
         this.withCreated = b.withCreated;
         this.withUpdated = b.withUpdated;
         this.withCertainty = b.withCertainty;
@@ -216,6 +219,18 @@ public final class WeaviateQuerySpec {
         return anyFilter;
     }
 
+    /**
+     * The rerank request, or null for none.
+     * <p>
+     * Reranking reorders the result slice server-side by handing each object's property to the
+     * collection's reranker module. The reranked order is all that comes back -- client 6.3.0
+     * never unmarshals the rerank score, so there is no column for it.
+     */
+    @Nullable
+    public WeaviateRerankSpec getRerank() {
+        return rerank;
+    }
+
     /** Whether to fetch and show the object creation time. */
     public boolean isWithCreated() {
         return withCreated;
@@ -285,6 +300,7 @@ public final class WeaviateQuerySpec {
             .filterRows(filterRows)
             .anyFilter(anyFilter)
             .includeVector(includeVector)
+            .rerank(rerank)
             .withCreated(withCreated)
             .withUpdated(withUpdated)
             .withCertainty(withCertainty)
@@ -320,6 +336,7 @@ public final class WeaviateQuerySpec {
         private List<WeaviateFilterRow> filterRows;
         private boolean anyFilter;
         private boolean includeVector;
+        private WeaviateRerankSpec rerank;
         private boolean withCreated;
         private boolean withUpdated;
         private boolean withCertainty;
@@ -392,6 +409,11 @@ public final class WeaviateQuerySpec {
 
         public Builder includeVector(boolean include) {
             this.includeVector = include;
+            return this;
+        }
+
+        public Builder rerank(@Nullable WeaviateRerankSpec rerank) {
+            this.rerank = rerank;
             return this;
         }
 

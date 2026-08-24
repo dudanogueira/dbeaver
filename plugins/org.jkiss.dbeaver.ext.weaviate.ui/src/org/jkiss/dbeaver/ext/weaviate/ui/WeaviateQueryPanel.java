@@ -55,6 +55,7 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateHybridFusion;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQueryMode;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQuerySpec;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRerankSpec;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorCombination;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorParser;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorTarget;
@@ -95,6 +96,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Combo tenantCombo;
     /** One include-vectors toggle per mode, beside that mode's other result options. */
     private final Map<WeaviateQueryMode, Button> includeVectorChecks = new EnumMap<>(WeaviateQueryMode.class);
+    /** Rerank section per near_* mode: property picker, optional query, module hint. */
+    private final Map<WeaviateQueryMode, Composite> rerankGroups = new EnumMap<>(WeaviateQueryMode.class);
+    private final Map<WeaviateQueryMode, Combo> rerankPropertyCombos = new EnumMap<>(WeaviateQueryMode.class);
+    private final Map<WeaviateQueryMode, Text> rerankQueryFields = new EnumMap<>(WeaviateQueryMode.class);
+    private final Map<WeaviateQueryMode, Label> rerankModuleLabels = new EnumMap<>(WeaviateQueryMode.class);
     /** Opt-in metadata checkboxes per mode: created / updated / (near_* only) certainty. */
     private final Map<WeaviateQueryMode, Button> createdChecks = new EnumMap<>(WeaviateQueryMode.class);
     private final Map<WeaviateQueryMode, Button> updatedChecks = new EnumMap<>(WeaviateQueryMode.class);
@@ -272,6 +278,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         // the tenant picker never appears for a multi-tenant collection.
         refreshTenants();
         refreshTargetSections();
+        refreshRerankSections();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();
@@ -516,6 +523,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         addMetadataFields(c, WeaviateQueryMode.NEAR_TEXT);
         addAutoCutField(c, WeaviateQueryMode.NEAR_TEXT);
         addTargetVectorField(c, WeaviateQueryMode.NEAR_TEXT);
+        addRerankField(c, WeaviateQueryMode.NEAR_TEXT);
         return c;
     }
 
@@ -541,6 +549,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         addMetadataFields(c, WeaviateQueryMode.NEAR_VECTOR);
         addAutoCutField(c, WeaviateQueryMode.NEAR_VECTOR);
         addTargetVectorField(c, WeaviateQueryMode.NEAR_VECTOR);
+        addRerankField(c, WeaviateQueryMode.NEAR_VECTOR);
         return c;
     }
 
@@ -563,6 +572,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         addIncludeVectorField(c, WeaviateQueryMode.NEAR_OBJECT);
         addMetadataFields(c, WeaviateQueryMode.NEAR_OBJECT);
         addAutoCutField(c, WeaviateQueryMode.NEAR_OBJECT);
+        addRerankField(c, WeaviateQueryMode.NEAR_OBJECT);
         return c;
     }
 
@@ -840,6 +850,139 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         targetJoinCombos.put(mode, joinCombo);
         targetRowsHolders.put(mode, rowsHolder);
         targetRowUis.put(mode, new ArrayList<>());
+    }
+
+    /**
+     * Adds the Rerank section to a near_* mode's field panel.
+     * <p>
+     * Only those modes: client 6.3.0 exposes rerank solely on the vector-search builders, so
+     * BM25 and Hybrid -- which the server could rerank -- have nowhere to attach it. The section
+     * tooltip says so, and also that the rerank score itself never comes back.
+     */
+    private void addRerankField(@NotNull Composite c, @NotNull WeaviateQueryMode mode) {
+        Composite group = createSection(
+            c, WeaviateUIMessages.query_rerank, "rerank." + mode.name(), 2, false);
+        group.setToolTipText(WeaviateUIMessages.query_rerank_tip);
+        ((GridData) group.getParent().getLayoutData()).horizontalSpan = 2;
+
+        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_rerank_property);
+        Combo propertyCombo = new Combo(group, SWT.READ_ONLY);
+        GridData pcGd = new GridData(SWT.LEFT, SWT.CENTER, false, false);
+        pcGd.widthHint = 160;
+        propertyCombo.setLayoutData(pcGd);
+        propertyCombo.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                updateRerankCount(mode);
+            }
+        });
+
+        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_rerank_query);
+        Text queryField = new Text(group, SWT.BORDER);
+        queryField.setLayoutData(fillFieldData());
+        queryField.setMessage(WeaviateUIMessages.query_rerank_query_hint);
+        runOnEnter(queryField);
+
+        Label moduleLabel = new Label(group, SWT.WRAP);
+        GridData mlGd = new GridData(SWT.FILL, SWT.CENTER, true, false);
+        mlGd.horizontalSpan = 2;
+        moduleLabel.setLayoutData(mlGd);
+
+        rerankGroups.put(mode, group);
+        rerankPropertyCombos.put(mode, propertyCombo);
+        rerankQueryFields.put(mode, queryField);
+        rerankModuleLabels.put(mode, moduleLabel);
+    }
+
+    /**
+     * Refill the rerank property pickers and the module hint from the collection the panel is
+     * bound to. "(none)" leads each list so a chosen property can be un-chosen.
+     */
+    private void refreshRerankSections() {
+        List<String> properties = currentPropertyNames();
+        String moduleHint = rerankModuleHint();
+        for (WeaviateQueryMode mode : rerankPropertyCombos.keySet()) {
+            Combo combo = rerankPropertyCombos.get(mode);
+            if (combo == null || combo.isDisposed()) {
+                continue;
+            }
+            String selected = combo.getText();
+            combo.removeAll();
+            combo.add(WeaviateUIMessages.query_rerank_none);
+            for (String name : properties) {
+                combo.add(name);
+            }
+            int idx = selected.isEmpty() ? 0 : Math.max(0, combo.indexOf(selected));
+            combo.select(idx);
+            Label moduleLabel = rerankModuleLabels.get(mode);
+            if (moduleLabel != null && !moduleLabel.isDisposed()) {
+                moduleLabel.setText(moduleHint);
+            }
+            updateRerankCount(mode);
+        }
+    }
+
+    /**
+     * Name the collection's reranker module, or warn that there is none -- a reranked query then
+     * fails, and better the section says so than the server's error explains it after the fact.
+     */
+    @NotNull
+    private String rerankModuleHint() {
+        WeaviateCollection collection = currentCollection();
+        if (collection == null) {
+            return "";
+        }
+        try {
+            List<String> kinds = new ArrayList<>();
+            for (var reranker : collection.getRerankers(new VoidProgressMonitor())) {
+                kinds.add(reranker.getName());
+            }
+            return kinds.isEmpty()
+                ? WeaviateUIMessages.query_rerank_no_module
+                : NLS.bind(WeaviateUIMessages.query_rerank_module, String.join(", ", kinds));
+        } catch (Exception e) {
+            log.debug("Failed to read reranker modules", e);
+            return "";
+        }
+    }
+
+    private void updateRerankCount(@NotNull WeaviateQueryMode mode) {
+        setSectionCount(rerankGroups.get(mode), WeaviateUIMessages.query_rerank,
+            selectedRerankProperty(mode) == null ? 0 : 1);
+    }
+
+    /** The picked rerank property, or null while "(none)" is selected. */
+    @Nullable
+    private String selectedRerankProperty(@NotNull WeaviateQueryMode mode) {
+        Combo combo = rerankPropertyCombos.get(mode);
+        if (combo == null || combo.isDisposed() || combo.getSelectionIndex() <= 0) {
+            return null;
+        }
+        return combo.getText();
+    }
+
+    /**
+     * The rerank request the current mode's section describes, or null for none.
+     *
+     * @throws IllegalArgumentException when a rerank query was typed but no property picked --
+     *                                  the query alone cannot be sent, and dropping it silently
+     *                                  would run a different search than the one on screen
+     */
+    @Nullable
+    private WeaviateRerankSpec currentRerank(@NotNull WeaviateQueryMode mode) {
+        if (!mode.supportsRerank()) {
+            return null;
+        }
+        String property = selectedRerankProperty(mode);
+        Text queryField = rerankQueryFields.get(mode);
+        String query = queryField == null || queryField.isDisposed() ? "" : queryField.getText();
+        if (property == null) {
+            if (!query.isBlank()) {
+                throw new IllegalArgumentException(WeaviateUIMessages.query_rerank_property_required);
+            }
+            return null;
+        }
+        return new WeaviateRerankSpec(property, query);
     }
 
     /**
@@ -1330,6 +1473,25 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         syncTargetWeightsEnabled(mode);
     }
 
+    private void loadRerankIntoUi(@NotNull WeaviateQuerySpec spec) {
+        WeaviateQueryMode mode = spec.getMode();
+        Combo combo = rerankPropertyCombos.get(mode);
+        Text queryField = rerankQueryFields.get(mode);
+        if (combo == null || combo.isDisposed() || queryField == null || queryField.isDisposed()) {
+            return;
+        }
+        WeaviateRerankSpec rerank = spec.getRerank();
+        if (rerank == null) {
+            combo.select(0);
+            queryField.setText("");
+        } else {
+            int idx = combo.indexOf(rerank.getProperty());
+            combo.select(Math.max(0, idx));
+            queryField.setText(rerank.getQuery() == null ? "" : rerank.getQuery());
+        }
+        updateRerankCount(mode);
+    }
+
     private void loadSpecIntoUi() {
         WeaviateCollection collection = currentCollection();
         if (collection == null) return;
@@ -1340,6 +1502,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         displayedMode = spec.getMode();
         loadAutoCutIntoUi(spec);
         loadTargetsIntoUi(spec);
+        loadRerankIntoUi(spec);
 
 
         // Filter rows
@@ -1512,6 +1675,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             .autoCut(currentAutoCut())
             .explainScore(currentExplainScore())
             .includeVector(currentIncludeVector())
+            .rerank(currentRerank(mode))
             .withCreated(currentCheck(createdChecks))
             .withUpdated(currentCheck(updatedChecks))
             .withCertainty(currentCheck(certaintyChecks))
@@ -1678,6 +1842,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     public void activatePanel() {
         refreshTenants();
         refreshTargetSections();
+        refreshRerankSections();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();
@@ -1698,6 +1863,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     public void refresh(boolean force) {
         refreshTenants();
         refreshTargetSections();
+        refreshRerankSections();
         // refreshTenants ran before the read completed the first time round, so re-sync after.
         syncTenantSelection();
         loadSpecIntoUi();

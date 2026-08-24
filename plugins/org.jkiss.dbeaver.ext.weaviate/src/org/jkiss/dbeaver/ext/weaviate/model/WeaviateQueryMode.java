@@ -71,6 +71,17 @@ public enum WeaviateQueryMode {
     }
 
     /**
+     * Whether a reranker can reorder this mode's results.
+     * <p>
+     * A client limitation, not a server one: client 6.3.0 exposes rerank only on the vector
+     * search builders, so BM25 and Hybrid -- which the server could rerank -- have nowhere to
+     * attach it. Fetch is unranked either way. Revisit on a client upgrade.
+     */
+    public boolean supportsRerank() {
+        return this == NEAR_TEXT || this == NEAR_VECTOR || this == NEAR_OBJECT;
+    }
+
+    /**
      * Whether the server can report a certainty for this mode's results.
      * <p>
      * Certainty is a normalisation of the vector distance, so it exists exactly where distance
