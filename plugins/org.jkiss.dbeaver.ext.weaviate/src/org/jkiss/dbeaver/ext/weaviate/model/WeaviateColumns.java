@@ -40,6 +40,18 @@ public final class WeaviateColumns {
      */
     public static final String RERANK_SCORE = "_rerankScore";
 
+    /**
+     * Name of the group an object was bucketed into. Present whenever a group-by is in effect;
+     * this is the one column that makes a grouped result readable as a flat grid.
+     */
+    public static final String GROUP = "_group";
+    /** How many objects the server put in this row's group, before the per-group cap. Opt-in. */
+    public static final String GROUP_COUNT = "_groupCount";
+    /** Closest distance within this row's group. Opt-in, and only meaningful on a vector search. */
+    public static final String GROUP_MIN_DISTANCE = "_groupMinDistance";
+    /** Furthest distance within this row's group. Opt-in, and only on a vector search. */
+    public static final String GROUP_MAX_DISTANCE = "_groupMaxDistance";
+
     /** Per-object generated text from a single-prompt generative task. */
     public static final String GENERATED = "_generated";
     /** Provider usage metadata (token counts) for the generated text. Opt-in. */

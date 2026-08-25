@@ -114,4 +114,17 @@ public enum WeaviateQueryMode {
     public boolean supportsAutoCut() {
         return this != FETCH;
     }
+
+    /**
+     * Whether results can be grouped.
+     * <p>
+     * Every mode but a plain fetch. The client declares a {@code fetchObjects(GroupBy)} overload
+     * and it looks like the sixth supported mode, but the server rejects it outright --
+     * {@code "group is not present"} -- because grouping needs a ranking to order the groups by
+     * and a bare fetch has none. Verified against Weaviate 1.39; the Python client does not
+     * expose the combination at all, which is the same limitation stated as an absence.
+     */
+    public boolean supportsGroupBy() {
+        return this != FETCH;
+    }
 }

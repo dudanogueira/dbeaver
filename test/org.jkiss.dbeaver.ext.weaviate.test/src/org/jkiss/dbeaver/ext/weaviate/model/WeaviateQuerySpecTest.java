@@ -609,4 +609,67 @@ public class WeaviateQuerySpecTest extends DBeaverUnitTest {
         Assertions.assertSame(fetch, fetch.demotedToFetch());
         Assertions.assertSame(fetch, fetch.withoutGenerative());
     }
+
+    /**
+     * The one test that matters for group-by on the spec: every {@code with*} copy goes through
+     * {@code copy()}, which enumerates its fields by hand. A field left out of that list is
+     * dropped silently -- which is exactly how {@code withIncludeVector} once lost the tenant,
+     * the object id, autocut and the explain-score flag.
+     */
+    @Test
+    public void groupBySurvivesEveryCopy() {
+        WeaviateGroupBySpec groupBy = new WeaviateGroupBySpec("category", 4, 2, true);
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_TEXT)
+            .query("dog")
+            .groupBy(groupBy)
+            .build();
+
+        Assertions.assertEquals(groupBy, spec.getGroupBy());
+        Assertions.assertTrue(spec.isGrouped());
+
+        Assertions.assertEquals(groupBy, spec.demotedToFetch().getGroupBy(),
+            "demoting to fetch dropped the grouping");
+        Assertions.assertEquals(groupBy, spec.withoutGenerative().getGroupBy(),
+            "stripping the generative task dropped the grouping");
+        Assertions.assertEquals(groupBy, spec.withTenant("t1").getGroupBy(),
+            "choosing a tenant dropped the grouping");
+        Assertions.assertEquals(groupBy, spec.withIncludeVector(true).getGroupBy(),
+            "toggling vectors dropped the grouping");
+    }
+
+    /** No grouping is the default, and isGrouped has to agree with getGroupBy. */
+    @Test
+    public void anUngroupedSpecReportsItself() {
+        WeaviateQuerySpec spec = WeaviateQuerySpec.fetch();
+        Assertions.assertNull(spec.getGroupBy());
+        Assertions.assertFalse(spec.isGrouped());
+    }
+
+    /**
+     * The grouping is kept through a demotion but goes inert, because the server refuses a
+     * grouped fetch. Keeping it is what lets switching back to a ranked mode restore it;
+     * reporting it as inactive is what stops a reopened viewer from sending a query that fails.
+     */
+    @Test
+    public void aGroupingIsKeptButInertUnderFetch() {
+        WeaviateGroupBySpec groupBy = new WeaviateGroupBySpec("category", 4, 2, false);
+        WeaviateQuerySpec fetch = WeaviateQuerySpec.builder(WeaviateQueryMode.FETCH)
+            .groupBy(groupBy)
+            .build();
+
+        Assertions.assertEquals(groupBy, fetch.getGroupBy(), "the grouping should be remembered");
+        Assertions.assertFalse(fetch.isGrouped(), "a grouped fetch would be rejected by the server");
+        // Still browsable on open: an inert grouping neither embeds nor calls a model.
+        Assertions.assertTrue(fetch.isAutoRunSafe());
+
+        WeaviateQuerySpec ranked = WeaviateQuerySpec.builder(WeaviateQueryMode.BM25)
+            .query("x")
+            .groupBy(groupBy)
+            .build();
+        Assertions.assertTrue(ranked.isGrouped());
+        Assertions.assertFalse(ranked.demotedToFetch().isGrouped(),
+            "demoting to fetch must not leave a grouping that the server will reject");
+        Assertions.assertEquals(groupBy, ranked.demotedToFetch().getGroupBy(),
+            "...but the grouping itself must survive so the panel can still show it");
+    }
 }

@@ -56,6 +56,9 @@ public final class WeaviateQuerySpec {
     private final List<WeaviateVectorTarget> targets;
     /** How several targets are joined into one ranking; null when there is only one. */
     private final WeaviateVectorCombination combination;
+    /** Group-by request, or null. Applies to every mode -- the client has a grouped overload
+     *  for all six. */
+    private final WeaviateGroupBySpec groupBy;
 
     public WeaviateQuerySpec(@NotNull Builder b) {
         this.mode = b.mode;
@@ -79,6 +82,7 @@ public final class WeaviateQuerySpec {
         this.withCertainty = b.withCertainty;
         this.targets = b.targets == null ? Collections.emptyList() : List.copyOf(b.targets);
         this.combination = b.combination;
+        this.groupBy = b.groupBy;
     }
 
     /**
@@ -292,6 +296,27 @@ public final class WeaviateQuerySpec {
     }
 
     /**
+     * The group-by request, or null when the results are not bucketed.
+     */
+    @Nullable
+    public WeaviateGroupBySpec getGroupBy() {
+        return groupBy;
+    }
+
+    /**
+     * Whether this spec will actually group.
+     * <p>
+     * Mode-aware on purpose. A grouping stays configured under a mode that cannot use it -- the
+     * same way targets, rerank and the generative task stay configured through
+     * {@link #demotedToFetch()} -- so the panel still shows it and switching back brings it into
+     * effect. What must not happen is sending it: a grouped fetch is rejected by the server, so
+     * a viewer reopening on a demoted grouped search would fail rather than just browse.
+     */
+    public boolean isGrouped() {
+        return groupBy != null && mode.supportsGroupBy();
+    }
+
+    /**
      * A builder seeded with every field of this spec.
      * <p>
      * Exists so the {@code with*} copies cannot silently drop a field. Enumerating them by hand
@@ -326,7 +351,8 @@ public final class WeaviateQuerySpec {
             .withUpdated(withUpdated)
             .withCertainty(withCertainty)
             .targets(targets)
-            .combination(combination);
+            .combination(combination)
+            .groupBy(groupBy);
     }
 
     /**
@@ -402,6 +428,7 @@ public final class WeaviateQuerySpec {
         private boolean withCertainty;
         private List<WeaviateVectorTarget> targets;
         private WeaviateVectorCombination combination;
+        private WeaviateGroupBySpec groupBy;
 
         private Builder(@NotNull WeaviateQueryMode mode) {
             this.mode = mode;
@@ -504,6 +531,11 @@ public final class WeaviateQuerySpec {
 
         public Builder combination(@Nullable WeaviateVectorCombination combination) {
             this.combination = combination;
+            return this;
+        }
+
+        public Builder groupBy(@Nullable WeaviateGroupBySpec groupBy) {
+            this.groupBy = groupBy;
             return this;
         }
 
