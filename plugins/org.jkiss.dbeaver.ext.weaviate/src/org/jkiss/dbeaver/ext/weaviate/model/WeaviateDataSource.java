@@ -84,6 +84,40 @@ public class WeaviateDataSource extends AbstractDataSource
         QMUtils.getDefaultHandler().handleContextOpen(this, false);
     }
 
+    /**
+     * The server version if it has already been fetched, else null.
+     * <p>
+     * Deliberately non-blocking, like {@link #getInfo()}. Gating runs from menu enablement, which
+     * the navigator re-evaluates on every right-click -- a round-trip there would freeze the UI on
+     * each one. Null is a safe answer: an unknown version means "available" (see
+     * {@link WeaviateVersions}).
+     */
+    @Nullable
+    private String knownServerVersion() {
+        InstanceMetadata metadata = cachedMetadata;
+        return metadata == null ? null : metadata.version();
+    }
+
+    /**
+     * Whether the connected server is at least {@code major.minor}.
+     * <p>
+     * Named after the platform-wide convention ({@code JDBCDataSource#isServerVersionAtLeast},
+     * with callers in mssql, postgresql, gaussdb and tidb). It differs from that one in what it
+     * does when the version is not known: the platform returns false, this returns <b>true</b>.
+     * That is right for JDBC, where the driver reports a version at connect time, and wrong here,
+     * where the version arrives on a lazy {@code meta()} fetch and release candidates do not parse
+     * at all -- so a strict reading would hide working features routinely rather than
+     * exceptionally. See {@link WeaviateVersions} for the evidence.
+     */
+    public boolean isServerVersionAtLeast(int major, int minor) {
+        return WeaviateVersions.isAtLeast(knownServerVersion(), major, minor, 0);
+    }
+
+    /** Whether the connected server has {@code feature}. Unknown version means yes. */
+    public boolean supports(@NotNull WeaviateServerFeature feature) {
+        return feature.isSupportedBy(knownServerVersion());
+    }
+
     @NotNull
     @Override
     public DBPDataSourceInfo getInfo() {
