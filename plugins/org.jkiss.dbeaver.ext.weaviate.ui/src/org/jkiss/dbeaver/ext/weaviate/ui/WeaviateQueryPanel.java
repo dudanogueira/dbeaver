@@ -172,6 +172,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Spinner groupMaxGroupsSpinner;
     private Spinner groupObjectsPerGroupSpinner;
     private Button groupStatsCheck;
+    private Label groupUnavailableLabel;
+    /** The property label and combo, hidden together where grouping does not apply. */
+    private final java.util.List<Control> groupPropertyRow = new java.util.ArrayList<>();
     /** Controls revealed only once a property is picked; see {@link #syncGroupByVisibility()}. */
     private final java.util.List<Control> groupWhenGrouping = new java.util.ArrayList<>();
 
@@ -1760,7 +1763,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         groupByGroup = createSection(parent, WeaviateUIMessages.query_group_by, "groupBy", 2, false);
         groupByGroup.setToolTipText(WeaviateUIMessages.query_group_by_tip);
 
-        new Label(groupByGroup, SWT.NONE).setText(WeaviateUIMessages.query_group_property);
+        Label propertyLabel = new Label(groupByGroup, SWT.NONE);
+        propertyLabel.setText(WeaviateUIMessages.query_group_property);
         groupPropertyCombo = new Combo(groupByGroup, SWT.DROP_DOWN | SWT.READ_ONLY);
         groupPropertyCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         groupPropertyCombo.addSelectionListener(new SelectionAdapter() {
@@ -1795,6 +1799,18 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         groupStatsCheck = new Button(groupByGroup, SWT.CHECK);
         groupStatsCheck.setText(WeaviateUIMessages.query_group_stats);
         groupStatsCheck.setToolTipText(WeaviateUIMessages.query_group_stats_tip);
+
+        // Shown in place of the controls under a mode that cannot group. The section stays put:
+        // it opens on Fetch, and a section that vanishes there is a feature nobody finds.
+        groupUnavailableLabel = new Label(groupByGroup, SWT.WRAP);
+        groupUnavailableLabel.setText(WeaviateUIMessages.query_group_unavailable);
+        GridData gu = new GridData(SWT.FILL, SWT.CENTER, true, false);
+        gu.horizontalSpan = 2;
+        groupUnavailableLabel.setLayoutData(gu);
+
+        groupPropertyRow.clear();
+        groupPropertyRow.add(propertyLabel);
+        groupPropertyRow.add(groupPropertyCombo);
 
         groupWhenGrouping.clear();
         groupWhenGrouping.add(groupsLabel);
@@ -1837,25 +1853,20 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     }
 
     /**
-     * Show the section only where grouping applies, and its options only once a property is
+     * Reveal the group-by controls only where they can be used, and only once a property is
      * picked.
      * <p>
-     * The whole section disappears under a plain fetch. That is not tidiness: the server refuses
-     * a grouped fetch, so offering the control there would let the user compose a query that
-     * cannot run. The choice itself survives -- switching back to a ranked mode brings it back
-     * as it was.
+     * Under a plain fetch the server refuses a grouped query outright, so the controls go and a
+     * line saying why takes their place. The section itself stays: it is the mode the panel opens
+     * on, and a section that disappears there is a feature nobody discovers -- which is exactly
+     * what the first cut of this did. The chosen property survives the trip through fetch and
+     * comes back when a ranked mode is selected.
      */
     private void syncGroupByVisibility() {
         boolean applies = currentMode().supportsGroupBy();
-        if (groupByGroup != null && !groupByGroup.isDisposed()) {
-            Composite section = groupByGroup.getParent();
-            section.setVisible(applies);
-            Object data = section.getLayoutData();
-            if (data instanceof GridData gd) {
-                gd.exclude = !applies;
-            }
-        }
         setRowsVisible(groupWhenGrouping, applies && selectedGroupProperty() != null);
+        setRowsVisible(groupPropertyRow, applies);
+        setRowsVisible(List.of(groupUnavailableLabel), !applies);
         if (groupByGroup != null && !groupByGroup.isDisposed()) {
             groupByGroup.layout(true, true);
         }
