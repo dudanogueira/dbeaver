@@ -44,6 +44,7 @@ import io.weaviate.client6.v1.api.collections.query.NearText;
 import io.weaviate.client6.v1.api.collections.query.NearVector;
 import io.weaviate.client6.v1.internal.ObjectBuilder;
 import io.weaviate.client6.v1.api.collections.tenants.Tenant;
+import io.weaviate.client6.v1.api.tokenize.TokenizeResponse;
 import io.weaviate.client6.v1.api.collections.query.Metadata;
 import io.weaviate.client6.v1.api.collections.query.NearVectorTarget;
 import io.weaviate.client6.v1.api.collections.query.QueryObjectGrouped;
@@ -1444,6 +1445,41 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
      * reads the score must have resolved, and the read must not be generative -- the generate
      * client uses its own Rpc, which this does not wrap.
      */
+    /**
+     * How {@code propertyName}'s analyzer would split {@code text}.
+     * <p>
+     * Uses the per-property endpoint, so the tokenizer comes from the schema rather than from the
+     * caller -- which is the question worth asking ("why did BM25 match this?") as opposed to
+     * "what would tokenizer X do?".
+     * <p>
+     * Note the client's argument order: {@code forProperty(text, collection, property)}. The
+     * parameter names are erased in the shipped jar, and the natural reading -- collection first,
+     * as everywhere else in the client -- is wrong; it builds
+     * {@code /v1/schema/{text}/properties/{collection}/tokenize} and fails on the first space in
+     * the text. {@code WeaviateTokenizeLiveTest} pins this.
+     *
+     * @throws DBException when the property is not tokenized (the server answers 422 for a
+     *                     non-text property) or the call fails
+     */
+    @NotNull
+    public WeaviateTokenPreview previewTokenization(
+        @NotNull DBRProgressMonitor monitor,
+        @NotNull String propertyName,
+        @NotNull String text
+    ) throws DBException {
+        try {
+            TokenizeResponse response =
+                dataSource.getClient().tokenize.forProperty(text, getName(), propertyName);
+            return new WeaviateTokenPreview(
+                response.tokenization() == null ? null : response.tokenization().name(),
+                response.indexed(),
+                response.query());
+        } catch (Exception e) {
+            throw new DBException("Cannot tokenize " + getName() + "." + propertyName
+                + ": " + e.getMessage(), e);
+        }
+    }
+
     private static boolean hasRerankScore(@NotNull WeaviateQuerySpec spec) {
         if (spec.getRerank() == null) {
             return false;
