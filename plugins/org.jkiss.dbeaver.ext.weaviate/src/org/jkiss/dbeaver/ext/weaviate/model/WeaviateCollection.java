@@ -595,7 +595,17 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         // serve it: Weaviate refuses offsets past QUERY_MAXIMUM_RESULTS (10000 by default), so a
         // large collection would fail partway through. The cursor paginator walks the whole
         // collection server-side instead, with no such ceiling.
-        if (maxRows <= 0 && exec.getMode() == WeaviateQueryMode.FETCH && exec.getGenerative() == null) {
+        //
+        // Not when a filter is set. Cursor pagination is built on object ids, and Weaviate
+        // documents `after` as incompatible with filters -- it does not reject the filter, it
+        // ignores it, so a filtered export would quietly hand back the whole collection. The
+        // docs prescribe offset paging for exactly this case, and a filtered slice is far less
+        // likely to reach the offset ceiling that this branch exists to avoid.
+        if (maxRows <= 0
+            && exec.getMode() == WeaviateQueryMode.FETCH
+            && exec.getGenerative() == null
+            && filter == null
+        ) {
             // (Generative fetches never take this path: the paginator cannot carry a task, and
             // prompting a model once per object across an entire collection is not an export
             // anyone means to run by accident.)
@@ -705,7 +715,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
             try {
                 Paginator<Map<String, Object>> paginator =
                     handle(spec.getTenant()).paginate(b -> {
-                        if (filter != null) b.filters(filter);
+                        // No filters here: readData only routes an unfiltered read this way,
+                        // because `after` cannot be combined with them (see the branch above).
+                        // includeVector and returnMetadata do survive cursor paging.
                         if (spec.isIncludeVector()) b.includeVector();
                         // The export path must return the same columns the grid shows, so the
                         // opt-in metadata rides along here as well.

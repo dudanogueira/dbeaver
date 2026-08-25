@@ -282,4 +282,51 @@ public class WeaviateFilterLiveTest extends DBeaverUnitTest {
         Assertions.assertTrue(missing.isEmpty(),
             () -> "no live assertion covers: " + missing);
     }
+
+    /**
+     * Cursor pagination cannot be filtered, and says nothing about it.
+     * <p>
+     * Weaviate documents {@code after} as incompatible with filters -- it is built on object ids
+     * -- and the server ignores rather than rejects them, so a filtered cursor read returns the
+     * whole collection. The client's Paginator does pass the options along (includeVector and
+     * returnProperties both take effect, asserted below); it is the filter specifically that the
+     * server drops. readData therefore keeps filtered reads on offset paging, which is what the
+     * documentation prescribes.
+     * <p>
+     * Pinned here because the failure is silent: too many rows, no error, and nothing in the
+     * client to suggest why.
+     */
+    @Test
+    public void cursorPaginationIgnoresFiltersButKeepsOtherOptions() {
+        requireFixture();
+        Filter alpha = Filter.property("name").eq("alpha");
+        try (WeaviateClient client = connect()) {
+            var handle = client.collections.use(COLLECTION);
+
+            var direct = handle.query.fetchObjects(b -> b.limit(200).filters(alpha));
+            Assertions.assertEquals(1, direct.objects().size(),
+                "offset paging honours the filter");
+
+            int paged = 0;
+            for (var ignored : handle.paginate(b -> { b.filters(alpha); return b; })) {
+                paged++;
+            }
+            Assertions.assertEquals(4, paged,
+                "cursor paging ignores the filter and returns everything; if this ever returns 1, "
+                    + "Weaviate has started supporting after+filters and readData can stop "
+                    + "routing filtered reads away from the cursor");
+
+            // The same call does carry its other options, which is why the branch in readData is
+            // about filters specifically rather than distrusting the paginator wholesale.
+            int withVectors = 0;
+            for (var o : handle.paginate(b -> { b.includeVector(); return b; })) {
+                if (o.vectors() != null && o.vectors().size() > 0) {
+                    withVectors++;
+                }
+            }
+            Assertions.assertEquals(4, withVectors, "includeVector survives cursor paging");
+        } catch (Exception e) {
+            throw new IllegalStateException("paginator probe failed", e);
+        }
+    }
 }
