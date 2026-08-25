@@ -122,6 +122,13 @@ public final class WeaviateFilterTranslator {
             throw WeaviateUnsupportedFilterException.forOperator(name, op);
         }
         Object value = c.getValue();
+        // hasCondition() is true as soon as an operator is set, which is the state a column
+        // filter is left in once its value is cleared. That means "no condition", so it is
+        // skipped -- unlike a panel row, which only exists because someone built it and whose
+        // empty value cell is a mistake worth reporting.
+        if (value == null && needsValue(mapped)) {
+            return null;
+        }
         boolean reverse = c.isReverseOperator();
         Filter f = applyOperator(name, mapped, value);
         if (f == null) {
@@ -301,6 +308,18 @@ public final class WeaviateFilterTranslator {
                     "\"" + name + "\" is a timestamp and does not support '" + op.getLabel()
                         + "'. It accepts =, !=, the comparisons and BETWEEN.");
         }
+    }
+
+    /**
+     * Whether the operator cannot be built without a value. EQUALS and NOT_EQUALS are absent on
+     * purpose: with a null value they mean IS NULL and IS NOT NULL, which is how DBeaver writes
+     * "= NULL" in a column filter.
+     */
+    private static boolean needsValue(@NotNull WeaviateFilterOperator op) {
+        return switch (op) {
+            case EQUALS, NOT_EQUALS, IS_NULL, IS_NOT_NULL -> false;
+            default -> true;
+        };
     }
 
     @NotNull

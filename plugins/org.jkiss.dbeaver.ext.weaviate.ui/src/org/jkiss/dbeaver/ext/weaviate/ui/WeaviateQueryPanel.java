@@ -1774,9 +1774,10 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
      */
     @NotNull
     private List<String> filterPropertyNames() {
-        List<String> names = new ArrayList<>();
+        // The collection's own properties lead. A new row selects the first entry, and defaulting
+        // that to a synthetic column would quietly filter on something nobody chose.
+        List<String> names = new ArrayList<>(currentPropertyNames());
         names.add(WeaviateFilterTranslator.UUID_COLUMN);
-        names.addAll(currentPropertyNames());
         names.add(WeaviateColumns.CREATED);
         names.add(WeaviateColumns.UPDATED);
         return names;

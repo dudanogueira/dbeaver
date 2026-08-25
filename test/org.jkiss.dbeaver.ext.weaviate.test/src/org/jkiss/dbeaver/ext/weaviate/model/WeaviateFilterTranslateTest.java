@@ -270,4 +270,41 @@ public class WeaviateFilterTranslateTest extends DBeaverUnitTest {
         Assertions.assertNotNull(
             WeaviateFilterTranslator.translateRows(java.util.List.of(row), false));
     }
+
+    /**
+     * hasCondition() is true as soon as an operator is set, even with no value -- which is the
+     * state a column filter is left in after being cleared. That is "no condition", not a broken
+     * filter, so it must be skipped. Treating it as an error fails the whole read and empties the
+     * grid, which looks exactly like the filter matching nothing.
+     */
+    @Test
+    public void gridConstraintWithoutAValueIsSkippedNotRejected() {
+        for (DBCLogicalOperator op : java.util.List.of(
+            DBCLogicalOperator.GREATER, DBCLogicalOperator.LESS, DBCLogicalOperator.LIKE,
+            DBCLogicalOperator.IN, DBCLogicalOperator.BETWEEN)
+        ) {
+            DBDAttributeConstraint c = new DBDAttributeConstraint("title", 0);
+            c.setOperator(op);
+            // no value set
+            Assertions.assertDoesNotThrow(
+                () -> WeaviateFilterTranslator.translate(new DBDDataFilter(java.util.List.of(c))),
+                () -> op + " with no value must be skipped, not rejected");
+            Assertions.assertNull(
+                WeaviateFilterTranslator.translate(new DBDDataFilter(java.util.List.of(c))),
+                () -> op + " with no value must contribute nothing");
+        }
+    }
+
+    /**
+     * The panel is the opposite case: its rows are only created deliberately, so an empty value
+     * cell is a mistake worth reporting rather than a row to ignore.
+     */
+    @Test
+    public void panelRowWithoutAValueIsStillRejected() {
+        WeaviateFilterRow row = new WeaviateFilterRow(
+            "title", WeaviateFilterOperator.GREATER, "", DBPDataKind.STRING);
+        Assertions.assertThrows(
+            WeaviateUnsupportedFilterException.class,
+            () -> WeaviateFilterTranslator.translateRows(java.util.List.of(row), false));
+    }
 }
