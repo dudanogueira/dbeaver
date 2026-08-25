@@ -17,6 +17,7 @@
 package org.jkiss.dbeaver.ext.weaviate.model;
 
 import io.weaviate.client6.v1.internal.grpc.protocol.WeaviateProtoSearchGet.MetadataResult;
+import io.weaviate.client6.v1.internal.grpc.protocol.WeaviateProtoSearchGet.GroupByResult;
 import io.weaviate.client6.v1.internal.grpc.protocol.WeaviateProtoSearchGet.SearchReply;
 import io.weaviate.client6.v1.internal.grpc.protocol.WeaviateProtoSearchGet.SearchResult;
 import org.jkiss.junit.DBeaverUnitTest;
@@ -49,6 +50,15 @@ public class WeaviateRerankSupportTest extends DBeaverUnitTest {
             md.setRerankScore(rerankScore).setRerankScorePresent(true);
         }
         return SearchResult.newBuilder().setMetadata(md).build();
+    }
+
+    /** A grouped reply, whose objects hang off group_by_results instead of results. */
+    private static SearchReply groupedReply(String groupName, SearchResult... results) {
+        GroupByResult.Builder group = GroupByResult.newBuilder().setName(groupName);
+        for (SearchResult r : results) {
+            group.addObjects(r);
+        }
+        return SearchReply.newBuilder().addGroupByResults(group).build();
     }
 
     @Test
@@ -100,5 +110,57 @@ public class WeaviateRerankSupportTest extends DBeaverUnitTest {
             "the plain search seam did not resolve");
         Assertions.assertTrue(WeaviateRerankSupport.isGenerativeAvailable(),
             "the generative search seam did not resolve");
+    }
+
+    /**
+     * A grouped reply puts its objects under group_by_results and leaves results empty. Reading
+     * only the flat list is why a grouped rerank first came back correctly ordered with every
+     * score blank.
+     */
+    @Test
+    public void collectsScoresFromAGroupedReply() {
+        Map<String, Float> scores = new HashMap<>();
+        WeaviateRerankSupport.collectScores(
+            groupedReply("red", result("a", 0.9d), result("b", 0.4d)), scores);
+
+        Assertions.assertEquals(2, scores.size(), "grouped objects were not read");
+        Assertions.assertEquals(0.9f, scores.get("a"), 0.0001f);
+        Assertions.assertEquals(0.4f, scores.get("b"), 0.0001f);
+    }
+
+    /**
+     * One object can belong to two groups when grouping on an array property, so the same uuid
+     * arrives twice. Scores are keyed by uuid, which is fine precisely because both copies carry
+     * the same score -- but the second must not wipe the first out with an absent one.
+     */
+    @Test
+    public void survivesAnObjectAppearingInTwoGroups() {
+        Map<String, Float> scores = new HashMap<>();
+        SearchReply reply = SearchReply.newBuilder()
+            .addGroupByResults(GroupByResult.newBuilder().setName("alpha")
+                .addObjects(result("shared", 0.75d)))
+            .addGroupByResults(GroupByResult.newBuilder().setName("beta")
+                .addObjects(result("shared", 0.75d)))
+            .build();
+        WeaviateRerankSupport.collectScores(reply, scores);
+
+        Assertions.assertEquals(1, scores.size());
+        Assertions.assertEquals(0.75f, scores.get("shared"), 0.0001f);
+    }
+
+    /** Both lists are read, so a reply that somehow carried each still yields both. */
+    @Test
+    public void readsBothListsWhenBothArePresent() {
+        Map<String, Float> scores = new HashMap<>();
+        SearchReply reply = SearchReply.newBuilder()
+            .addResults(result("flat", 0.1d))
+            .addGroupByResults(GroupByResult.newBuilder().setName("red")
+                .addObjects(result("grouped", 0.2d)))
+            .build();
+        WeaviateRerankSupport.collectScores(reply, scores);
+
+        Assertions.assertEquals(2, scores.size());
+        Assertions.assertEquals(0.1f, scores.get("flat"), 0.0001f);
+        Assertions.assertEquals(0.2f, scores.get("grouped"), 0.0001f);
     }
 }
