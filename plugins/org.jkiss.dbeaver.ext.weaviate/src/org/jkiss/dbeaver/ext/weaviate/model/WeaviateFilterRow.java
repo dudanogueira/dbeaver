@@ -21,6 +21,7 @@ import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.model.DBPDataKind;
 
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.List;
@@ -40,6 +41,10 @@ public record WeaviateFilterRow(
      */
     public static final List<WeaviateFilterOperator> SUPPORTED_OPERATORS =
         List.of(WeaviateFilterOperator.values());
+
+    /** Always writes seconds, which {@link OffsetDateTime#toString()} does not. */
+    private static final DateTimeFormatter RFC3339 =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
 
     public boolean takesValue() {
         return operator.takesValue();
@@ -87,7 +92,6 @@ public record WeaviateFilterRow(
             case NUMERIC -> allLongs(coerced)
                 ? Arrays.copyOf(coerced, coerced.length, Long[].class)
                 : toDoubles(coerced);
-            case DATETIME -> Arrays.copyOf(coerced, coerced.length, OffsetDateTime[].class);
             default -> Arrays.copyOf(coerced, coerced.length, String[].class);
         };
     }
@@ -133,9 +137,12 @@ public record WeaviateFilterRow(
                 }
             case DATETIME:
                 try {
-                    // The client has OffsetDateTime overloads throughout; passing the text
-                    // through built a text operand instead, which never matches a date property.
-                    return OffsetDateTime.parse(trimmed);
+                    // Parsed to validate, then re-emitted as RFC3339 text rather than handed over
+                    // as an OffsetDateTime. The client serialises those with toString(), which
+                    // omits the seconds on a whole minute ("2024-03-01T00:00Z") -- and Weaviate's
+                    // RFC3339 parser rejects that, so every filter on a round time failed. The
+                    // formatter below always writes seconds. Verified both ways against 1.39.
+                    return RFC3339.format(OffsetDateTime.parse(trimmed));
                 } catch (DateTimeParseException e) {
                     throw new WeaviateUnsupportedFilterException(
                         "\"" + trimmed + "\" is not an ISO-8601 date-time "

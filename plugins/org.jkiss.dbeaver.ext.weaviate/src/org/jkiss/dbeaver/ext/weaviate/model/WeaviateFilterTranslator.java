@@ -24,8 +24,6 @@ import org.jkiss.dbeaver.model.data.DBDAttributeConstraint;
 import org.jkiss.dbeaver.model.data.DBDDataFilter;
 import org.jkiss.dbeaver.model.exec.DBCLogicalOperator;
 
-import java.time.OffsetDateTime;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -202,7 +200,6 @@ public final class WeaviateFilterTranslator {
         if (values instanceof Long[] v) return p.containsAny(v);
         if (values instanceof Double[] v) return p.containsAny(v);
         if (values instanceof Boolean[] v) return p.containsAny(v);
-        if (values instanceof OffsetDateTime[] v) return p.containsAny(v);
         return p.containsAny(toStringArray(values));
     }
 
@@ -211,7 +208,6 @@ public final class WeaviateFilterTranslator {
         if (values instanceof Long[] v) return p.containsAll(v);
         if (values instanceof Double[] v) return p.containsAll(v);
         if (values instanceof Boolean[] v) return p.containsAll(v);
-        if (values instanceof OffsetDateTime[] v) return p.containsAll(v);
         return p.containsAll(toStringArray(values));
     }
 
@@ -220,7 +216,6 @@ public final class WeaviateFilterTranslator {
         if (values instanceof Long[] v) return p.containsNone(v);
         if (values instanceof Double[] v) return p.containsNone(v);
         if (values instanceof Boolean[] v) return p.containsNone(v);
-        if (values instanceof OffsetDateTime[] v) return p.containsNone(v);
         return p.containsNone(toStringArray(values));
     }
 
@@ -274,22 +269,25 @@ public final class WeaviateFilterTranslator {
         @NotNull WeaviateFilterOperator op,
         @Nullable Object value
     ) {
-        Filter.DateProperty when = WeaviateColumns.CREATED.equals(name)
-            ? Filter.createdAt()
-            : Filter.lastUpdatedAt();
+        // Weaviate's own name for the metadata path. Reached as a property with an RFC3339 text
+        // operand rather than through Filter.createdAt(), whose OffsetDateTime overloads hit the
+        // client's toString() problem (see WeaviateFilterRow) -- this route takes the string the
+        // row already produced and works on a whole minute.
+        Filter.FilterBuilder when = Filter.property(
+            WeaviateColumns.CREATED.equals(name) ? "_creationTimeUnix" : "_lastUpdateTimeUnix");
         switch (op) {
             case EQUALS:
-                return when.eq(requireDate(name, op, value));
+                return when.eq(require(name, op, value).toString());
             case NOT_EQUALS:
-                return when.ne(requireDate(name, op, value));
+                return when.ne(require(name, op, value).toString());
             case GREATER:
-                return when.gt(requireDate(name, op, value));
+                return when.gt(require(name, op, value).toString());
             case GREATER_EQUALS:
-                return when.gte(requireDate(name, op, value));
+                return when.gte(require(name, op, value).toString());
             case LESS:
-                return when.lt(requireDate(name, op, value));
+                return when.lt(require(name, op, value).toString());
             case LESS_EQUALS:
-                return when.lte(requireDate(name, op, value));
+                return when.lte(require(name, op, value).toString());
             case BETWEEN:
                 Object[] range = toRange(requireList(name, op, value));
                 if (range == null) {
@@ -297,7 +295,7 @@ public final class WeaviateFilterTranslator {
                         "BETWEEN on \"" + name + "\" needs exactly two values, a low and a high.");
                 }
                 return Filter.and(
-                    when.gte(asDate(name, range[0])), when.lte(asDate(name, range[1])));
+                    when.gte(String.valueOf(range[0])), when.lte(String.valueOf(range[1])));
             default:
                 throw new WeaviateUnsupportedFilterException(
                     "\"" + name + "\" is a timestamp and does not support '" + op.getLabel()
@@ -330,29 +328,6 @@ public final class WeaviateFilterTranslator {
                 "'" + op.getLabel() + "' on \"" + name + "\" needs at least one value.");
         }
         return present;
-    }
-
-    @NotNull
-    private static OffsetDateTime requireDate(
-        @NotNull String name,
-        @NotNull WeaviateFilterOperator op,
-        @Nullable Object value
-    ) {
-        return asDate(name, require(name, op, value));
-    }
-
-    @NotNull
-    private static OffsetDateTime asDate(@NotNull String name, @Nullable Object value) {
-        if (value instanceof OffsetDateTime when) {
-            return when;
-        }
-        try {
-            return OffsetDateTime.parse(String.valueOf(value));
-        } catch (DateTimeParseException e) {
-            throw new WeaviateUnsupportedFilterException(
-                "\"" + name + "\" is a timestamp; \"" + value
-                    + "\" is not an ISO-8601 date-time (for example 2024-01-01T00:00:00Z).");
-        }
     }
 
     /**

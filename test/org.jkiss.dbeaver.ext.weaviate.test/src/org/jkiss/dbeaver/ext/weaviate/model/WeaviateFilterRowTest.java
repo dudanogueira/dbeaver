@@ -167,15 +167,27 @@ public class WeaviateFilterRowTest extends DBeaverUnitTest {
     }
 
     /**
-     * Dates were passed through as text, which builds a text operand the client never matches
-     * against a date property.
+     * A date is validated by parsing and re-emitted as RFC3339 text with the seconds always
+     * present. Handing over the OffsetDateTime instead let the client serialise it with
+     * toString(), which drops ":00" on a whole minute -- and Weaviate's RFC3339 parser rejects
+     * that, so every filter on a round time failed against the server.
      */
     @Test
-    public void dateIsCoercedToOffsetDateTime() {
+    public void wholeMinuteDateKeepsItsSeconds() {
         WeaviateFilterRow row = new WeaviateFilterRow(
             "when", WeaviateFilterOperator.GREATER, "2024-01-01T00:00:00Z", DBPDataKind.DATETIME);
-        Assertions.assertEquals(
-            java.time.OffsetDateTime.parse("2024-01-01T00:00:00Z"), row.coercedValue());
+        Assertions.assertEquals("2024-01-01T00:00:00Z", row.coercedValue());
+        Assertions.assertNotEquals(
+            java.time.OffsetDateTime.parse("2024-01-01T00:00:00Z").toString(),
+            row.coercedValue(),
+            "toString() is exactly the form the server rejects");
+    }
+
+    @Test
+    public void dateWithSecondsAndOffsetIsPreserved() {
+        WeaviateFilterRow row = new WeaviateFilterRow(
+            "when", WeaviateFilterOperator.LESS, "2024-06-01T12:30:45Z", DBPDataKind.DATETIME);
+        Assertions.assertEquals("2024-06-01T12:30:45Z", row.coercedValue());
     }
 
     @Test
