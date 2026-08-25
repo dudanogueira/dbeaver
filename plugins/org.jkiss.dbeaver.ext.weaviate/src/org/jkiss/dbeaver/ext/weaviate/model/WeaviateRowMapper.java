@@ -22,6 +22,9 @@ import io.weaviate.client6.v1.api.collections.generate.GenerativeObject;
 import io.weaviate.client6.v1.api.collections.generate.TaskOutput;
 import io.weaviate.client6.v1.api.collections.generative.ProviderMetadata;
 import io.weaviate.client6.v1.api.collections.query.QueryMetadata;
+import io.weaviate.client6.v1.api.collections.query.QueryObjectGrouped;
+import io.weaviate.client6.v1.api.collections.generate.GenerativeResponseGroup;
+import io.weaviate.client6.v1.api.collections.query.QueryResponseGroup;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 
@@ -101,6 +104,54 @@ public final class WeaviateRowMapper {
         return toRow(columns, RowSource.of(obj, rerankScore), defaultVectorName);
     }
 
+    /**
+     * The grouped twin. {@code QueryObjectGrouped} is a third shape again -- it knows which group
+     * it landed in but, like {@code GenerativeObject}, carries no timestamps.
+     *
+     * @param stats       the row's own group statistics, or null when the reply did not report a
+     *                    group for it
+     * @param generated   text generated for the row's group, or null. On a grouped generative
+     *                    search the output belongs to the group, not the object
+     * @param rerankScore score for this object, read off the reply by the model rather than by
+     *                    the client, or null when the search was not reranked
+     */
+    @NotNull
+    public static Object[] toRow(
+        @NotNull List<String> columns,
+        @NotNull QueryObjectGrouped<Map<String, Object>> obj,
+        @Nullable String defaultVectorName,
+        @Nullable GroupStats stats,
+        @Nullable TaskOutput generated,
+        @Nullable Float rerankScore
+    ) {
+        return toRow(columns, RowSource.of(obj, stats, generated, rerankScore), defaultVectorName);
+    }
+
+    /**
+     * The per-group numbers, lifted off whichever group record the reply carried.
+     * <p>
+     * The plain and generative replies use two unrelated types -- {@code QueryResponseGroup} and
+     * {@code GenerativeResponseGroup} -- with identical accessors and no common supertype. Rather
+     * than give the mapper an overload per reply shape, both narrow to this on the way in.
+     */
+    public record GroupStats(
+        @Nullable Long count,
+        @Nullable Float minDistance,
+        @Nullable Float maxDistance
+    ) {
+        @Nullable
+        public static GroupStats of(@Nullable QueryResponseGroup<Map<String, Object>> group) {
+            return group == null ? null
+                : new GroupStats(group.numberOfObjects(), group.minDistance(), group.maxDistance());
+        }
+
+        @Nullable
+        public static GroupStats of(@Nullable GenerativeResponseGroup<Map<String, Object>> group) {
+            return group == null ? null
+                : new GroupStats(group.numberOfObjects(), group.minDistance(), group.maxDistance());
+        }
+    }
+
     @NotNull
     private static Object[] toRow(
         @NotNull List<String> columns,
@@ -127,16 +178,38 @@ public final class WeaviateRowMapper {
         @Nullable Long createdAt,
         @Nullable Long updatedAt,
         @Nullable TaskOutput generated,
-        @Nullable Float rerankScore
+        @Nullable Float rerankScore,
+        @Nullable String group,
+        @Nullable Long groupCount,
+        @Nullable Float groupMinDistance,
+        @Nullable Float groupMaxDistance
     ) {
         static RowSource of(@NotNull WeaviateObject<Map<String, Object>> obj, @Nullable Float rerankScore) {
             return new RowSource(obj.uuid(), obj.properties(), obj.vectors(), obj.queryMetadata(),
-                obj.createdAt(), obj.lastUpdatedAt(), null, rerankScore);
+                obj.createdAt(), obj.lastUpdatedAt(), null, rerankScore,
+                null, null, null, null);
         }
 
         static RowSource of(@NotNull GenerativeObject<Map<String, Object>> obj, @Nullable Float rerankScore) {
             return new RowSource(obj.uuid(), obj.properties(), obj.vectors(), obj.metadata(),
-                null, null, obj.generative(), rerankScore);
+                null, null, obj.generative(), rerankScore,
+                null, null, null, null);
+        }
+
+        static RowSource of(
+            @NotNull QueryObjectGrouped<Map<String, Object>> obj,
+            @Nullable GroupStats stats,
+            @Nullable TaskOutput generated,
+            @Nullable Float rerankScore
+        ) {
+            // The group name comes off the object rather than the stats: an object knows its own
+            // bucket even when the caller could not resolve the group record to go with it.
+            return new RowSource(obj.uuid(), obj.properties(), obj.vectors(), obj.metadata(),
+                null, null, generated, rerankScore,
+                obj.belongsToGroup(),
+                stats == null ? null : stats.count(),
+                stats == null ? null : stats.minDistance(),
+                stats == null ? null : stats.maxDistance());
         }
     }
 
@@ -164,6 +237,14 @@ public final class WeaviateRowMapper {
                 return formatTimestamp(source.updatedAt());
             case WeaviateColumns.RERANK_SCORE:
                 return source.rerankScore();
+            case WeaviateColumns.GROUP:
+                return source.group();
+            case WeaviateColumns.GROUP_COUNT:
+                return source.groupCount();
+            case WeaviateColumns.GROUP_MIN_DISTANCE:
+                return source.groupMinDistance();
+            case WeaviateColumns.GROUP_MAX_DISTANCE:
+                return source.groupMaxDistance();
             case WeaviateColumns.GENERATED:
                 return source.generated() == null ? null : source.generated().text();
             case WeaviateColumns.GENERATIVE_META:

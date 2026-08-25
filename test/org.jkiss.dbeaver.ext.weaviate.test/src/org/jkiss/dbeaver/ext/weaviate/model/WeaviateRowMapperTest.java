@@ -18,6 +18,8 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 
 import io.weaviate.client6.v1.api.collections.WeaviateObject;
 import io.weaviate.client6.v1.api.collections.query.QueryMetadata;
+import io.weaviate.client6.v1.api.collections.query.QueryObjectGrouped;
+import io.weaviate.client6.v1.api.collections.query.QueryResponseGroup;
 import org.jkiss.junit.DBeaverUnitTest;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -199,5 +201,83 @@ public class WeaviateRowMapperTest extends DBeaverUnitTest {
             .properties(new HashMap<>()));
         Object[] row = WeaviateRowMapper.toRow(List.of(WeaviateColumns.RERANK_SCORE), obj);
         Assertions.assertNull(row[0]);
+    }
+
+    private static QueryObjectGrouped<Map<String, Object>> grouped(String uuid, String group) {
+        Map<String, Object> properties = new HashMap<>();
+        properties.put("title", "t-" + uuid);
+        return new QueryObjectGrouped<>(uuid, null, properties, new QueryMetadata(0.5f, null, null, null), group);
+    }
+
+    @Test
+    public void groupColumnComesFromTheObjectsOwnGroup() {
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.UUID, "title", WeaviateColumns.GROUP),
+            grouped("u", "red"), null, null, null, null);
+
+        Assertions.assertEquals("u", row[0]);
+        Assertions.assertEquals("t-u", row[1]);
+        Assertions.assertEquals("red", row[2]);
+    }
+
+    @Test
+    public void groupStatsAreJoinedInFromTheGroupRecord() {
+        QueryResponseGroup<Map<String, Object>> group =
+            new QueryResponseGroup<>("red", 0.1f, 0.9f, 3L, List.of());
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.GROUP, WeaviateColumns.GROUP_COUNT,
+                WeaviateColumns.GROUP_MIN_DISTANCE, WeaviateColumns.GROUP_MAX_DISTANCE),
+            grouped("u", "red"), null, WeaviateRowMapper.GroupStats.of(group), null, null);
+
+        Assertions.assertEquals("red", row[0]);
+        Assertions.assertEquals(3L, row[1]);
+        Assertions.assertEquals(0.1f, ((Number) row[2]).floatValue(), 0.0001);
+        Assertions.assertEquals(0.9f, ((Number) row[3]).floatValue(), 0.0001);
+    }
+
+    /**
+     * The group name still resolves when the stats do not. The name is on the object itself, so
+     * a group the caller could not look up costs the numbers, not the grouping.
+     */
+    @Test
+    public void groupNameSurvivesMissingStats() {
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.GROUP, WeaviateColumns.GROUP_COUNT),
+            grouped("u", "red"), null, null, null, null);
+
+        Assertions.assertEquals("red", row[0]);
+        Assertions.assertNull(row[1]);
+    }
+
+    /**
+     * A grouped object carries no timestamps -- the client's type has no field for them -- so
+     * those columns read null rather than throwing. readData suppresses them for that reason.
+     */
+    @Test
+    public void groupedRowsHaveNoTimestamps() {
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.CREATED, WeaviateColumns.UPDATED),
+            grouped("u", "red"), null, null, null, null);
+
+        Assertions.assertNull(row[0]);
+        Assertions.assertNull(row[1]);
+    }
+
+    /** An unset group key comes back as the empty string, not as null. Verified server-side. */
+    @Test
+    public void emptyGroupNameIsKeptAsItself() {
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.GROUP), grouped("u", ""), null, null, null, null);
+        Assertions.assertEquals("", row[0]);
+    }
+
+    @Test
+    public void rerankScoreStillReachesAGroupedRow() {
+        Object[] row = WeaviateRowMapper.toRow(
+            List.of(WeaviateColumns.GROUP, WeaviateColumns.RERANK_SCORE),
+            grouped("u", "red"), null, null, null, 0.77f);
+
+        Assertions.assertEquals("red", row[0]);
+        Assertions.assertEquals(0.77f, ((Number) row[1]).floatValue(), 0.0001);
     }
 }
