@@ -19,74 +19,101 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.model.DBPDataKind;
-import org.jkiss.dbeaver.model.exec.DBCLogicalOperator;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.List;
 
 public record WeaviateFilterRow(
     @NotNull String property,
-    @NotNull DBCLogicalOperator operator,
+    @NotNull WeaviateFilterOperator operator,
     @Nullable String rawValue,
     @NotNull DBPDataKind dataKind
 ) {
     /**
-     * Operators offered by the visual filter builder.
+     * Operators offered by the visual filter builder: all of them.
      * <p>
-     * Every entry here must be translatable by {@link WeaviateFilterTranslator} - offering one
-     * that is not would surface as a query error the moment the user runs it
-     * ({@code WeaviateFilterRowTest} enforces this).
-     * <p>
-     * The reverse does not hold: {@code BETWEEN} is deliberately omitted even though the
-     * translator supports it, because the builder has a single value field and cannot express
-     * a low/high pair. It remains available through the result-grid column filter.
+     * The list used to be a hand-picked subset of DBeaver's operators, with the invariant that
+     * every entry had to be translatable. {@link WeaviateFilterOperator} now *is* the translatable
+     * set, so the subset and the invariant both go away.
      */
-    public static final List<DBCLogicalOperator> SUPPORTED_OPERATORS = List.of(
-        DBCLogicalOperator.EQUALS,
-        DBCLogicalOperator.NOT_EQUALS,
-        DBCLogicalOperator.GREATER,
-        DBCLogicalOperator.GREATER_EQUALS,
-        DBCLogicalOperator.LESS,
-        DBCLogicalOperator.LESS_EQUALS,
-        DBCLogicalOperator.LIKE,
-        DBCLogicalOperator.ILIKE,
-        DBCLogicalOperator.NOT_LIKE,
-        DBCLogicalOperator.IS_NULL,
-        DBCLogicalOperator.IS_NOT_NULL,
-        DBCLogicalOperator.IN
-    );
+    public static final List<WeaviateFilterOperator> SUPPORTED_OPERATORS =
+        List.of(WeaviateFilterOperator.values());
 
     public boolean takesValue() {
-        return takesValue(operator);
-    }
-
-    public static boolean takesValue(@NotNull DBCLogicalOperator op) {
-        return op != DBCLogicalOperator.IS_NULL && op != DBCLogicalOperator.IS_NOT_NULL;
+        return operator.takesValue();
     }
 
     /**
-     * Coerce {@link #rawValue} into the type expected for {@link #operator} given {@link #dataKind}.
-     * For IN, splits on comma. Returns the value in a form that {@code Filter.property(name).eq(...)} accepts.
+     * Coerce {@link #rawValue} into the type expected for {@link #operator} given
+     * {@link #dataKind}, in a form the client's {@code Filter} builders accept.
+     * <p>
+     * List and range operators split on comma and coerce <em>each element</em>. That matters: the
+     * old code returned {@code String[]} for every list, so a contains filter on an {@code int[]}
+     * property sent text operands and matched nothing. The element type also decides which typed
+     * overload the translator can reach.
+     *
+     * @return null when the operator takes no value; a single value; or an array of values
      */
     @Nullable
     public Object coercedValue() {
-        if (!takesValue()) {
+        if (!takesValue() || rawValue == null) {
             return null;
         }
-        if (rawValue == null) {
-            return null;
-        }
-        if (operator == DBCLogicalOperator.IN) {
+        if (operator.takesList()) {
             String[] parts = Arrays.stream(rawValue.split(","))
                 .map(String::strip)
                 .filter(s -> !s.isEmpty())
                 .toArray(String[]::new);
-            return parts;
+            return coerceEach(parts, dataKind);
         }
         return coerceScalar(rawValue.strip(), dataKind);
     }
 
-    @Nullable
+    /**
+     * Coerce every element to the column's type, boxed into an array whose component type the
+     * client can dispatch on -- it inspects the array type, so {@code Object[]} of Longs is not
+     * the same to it as {@code Long[]}.
+     */
+    @NotNull
+    private static Object coerceEach(@NotNull String[] parts, @NotNull DBPDataKind kind) {
+        Object[] coerced = new Object[parts.length];
+        for (int i = 0; i < parts.length; i++) {
+            coerced[i] = coerceScalar(parts[i], kind);
+        }
+        return switch (kind) {
+            case BOOLEAN -> Arrays.copyOf(coerced, coerced.length, Boolean[].class);
+            case NUMERIC -> allLongs(coerced)
+                ? Arrays.copyOf(coerced, coerced.length, Long[].class)
+                : toDoubles(coerced);
+            case DATETIME -> Arrays.copyOf(coerced, coerced.length, OffsetDateTime[].class);
+            default -> Arrays.copyOf(coerced, coerced.length, String[].class);
+        };
+    }
+
+    private static boolean allLongs(@NotNull Object[] values) {
+        for (Object v : values) {
+            if (!(v instanceof Long)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * A numeric list has to be all one type for the client's array dispatch, so a mixed
+     * "1, 2.5" widens to Double rather than failing.
+     */
+    @NotNull
+    private static Double[] toDoubles(@NotNull Object[] values) {
+        Double[] out = new Double[values.length];
+        for (int i = 0; i < values.length; i++) {
+            out[i] = values[i] instanceof Number n ? n.doubleValue() : null;
+        }
+        return out;
+    }
+
     private static Object coerceScalar(@NotNull String trimmed, @NotNull DBPDataKind kind) {
         if (trimmed.isEmpty()) return null;
         switch (kind) {
@@ -99,10 +126,22 @@ public record WeaviateFilterRow(
                     }
                     return Long.parseLong(trimmed);
                 } catch (NumberFormatException e) {
-                    return trimmed;
+                    // Reported, not silently passed through as text: a text operand against a
+                    // number property matches nothing, and looks like "the filter found no rows".
+                    throw new WeaviateUnsupportedFilterException(
+                        "\"" + trimmed + "\" is not a number.");
+                }
+            case DATETIME:
+                try {
+                    // The client has OffsetDateTime overloads throughout; passing the text
+                    // through built a text operand instead, which never matches a date property.
+                    return OffsetDateTime.parse(trimmed);
+                } catch (DateTimeParseException e) {
+                    throw new WeaviateUnsupportedFilterException(
+                        "\"" + trimmed + "\" is not an ISO-8601 date-time "
+                            + "(for example 2024-01-01T00:00:00Z).");
                 }
             case STRING:
-            case DATETIME:
             default:
                 return trimmed;
         }

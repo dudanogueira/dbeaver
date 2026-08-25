@@ -141,9 +141,9 @@ public class WeaviateFilterTranslateTest extends DBeaverUnitTest {
     @Test
     public void panelRowsBuildAndedFilterWithNegation() {
         List<WeaviateFilterRow> rows = List.of(
-            new WeaviateFilterRow("round", DBCLogicalOperator.EQUALS, "Double Jeopardy!", DBPDataKind.STRING),
-            new WeaviateFilterRow("points", DBCLogicalOperator.LESS, "600", DBPDataKind.NUMERIC),
-            new WeaviateFilterRow("answer", DBCLogicalOperator.NOT_EQUALS, "Yucatan", DBPDataKind.STRING));
+            new WeaviateFilterRow("round", WeaviateFilterOperator.EQUALS, "Double Jeopardy!", DBPDataKind.STRING),
+            new WeaviateFilterRow("points", WeaviateFilterOperator.LESS, "600", DBPDataKind.NUMERIC),
+            new WeaviateFilterRow("answer", WeaviateFilterOperator.NOT_EQUALS, "Yucatan", DBPDataKind.STRING));
         Filter filter = WeaviateFilterTranslator.translateRows(rows, false);
         Assertions.assertNotNull(filter);
         String s = filter.toString();
@@ -155,8 +155,8 @@ public class WeaviateFilterTranslateTest extends DBeaverUnitTest {
     @Test
     public void panelRowsHonourMatchAnyForOr() {
         List<WeaviateFilterRow> rows = List.of(
-            new WeaviateFilterRow("round", DBCLogicalOperator.EQUALS, "Jeopardy!", DBPDataKind.STRING),
-            new WeaviateFilterRow("answer", DBCLogicalOperator.NOT_EQUALS, "Yucatan", DBPDataKind.STRING));
+            new WeaviateFilterRow("round", WeaviateFilterOperator.EQUALS, "Jeopardy!", DBPDataKind.STRING),
+            new WeaviateFilterRow("answer", WeaviateFilterOperator.NOT_EQUALS, "Yucatan", DBPDataKind.STRING));
         Filter filter = WeaviateFilterTranslator.translateRows(rows, true);
         Assertions.assertNotNull(filter);
         Assertions.assertTrue(filter.toString().contains("Or"),
@@ -198,5 +198,76 @@ public class WeaviateFilterTranslateTest extends DBeaverUnitTest {
     @SuppressWarnings("unused")
     private static List<Object> emptyArgs() {
         return Collections.emptyList();
+    }
+
+    /**
+     * The three contains predicates are distinct client calls, not variations on one. Asserting
+     * the emitted operator name is what tells CONTAINS ALL apart from CONTAINS ANY -- a non-null
+     * assertion would pass either way.
+     */
+    @Test
+    public void eachContainsOperatorEmitsItsOwnPredicate() {
+        record Case(WeaviateFilterOperator op, String expected) { }
+        for (Case c : java.util.List.of(
+            new Case(WeaviateFilterOperator.CONTAINS_ANY, "ContainsAny"),
+            new Case(WeaviateFilterOperator.CONTAINS_ALL, "ContainsAll"),
+            new Case(WeaviateFilterOperator.CONTAINS_NONE, "ContainsNone"))
+        ) {
+            WeaviateFilterRow row =
+                new WeaviateFilterRow("tags", c.op(), "x, y", DBPDataKind.STRING);
+            Filter f = WeaviateFilterTranslator.translateRows(java.util.List.of(row), false);
+            Assertions.assertNotNull(f, () -> c.op() + " produced no filter");
+            Assertions.assertTrue(f.toString().contains(c.expected()),
+                () -> c.op() + " should emit " + c.expected() + ", got: " + f);
+        }
+    }
+
+    /**
+     * The creation and update times are object metadata, not properties. Filtering them as a
+     * property targets a path that does not exist, so the query matches nothing.
+     */
+    @Test
+    public void timestampColumnsUseTheMetadataPathNotAProperty() {
+        for (String column : java.util.List.of(WeaviateColumns.CREATED, WeaviateColumns.UPDATED)) {
+            WeaviateFilterRow row = new WeaviateFilterRow(
+                column, WeaviateFilterOperator.GREATER,
+                "2024-01-01T00:00:00Z", DBPDataKind.DATETIME);
+            Filter f = WeaviateFilterTranslator.translateRows(java.util.List.of(row), false);
+            Assertions.assertNotNull(f);
+            Assertions.assertFalse(f.toString().contains(column),
+                () -> column + " was filtered as a property path: " + f);
+        }
+    }
+
+    @Test
+    public void timestampColumnsRefuseOperatorsTheyCannotExpress() {
+        WeaviateFilterRow row = new WeaviateFilterRow(
+            WeaviateColumns.CREATED, WeaviateFilterOperator.LIKE, "2024*", DBPDataKind.DATETIME);
+        Assertions.assertThrows(
+            WeaviateUnsupportedFilterException.class,
+            () -> WeaviateFilterTranslator.translateRows(java.util.List.of(row), false));
+    }
+
+    @Test
+    public void uuidRefusesOperatorsItHasNoMethodFor() {
+        for (WeaviateFilterOperator op : java.util.List.of(
+            WeaviateFilterOperator.LIKE, WeaviateFilterOperator.CONTAINS_ALL)
+        ) {
+            WeaviateFilterRow row = new WeaviateFilterRow(
+                WeaviateFilterTranslator.UUID_COLUMN, op, "abc", DBPDataKind.STRING);
+            Assertions.assertThrows(
+                WeaviateUnsupportedFilterException.class,
+                () -> WeaviateFilterTranslator.translateRows(java.util.List.of(row), false),
+                () -> "uuid has no " + op + " method and must say so");
+        }
+    }
+
+    @Test
+    public void uuidAcceptsContainsNone() {
+        WeaviateFilterRow row = new WeaviateFilterRow(
+            WeaviateFilterTranslator.UUID_COLUMN, WeaviateFilterOperator.CONTAINS_NONE,
+            "a, b", DBPDataKind.STRING);
+        Assertions.assertNotNull(
+            WeaviateFilterTranslator.translateRows(java.util.List.of(row), false));
     }
 }

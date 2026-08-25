@@ -34,8 +34,10 @@ public class WeaviateFilterOperatorSupportTest extends DBeaverUnitTest {
 
     @Test
     public void everyOfferedOperatorIsTranslatable() {
-        for (DBCLogicalOperator op : WeaviateFilterRow.SUPPORTED_OPERATORS) {
-            WeaviateFilterRow row = new WeaviateFilterRow("title", op, "value", DBPDataKind.STRING);
+        for (WeaviateFilterOperator op : WeaviateFilterRow.SUPPORTED_OPERATORS) {
+            // BETWEEN needs two values; everything else is happy with one.
+            String value = op == WeaviateFilterOperator.BETWEEN ? "a,b" : "value";
+            WeaviateFilterRow row = new WeaviateFilterRow("title", op, value, DBPDataKind.STRING);
             Assertions.assertDoesNotThrow(
                 () -> WeaviateFilterTranslator.translateRows(List.of(row), false),
                 () -> "operator offered by the filter builder but not translatable: " + op);
@@ -44,8 +46,9 @@ public class WeaviateFilterOperatorSupportTest extends DBeaverUnitTest {
 
     @Test
     public void everyOfferedOperatorProducesAFilter() {
-        for (DBCLogicalOperator op : WeaviateFilterRow.SUPPORTED_OPERATORS) {
-            WeaviateFilterRow row = new WeaviateFilterRow("title", op, "value", DBPDataKind.STRING);
+        for (WeaviateFilterOperator op : WeaviateFilterRow.SUPPORTED_OPERATORS) {
+            String value = op == WeaviateFilterOperator.BETWEEN ? "a,b" : "value";
+            WeaviateFilterRow row = new WeaviateFilterRow("title", op, value, DBPDataKind.STRING);
             Assertions.assertNotNull(
                 WeaviateFilterTranslator.translateRows(List.of(row), false),
                 () -> "operator silently produced no filter: " + op);
@@ -77,10 +80,11 @@ public class WeaviateFilterOperatorSupportTest extends DBeaverUnitTest {
     }
 
     @Test
-    public void betweenIsTranslatableEvenThoughTheBuilderOmitsIt() {
-        // Documents the deliberate asymmetry: the builder has one value field so it cannot offer
-        // BETWEEN, but the grid's column filter can and must still work.
-        Assertions.assertFalse(WeaviateFilterRow.SUPPORTED_OPERATORS.contains(DBCLogicalOperator.BETWEEN));
+    public void betweenIsNowOfferedByTheBuilderToo() {
+        // It was omitted while the builder had one value field and no notion of arity. The
+        // operator enum has both, so the asymmetry with the grid path is gone.
+        Assertions.assertTrue(
+            WeaviateFilterRow.SUPPORTED_OPERATORS.contains(WeaviateFilterOperator.BETWEEN));
 
         DBDAttributeConstraint constraint = new DBDAttributeConstraint("price", 0);
         constraint.setOperator(DBCLogicalOperator.BETWEEN);
@@ -88,4 +92,56 @@ public class WeaviateFilterOperatorSupportTest extends DBeaverUnitTest {
 
         Assertions.assertNotNull(WeaviateFilterTranslator.translate(new DBDDataFilter(List.of(constraint))));
     }
+
+    /**
+     * Every DBeaver operator either maps to something Weaviate does, or is refused. Silence is
+     * the one outcome that must never happen, since it widens the result set.
+     */
+    @Test
+    public void everyDBeaverOperatorIsMappedOrRefused() {
+        for (DBCLogicalOperator op : DBCLogicalOperator.values()) {
+            WeaviateFilterOperator mapped = WeaviateFilterOperator.fromDataFilterOperator(op);
+            if (mapped != null) {
+                continue;
+            }
+            DBDAttributeConstraint constraint = new DBDAttributeConstraint("title", 0);
+            constraint.setOperator(op);
+            constraint.setValue("value");
+            Assertions.assertThrows(
+                WeaviateUnsupportedFilterException.class,
+                () -> WeaviateFilterTranslator.translate(new DBDDataFilter(List.of(constraint))),
+                () -> op + " maps to nothing and must be refused, not dropped");
+        }
+    }
+
+    /**
+     * ILIKE used to be offered and translated to LIKE. Weaviate's Like is case-sensitive, so the
+     * operator quietly ignored the one thing it was chosen for.
+     */
+    @Test
+    public void ilikeIsRefusedRatherThanAliasedToLike() {
+        Assertions.assertNull(
+            WeaviateFilterOperator.fromDataFilterOperator(DBCLogicalOperator.ILIKE));
+
+        DBDAttributeConstraint constraint = new DBDAttributeConstraint("title", 0);
+        constraint.setOperator(DBCLogicalOperator.ILIKE);
+        constraint.setValue("abc");
+        Assertions.assertThrows(
+            WeaviateUnsupportedFilterException.class,
+            () -> WeaviateFilterTranslator.translate(new DBDDataFilter(List.of(constraint))));
+    }
+
+    @Test
+    public void arityIsSelfConsistent() {
+        for (WeaviateFilterOperator op : WeaviateFilterOperator.values()) {
+            if (!op.takesValue()) {
+                Assertions.assertEquals(0, op.valueCount(), op + " takes no value");
+                Assertions.assertFalse(op.takesList(), op + " cannot be both valueless and a list");
+            } else {
+                Assertions.assertNotEquals(0, op.valueCount(), op + " takes a value");
+            }
+            Assertions.assertFalse(op.getLabel().isBlank(), op + " has no label");
+        }
+    }
+
 }

@@ -24,6 +24,8 @@ import org.jkiss.dbeaver.model.data.DBDAttributeConstraint;
 import org.jkiss.dbeaver.model.data.DBDDataFilter;
 import org.jkiss.dbeaver.model.exec.DBCLogicalOperator;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -115,91 +117,255 @@ public final class WeaviateFilterTranslator {
         if (name == null || name.isEmpty()) {
             return null;
         }
+        // Everything funnels through one vocabulary, so the grid path and the panel path cannot
+        // translate the same predicate two different ways.
+        WeaviateFilterOperator mapped = WeaviateFilterOperator.fromDataFilterOperator(op);
+        if (mapped == null) {
+            throw WeaviateUnsupportedFilterException.forOperator(name, op);
+        }
         Object value = c.getValue();
         boolean reverse = c.isReverseOperator();
-        Filter f = applyOperator(name, op, value);
+        Filter f = applyOperator(name, mapped, value);
         if (f == null) {
             return null;
         }
         return reverse ? f.not() : f;
     }
 
+    /**
+     * The one place a predicate becomes a client {@code Filter}.
+     * <p>
+     * A required value that is missing is an error, not a no-op. Returning null here would drop
+     * the row while the panel still showed it as an active filter -- the user would be looking at
+     * more rows than they asked for, with nothing to say why.
+     */
     @Nullable
     private static Filter applyOperator(
         @NotNull String name,
-        @NotNull DBCLogicalOperator op,
+        @NotNull WeaviateFilterOperator op,
         @Nullable Object value
     ) {
-        boolean isUuid = UUID_COLUMN.equalsIgnoreCase(name);
+        if (UUID_COLUMN.equalsIgnoreCase(name)) {
+            return uuidFilter(name, op, value);
+        }
+        if (WeaviateColumns.CREATED.equals(name) || WeaviateColumns.UPDATED.equals(name)) {
+            return timestampFilter(name, op, value);
+        }
+        Filter.FilterBuilder property = Filter.property(name);
         switch (op) {
             case EQUALS:
-                if (isUuid && value != null) {
-                    return Filter.uuid().eq(value.toString());
-                }
-                if (value == null) {
-                    return Filter.property(name).isNull();
-                }
-                return Filter.property(name).eq(value);
+                // A null value here is DBeaver's way of writing "= NULL" in a column filter.
+                return value == null ? property.isNull() : wrap(name, () -> property.eq(value));
             case NOT_EQUALS:
-                if (isUuid && value != null) {
-                    return Filter.uuid().ne(value.toString());
-                }
-                if (value == null) {
-                    return Filter.property(name).isNotNull();
-                }
-                return Filter.property(name).ne(value);
+                return value == null ? property.isNotNull() : wrap(name, () -> property.ne(value));
             case GREATER:
-                if (value == null) return null;
-                if (isUuid) return Filter.uuid().gt(value.toString());
-                return Filter.property(name).gt(value);
+                return wrap(name, () -> property.gt(require(name, op, value)));
             case GREATER_EQUALS:
-                if (value == null) return null;
-                if (isUuid) return Filter.uuid().gte(value.toString());
-                return Filter.property(name).gte(value);
+                return wrap(name, () -> property.gte(require(name, op, value)));
             case LESS:
-                if (value == null) return null;
-                if (isUuid) return Filter.uuid().lt(value.toString());
-                return Filter.property(name).lt(value);
+                return wrap(name, () -> property.lt(require(name, op, value)));
             case LESS_EQUALS:
-                if (value == null) return null;
-                if (isUuid) return Filter.uuid().lte(value.toString());
-                return Filter.property(name).lte(value);
+                return wrap(name, () -> property.lte(require(name, op, value)));
             case IS_NULL:
-                if (isUuid) {
-                    throw new WeaviateUnsupportedFilterException(
-                        "Weaviate cannot test the object UUID for NULL - every object always has one.");
-                }
-                return Filter.property(name).isNull();
+                return property.isNull();
             case IS_NOT_NULL:
-                if (isUuid) {
-                    throw new WeaviateUnsupportedFilterException(
-                        "Weaviate cannot test the object UUID for NOT NULL - every object always has one.");
-                }
-                return Filter.property(name).isNotNull();
+                return property.isNotNull();
             case LIKE:
-            case ILIKE:
-                if (value == null) return null;
-                return Filter.property(name).like(value.toString());
+                return property.like(require(name, op, value).toString());
             case NOT_LIKE:
-                if (value == null) return null;
-                return Filter.property(name).like(value.toString()).not();
-            case IN:
-                String[] inValues = toStringArray(value);
-                if (inValues.length == 0) return null;
-                if (isUuid) {
-                    return Filter.uuid().containsAny(inValues);
-                }
-                return Filter.property(name).containsAny(inValues);
+                return property.like(require(name, op, value).toString()).not();
+            case CONTAINS_ANY:
+                return wrap(name, () -> containsAny(property, requireList(name, op, value)));
+            case CONTAINS_ALL:
+                return wrap(name, () -> containsAll(property, requireList(name, op, value)));
+            case CONTAINS_NONE:
+                return wrap(name, () -> containsNone(property, requireList(name, op, value)));
             case BETWEEN:
-                Object[] range = toRange(value);
-                if (range == null) return null;
-                Filter low = Filter.property(name).gte(range[0]);
-                Filter high = Filter.property(name).lte(range[1]);
-                return Filter.and(low, high);
+                Object[] range = toRange(requireList(name, op, value));
+                if (range == null) {
+                    throw new WeaviateUnsupportedFilterException(
+                        "BETWEEN on \"" + name + "\" needs exactly two values, a low and a high.");
+                }
+                return wrap(name, () -> Filter.and(property.gte(range[0]), property.lte(range[1])));
             default:
-                // Never return null here: an operator we cannot express must surface as an error
-                // rather than quietly widening the result set. See WeaviateUnsupportedFilterException.
-                throw WeaviateUnsupportedFilterException.forOperator(name, op);
+                throw new WeaviateUnsupportedFilterException(
+                    "Weaviate does not support the '" + op.getLabel() + "' operator on \""
+                        + name + "\".");
+        }
+    }
+
+    // The contains predicates have one overload per element type and no Object form, so the
+    // array the row coerced decides which one is reachable.
+
+    @NotNull
+    private static Filter containsAny(@NotNull Filter.FilterBuilder p, @NotNull Object values) {
+        if (values instanceof Long[] v) return p.containsAny(v);
+        if (values instanceof Double[] v) return p.containsAny(v);
+        if (values instanceof Boolean[] v) return p.containsAny(v);
+        if (values instanceof OffsetDateTime[] v) return p.containsAny(v);
+        return p.containsAny(toStringArray(values));
+    }
+
+    @NotNull
+    private static Filter containsAll(@NotNull Filter.FilterBuilder p, @NotNull Object values) {
+        if (values instanceof Long[] v) return p.containsAll(v);
+        if (values instanceof Double[] v) return p.containsAll(v);
+        if (values instanceof Boolean[] v) return p.containsAll(v);
+        if (values instanceof OffsetDateTime[] v) return p.containsAll(v);
+        return p.containsAll(toStringArray(values));
+    }
+
+    @NotNull
+    private static Filter containsNone(@NotNull Filter.FilterBuilder p, @NotNull Object values) {
+        if (values instanceof Long[] v) return p.containsNone(v);
+        if (values instanceof Double[] v) return p.containsNone(v);
+        if (values instanceof Boolean[] v) return p.containsNone(v);
+        if (values instanceof OffsetDateTime[] v) return p.containsNone(v);
+        return p.containsNone(toStringArray(values));
+    }
+
+    /**
+     * The synthetic uuid column. {@code UuidProperty} is a much narrower type than a property
+     * path -- no like, no containsAll, no null test -- so what it cannot do is named rather than
+     * left to fail as a confusing server error.
+     */
+    @NotNull
+    private static Filter uuidFilter(
+        @NotNull String name,
+        @NotNull WeaviateFilterOperator op,
+        @Nullable Object value
+    ) {
+        switch (op) {
+            case EQUALS:
+                return Filter.uuid().eq(require(name, op, value).toString());
+            case NOT_EQUALS:
+                return Filter.uuid().ne(require(name, op, value).toString());
+            case GREATER:
+                return Filter.uuid().gt(require(name, op, value).toString());
+            case GREATER_EQUALS:
+                return Filter.uuid().gte(require(name, op, value).toString());
+            case LESS:
+                return Filter.uuid().lt(require(name, op, value).toString());
+            case LESS_EQUALS:
+                return Filter.uuid().lte(require(name, op, value).toString());
+            case CONTAINS_ANY:
+                return Filter.uuid().containsAny(toStringArray(requireList(name, op, value)));
+            case CONTAINS_NONE:
+                return Filter.uuid().containsNone(toStringArray(requireList(name, op, value)));
+            case IS_NULL:
+            case IS_NOT_NULL:
+                throw new WeaviateUnsupportedFilterException(
+                    "Weaviate cannot test the object UUID for NULL - every object always has one.");
+            default:
+                throw new WeaviateUnsupportedFilterException(
+                    "The object UUID does not support '" + op.getLabel()
+                        + "'. It accepts =, !=, the comparisons, CONTAINS ANY and CONTAINS NONE.");
+        }
+    }
+
+    /**
+     * The synthetic creation/update-time columns. These are object metadata, not properties, and
+     * the client reaches them through their own builders -- filtering them as a property silently
+     * matches nothing, since no property of that name exists.
+     */
+    @NotNull
+    private static Filter timestampFilter(
+        @NotNull String name,
+        @NotNull WeaviateFilterOperator op,
+        @Nullable Object value
+    ) {
+        Filter.DateProperty when = WeaviateColumns.CREATED.equals(name)
+            ? Filter.createdAt()
+            : Filter.lastUpdatedAt();
+        switch (op) {
+            case EQUALS:
+                return when.eq(requireDate(name, op, value));
+            case NOT_EQUALS:
+                return when.ne(requireDate(name, op, value));
+            case GREATER:
+                return when.gt(requireDate(name, op, value));
+            case GREATER_EQUALS:
+                return when.gte(requireDate(name, op, value));
+            case LESS:
+                return when.lt(requireDate(name, op, value));
+            case LESS_EQUALS:
+                return when.lte(requireDate(name, op, value));
+            case BETWEEN:
+                Object[] range = toRange(requireList(name, op, value));
+                if (range == null) {
+                    throw new WeaviateUnsupportedFilterException(
+                        "BETWEEN on \"" + name + "\" needs exactly two values, a low and a high.");
+                }
+                return Filter.and(
+                    when.gte(asDate(name, range[0])), when.lte(asDate(name, range[1])));
+            default:
+                throw new WeaviateUnsupportedFilterException(
+                    "\"" + name + "\" is a timestamp and does not support '" + op.getLabel()
+                        + "'. It accepts =, !=, the comparisons and BETWEEN.");
+        }
+    }
+
+    @NotNull
+    private static Object require(
+        @NotNull String name,
+        @NotNull WeaviateFilterOperator op,
+        @Nullable Object value
+    ) {
+        if (value == null) {
+            throw new WeaviateUnsupportedFilterException(
+                "'" + op.getLabel() + "' on \"" + name + "\" needs a value.");
+        }
+        return value;
+    }
+
+    @NotNull
+    private static Object requireList(
+        @NotNull String name,
+        @NotNull WeaviateFilterOperator op,
+        @Nullable Object value
+    ) {
+        Object present = require(name, op, value);
+        if (present instanceof Object[] arr && arr.length == 0) {
+            throw new WeaviateUnsupportedFilterException(
+                "'" + op.getLabel() + "' on \"" + name + "\" needs at least one value.");
+        }
+        return present;
+    }
+
+    @NotNull
+    private static OffsetDateTime requireDate(
+        @NotNull String name,
+        @NotNull WeaviateFilterOperator op,
+        @Nullable Object value
+    ) {
+        return asDate(name, require(name, op, value));
+    }
+
+    @NotNull
+    private static OffsetDateTime asDate(@NotNull String name, @Nullable Object value) {
+        if (value instanceof OffsetDateTime when) {
+            return when;
+        }
+        try {
+            return OffsetDateTime.parse(String.valueOf(value));
+        } catch (DateTimeParseException e) {
+            throw new WeaviateUnsupportedFilterException(
+                "\"" + name + "\" is a timestamp; \"" + value
+                    + "\" is not an ISO-8601 date-time (for example 2024-01-01T00:00:00Z).");
+        }
+    }
+
+    /**
+     * Run a builder call, translating the client's own complaint about a value type into this
+     * package's exception so every filter failure reaches the banner the same way.
+     */
+    @NotNull
+    private static Filter wrap(@NotNull String name, @NotNull java.util.function.Supplier<Filter> call) {
+        try {
+            return call.get();
+        } catch (IllegalArgumentException e) {
+            throw new WeaviateUnsupportedFilterException(
+                "Weaviate cannot filter \"" + name + "\" on that value: " + e.getMessage());
         }
     }
 

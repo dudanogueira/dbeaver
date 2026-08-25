@@ -50,7 +50,10 @@ import org.eclipse.ui.forms.events.ExpansionEvent;
 import org.eclipse.ui.forms.widgets.ExpandableComposite;
 import org.jkiss.dbeaver.ui.controls.ExpandableCompositeEx;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateColumns;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterOperator;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterRow;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterTranslator;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateHybridFusion;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQueryMode;
@@ -1736,7 +1739,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
 
     private void addFilterRow(@Nullable WeaviateFilterRow seed) {
         if (filterRowsHolder == null || filterRowsHolder.isDisposed()) return;
-        FilterRowUi ui = new FilterRowUi(filterRowsHolder, currentPropertyNames(), seed);
+        FilterRowUi ui = new FilterRowUi(filterRowsHolder, filterPropertyNames(), seed);
         filterRowUis.add(ui);
         filterRowsHolder.layout(true, true);
         updateFilterCount();
@@ -1761,7 +1764,35 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         return rows;
     }
 
+    /**
+     * Property names for the filter rows: the collection's own, plus the synthetic columns the
+     * grid shows.
+     * <p>
+     * Kept apart from {@link #currentPropertyNames()}, which feeds the BM25, generative and
+     * rerank pickers -- none of those can do anything with a uuid or a timestamp. The translator
+     * has always known how to filter these three; until now nothing offered them.
+     */
+    @NotNull
+    private List<String> filterPropertyNames() {
+        List<String> names = new ArrayList<>();
+        names.add(WeaviateFilterTranslator.UUID_COLUMN);
+        names.addAll(currentPropertyNames());
+        names.add(WeaviateColumns.CREATED);
+        names.add(WeaviateColumns.UPDATED);
+        return names;
+    }
+
     private DBPDataKind dataKindForProperty(@NotNull String propertyName) {
+        // The synthetic columns are not in the schema, so their type has to be stated here or
+        // the value would be coerced as text and never match.
+        if (WeaviateColumns.CREATED.equals(propertyName)
+            || WeaviateColumns.UPDATED.equals(propertyName)
+        ) {
+            return DBPDataKind.DATETIME;
+        }
+        if (WeaviateFilterTranslator.UUID_COLUMN.equalsIgnoreCase(propertyName)) {
+            return DBPDataKind.STRING;
+        }
         WeaviateCollection collection = currentCollection();
         if (collection == null) return DBPDataKind.STRING;
         try {
@@ -2312,8 +2343,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             propertyCombo.setLayoutData(pcGd);
 
             opCombo = new Combo(container, SWT.READ_ONLY);
-            for (DBCLogicalOperator op : WeaviateFilterRow.SUPPORTED_OPERATORS) {
-                opCombo.add(operatorLabel(op));
+            for (WeaviateFilterOperator op : WeaviateFilterRow.SUPPORTED_OPERATORS) {
+                opCombo.add(op.getLabel());
             }
             opCombo.select(0);
             opCombo.addSelectionListener(new SelectionAdapter() {
@@ -2352,10 +2383,14 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
 
         private void syncValueEnabled() {
-            valueField.setEnabled(WeaviateFilterRow.takesValue(currentOperator()));
+            WeaviateFilterOperator op = currentOperator();
+            valueField.setEnabled(op.takesValue());
+            // The cell holds one value, a comma-separated list, or a low/high pair depending on
+            // the operator, so the hint has to say which.
+            valueField.setMessage(op.takesList() ? "comma-separated" : "value");
         }
 
-        private DBCLogicalOperator currentOperator() {
+        private WeaviateFilterOperator currentOperator() {
             int idx = opCombo.getSelectionIndex();
             if (idx < 0) idx = 0;
             return WeaviateFilterRow.SUPPORTED_OPERATORS.get(idx);
@@ -2365,7 +2400,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         WeaviateFilterRow toRow() {
             String property = propertyCombo.getText();
             if (property == null || property.isBlank()) return null;
-            DBCLogicalOperator op = currentOperator();
+            WeaviateFilterOperator op = currentOperator();
             String raw = valueField.getText();
             DBPDataKind kind = dataKindForProperty(property);
             return new WeaviateFilterRow(property, op, raw, kind);
@@ -2626,29 +2661,4 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
     }
 
-    /**
-     * Label for the operator dropdown.
-     * <p>
-     * Spelled out rather than using bare symbols: a lone "≠" is easy to misread as "=" at
-     * combo size, and ILIKE/NOT_LIKE previously fell through to the raw enum name, so the
-     * list mixed "LIKE" with "NOT_LIKE". Every entry now names what it does.
-     */
-    @NotNull
-    private static String operatorLabel(@NotNull DBCLogicalOperator op) {
-        switch (op) {
-            case EQUALS: return "= (equals)";
-            case NOT_EQUALS: return "!= (not equals)";
-            case GREATER: return "> (greater)";
-            case GREATER_EQUALS: return ">= (greater or equal)";
-            case LESS: return "< (less)";
-            case LESS_EQUALS: return "<= (less or equal)";
-            case LIKE: return "LIKE";
-            case ILIKE: return "ILIKE (case-insensitive)";
-            case NOT_LIKE: return "NOT LIKE";
-            case IS_NULL: return "IS NULL";
-            case IS_NOT_NULL: return "IS NOT NULL";
-            case IN: return "IN (comma-separated)";
-            default: return op.name();
-        }
-    }
 }
