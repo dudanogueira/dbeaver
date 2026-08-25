@@ -27,6 +27,8 @@ import io.weaviate.client6.v1.api.collections.aggregate.AggregateResponse;
 import io.weaviate.client6.v1.api.collections.pagination.Paginator;
 import io.weaviate.client6.v1.api.collections.data.DeleteManyResponse;
 import io.weaviate.client6.v1.api.collections.generate.GenerativeResponse;
+import io.weaviate.client6.v1.api.collections.generate.GenerativeResponseGroup;
+import io.weaviate.client6.v1.api.collections.generate.GenerativeResponseGrouped;
 import io.weaviate.client6.v1.api.collections.generate.GenerativeTask;
 import io.weaviate.client6.v1.api.collections.generate.GenerativeProvider;
 import io.weaviate.client6.v1.api.collections.generate.GenerativeObject;
@@ -34,6 +36,7 @@ import io.weaviate.client6.v1.api.collections.generate.WeaviateGenerateClient;
 import io.weaviate.client6.v1.api.collections.query.Bm25;
 import io.weaviate.client6.v1.api.collections.query.FetchObjects;
 import io.weaviate.client6.v1.api.collections.query.Filter;
+import io.weaviate.client6.v1.api.collections.query.GroupBy;
 import io.weaviate.client6.v1.api.collections.query.Hybrid;
 import io.weaviate.client6.v1.api.collections.query.NearObject;
 import io.weaviate.client6.v1.api.collections.query.QueryOperator;
@@ -43,7 +46,10 @@ import io.weaviate.client6.v1.internal.ObjectBuilder;
 import io.weaviate.client6.v1.api.collections.tenants.Tenant;
 import io.weaviate.client6.v1.api.collections.query.Metadata;
 import io.weaviate.client6.v1.api.collections.query.NearVectorTarget;
+import io.weaviate.client6.v1.api.collections.query.QueryObjectGrouped;
 import io.weaviate.client6.v1.api.collections.query.QueryResponse;
+import io.weaviate.client6.v1.api.collections.query.QueryResponseGroup;
+import io.weaviate.client6.v1.api.collections.query.QueryResponseGrouped;
 import io.weaviate.client6.v1.api.collections.query.Rerank;
 import io.weaviate.client6.v1.api.collections.query.SortBy;
 import io.weaviate.client6.v1.api.collections.query.Target;
@@ -536,10 +542,23 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (hasRerankScore(exec)) {
             columnNames.add(WeaviateColumns.RERANK_SCORE);
         }
-        if (spec.isWithCreated()) {
+        // From exec for the same reason the generative columns are: a demoted read is not grouped,
+        // and the columns must describe what actually comes back.
+        if (exec.isGrouped()) {
+            columnNames.add(WeaviateColumns.GROUP);
+            if (exec.getGroupBy().isWithGroupStats()) {
+                columnNames.add(WeaviateColumns.GROUP_COUNT);
+                columnNames.add(WeaviateColumns.GROUP_MIN_DISTANCE);
+                columnNames.add(WeaviateColumns.GROUP_MAX_DISTANCE);
+            }
+        }
+        // Timestamps are dropped on a grouped read rather than shown empty: the client's grouped
+        // object type carries no creation or update time at all, so the checkboxes would otherwise
+        // add two columns that can never be filled.
+        if (spec.isWithCreated() && !exec.isGrouped()) {
             columnNames.add(WeaviateColumns.CREATED);
         }
-        if (spec.isWithUpdated()) {
+        if (spec.isWithUpdated() && !exec.isGrouped()) {
             columnNames.add(WeaviateColumns.UPDATED);
         }
         // From exec, not spec: on an unarmed read the task is stripped from execution, and the
@@ -604,11 +623,14 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (maxRows <= 0
             && exec.getMode() == WeaviateQueryMode.FETCH
             && exec.getGenerative() == null
+            && !exec.isGrouped()
             && filter == null
         ) {
             // (Generative fetches never take this path: the paginator cannot carry a task, and
             // prompting a model once per object across an entire collection is not an export
-            // anyone means to run by accident.)
+            // anyone means to run by accident. Grouped fetches are out for a plainer reason --
+            // the paginator cannot carry a GroupBy either, so an export would silently hand back
+            // the whole collection ungrouped.)
             return readAllViaCursor(
                 source, session, dataReceiver, statistics, exec, filter,
                 attributes, columnNames, vectorNames, singleVector, queryText, firstRow);
@@ -622,7 +644,10 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
             // Cleared per read: a stale map would decorate the next query's rows with the last
             // one's scores wherever a uuid happened to repeat.
             lastRerankScores = Collections.emptyMap();
-            if (exec.getGenerative() != null) {
+            if (exec.isGrouped()) {
+                appendGroupedRows(exec, filter, sortBy, limit, offset,
+                    columnNames, defaultVectorName, rows);
+            } else if (exec.getGenerative() != null) {
                 GenerativeResponse<Map<String, Object>> response =
                     executeGenerativeQuery(exec, filter, sortBy, limit, offset);
                 lastGenerativeGroupedResult =
@@ -868,6 +893,230 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 return generate.fetchObjects(
                     b -> fetchOptions(b, spec, filter, sortBy, limit, offset), task);
         }
+    }
+
+    /**
+     * Build the rows of a grouped read.
+     * <p>
+     * A grouped reply gives both a flat object list and a map of groups. The flat list is what
+     * the grid wants -- one row per object -- and each object names its own group, so the group's
+     * numbers are joined back on per row. Grouping therefore needs no new result presentation:
+     * it is the ordinary grid with a {@code _group} column.
+     */
+    private void appendGroupedRows(
+        @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter,
+        @NotNull List<SortBy> sortBy,
+        int limit,
+        int offset,
+        @NotNull List<String> columnNames,
+        @Nullable String defaultVectorName,
+        @NotNull List<Object[]> rows
+    ) {
+        GroupBy groupBy = buildGroupBy(spec.getGroupBy());
+        if (spec.getGenerative() != null) {
+            GenerativeResponseGrouped<Map<String, Object>> response =
+                executeGroupedGenerativeQuery(spec, filter, sortBy, limit, offset, groupBy);
+            lastGenerativeGroupedResult =
+                response.generative() == null ? null : response.generative().text();
+            Map<String, GenerativeResponseGroup<Map<String, Object>>> groups = response.groups();
+            for (QueryObjectGrouped<Map<String, Object>> obj : response.objects()) {
+                GenerativeResponseGroup<Map<String, Object>> group =
+                    groups == null ? null : groups.get(obj.belongsToGroup());
+                // The generated text comes off the group, not the object: a grouped generative
+                // reply has no per-object output, so every row of a group repeats its group's.
+                rows.add(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName,
+                    WeaviateRowMapper.GroupStats.of(group),
+                    group == null ? null : group.generative(),
+                    lastRerankScores.get(obj.uuid())));
+            }
+        } else {
+            lastGenerativeGroupedResult = null;
+            QueryResponseGrouped<Map<String, Object>> response =
+                executeGroupedQuery(spec, filter, sortBy, limit, offset, groupBy);
+            Map<String, QueryResponseGroup<Map<String, Object>>> groups = response.groups();
+            for (QueryObjectGrouped<Map<String, Object>> obj : response.objects()) {
+                QueryResponseGroup<Map<String, Object>> group =
+                    groups == null ? null : groups.get(obj.belongsToGroup());
+                rows.add(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName,
+                    WeaviateRowMapper.GroupStats.of(group), null,
+                    lastRerankScores.get(obj.uuid())));
+            }
+        }
+    }
+
+    @NotNull
+    private static GroupBy buildGroupBy(@NotNull WeaviateGroupBySpec spec) {
+        return GroupBy.property(
+            spec.getProperty(), spec.getMaxGroups(), spec.getMaxObjectsPerGroup());
+    }
+
+    /**
+     * The grouped twin of {@link #executeQuery}. Every operator has a trailing-{@code GroupBy}
+     * overload, so this is the same dispatch with one more argument -- and, like the generative
+     * twin, it shares the per-mode options methods rather than restating them.
+     */
+    @NotNull
+    private QueryResponseGrouped<Map<String, Object>> executeGroupedQuery(
+        @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter,
+        @NotNull List<SortBy> sortBy,
+        int limit,
+        int offset,
+        @NotNull GroupBy groupBy
+    ) {
+        WeaviateQueryClient<Map<String, Object>> query = handle(spec.getTenant()).query;
+        switch (spec.getMode()) {
+            case BM25:
+                return query.bm25(requireQuery(spec, "BM25"),
+                    b -> bm25Options(b, spec, filter, limit, offset), groupBy);
+            case NEAR_TEXT: {
+                String text = requireQuery(spec, "Near Text");
+                NearText nearText = spec.hasTargets()
+                    ? NearText.of(buildTextTarget(spec, text),
+                        b -> nearTextOptions(b, spec, filter, limit, offset))
+                    : NearText.of(text,
+                        b -> nearTextOptions(b, spec, filter, limit, offset));
+                return runNearGrouped(query, nearText, groupBy, spec,
+                    () -> query.nearText(nearText, groupBy));
+            }
+            case NEAR_VECTOR: {
+                NearVector nearVector = spec.hasTargets()
+                    ? NearVector.of(buildVectorTarget(spec),
+                        b -> nearVectorOptions(b, spec, filter, limit, offset))
+                    : NearVector.of(requireVector(spec),
+                        b -> nearVectorOptions(b, spec, filter, limit, offset));
+                return runNearGrouped(query, nearVector, groupBy, spec,
+                    () -> query.nearVector(nearVector, groupBy));
+            }
+            case NEAR_OBJECT: {
+                NearObject nearObject = NearObject.of(requireObjectId(spec),
+                    b -> nearObjectOptions(b, spec, filter, limit, offset));
+                return runNearGrouped(query, nearObject, groupBy, spec,
+                    () -> query.nearObject(nearObject, groupBy));
+            }
+            case HYBRID: {
+                String text = requireQuery(spec, "Hybrid");
+                return spec.hasTargets()
+                    ? query.hybrid(buildTextTarget(spec, text),
+                        b -> hybridOptions(b, spec, filter, limit, offset), groupBy)
+                    : query.hybrid(text,
+                        b -> hybridOptions(b, spec, filter, limit, offset), groupBy);
+            }
+            case FETCH:
+            default:
+                return query.fetchObjects(
+                    b -> fetchOptions(b, spec, filter, sortBy, limit, offset), groupBy);
+        }
+    }
+
+    /** {@link #executeGroupedQuery} through the generate client. */
+    @NotNull
+    private GenerativeResponseGrouped<Map<String, Object>> executeGroupedGenerativeQuery(
+        @NotNull WeaviateQuerySpec spec,
+        @Nullable Filter filter,
+        @NotNull List<SortBy> sortBy,
+        int limit,
+        int offset,
+        @NotNull GroupBy groupBy
+    ) {
+        WeaviateGenerateClient<Map<String, Object>> generate = handle(spec.getTenant()).generate;
+        Function<GenerativeTask.Builder, ObjectBuilder<GenerativeTask>> task =
+            t -> configureTask(t, spec.getGenerative());
+        GenerativeTask taskObject = GenerativeTask.of(task);
+        switch (spec.getMode()) {
+            case BM25:
+                return generate.bm25(requireQuery(spec, "BM25"),
+                    b -> bm25Options(b, spec, filter, limit, offset), task, groupBy);
+            case NEAR_TEXT: {
+                String text = requireQuery(spec, "Near Text");
+                NearText nearText = spec.hasTargets()
+                    ? NearText.of(buildTextTarget(spec, text),
+                        b -> nearTextOptions(b, spec, filter, limit, offset))
+                    : NearText.of(text,
+                        b -> nearTextOptions(b, spec, filter, limit, offset));
+                return runNearGroupedGenerative(generate, nearText, taskObject, groupBy, spec,
+                    () -> generate.nearText(nearText, taskObject, groupBy));
+            }
+            case NEAR_VECTOR: {
+                NearVector nearVector = spec.hasTargets()
+                    ? NearVector.of(buildVectorTarget(spec),
+                        b -> nearVectorOptions(b, spec, filter, limit, offset))
+                    : NearVector.of(requireVector(spec),
+                        b -> nearVectorOptions(b, spec, filter, limit, offset));
+                return runNearGroupedGenerative(generate, nearVector, taskObject, groupBy, spec,
+                    () -> generate.nearVector(nearVector, taskObject, groupBy));
+            }
+            case NEAR_OBJECT: {
+                NearObject nearObject = NearObject.of(requireObjectId(spec),
+                    b -> nearObjectOptions(b, spec, filter, limit, offset));
+                return runNearGroupedGenerative(generate, nearObject, taskObject, groupBy, spec,
+                    () -> generate.nearObject(nearObject, taskObject, groupBy));
+            }
+            case HYBRID: {
+                String text = requireQuery(spec, "Hybrid");
+                // Task before options here, options before task everywhere else. That is the
+                // client's own inconsistency, not a slip: the grouped generative hybrid overload
+                // is declared (query, task, options, groupBy) while its ungrouped twin and every
+                // other grouped operator take (query, options, task[, groupBy]). Both arguments
+                // are Functions, so only their builder types keep this honest -- swap them and it
+                // stops compiling rather than silently sending a hybrid with no alpha.
+                return spec.hasTargets()
+                    ? generate.hybrid(buildTextTarget(spec, text), task,
+                        b -> hybridOptions(b, spec, filter, limit, offset), groupBy)
+                    : generate.hybrid(text, task,
+                        b -> hybridOptions(b, spec, filter, limit, offset), groupBy);
+            }
+            case FETCH:
+            default:
+                return generate.fetchObjects(
+                    b -> fetchOptions(b, spec, filter, sortBy, limit, offset), task, groupBy);
+        }
+    }
+
+    /** {@link #runNear} for a grouped search; same seam, the grouped response factory. */
+    @NotNull
+    private QueryResponseGrouped<Map<String, Object>> runNearGrouped(
+        @NotNull WeaviateQueryClient<Map<String, Object>> query,
+        @NotNull QueryOperator operator,
+        @NotNull GroupBy groupBy,
+        @NotNull WeaviateQuerySpec spec,
+        @NotNull java.util.function.Supplier<QueryResponseGrouped<Map<String, Object>>> plain
+    ) {
+        if (spec.getRerank() == null || !WeaviateRerankSupport.isGroupedAvailable()) {
+            return plain.get();
+        }
+        Map<String, Float> scores = new HashMap<>();
+        QueryResponseGrouped<Map<String, Object>> response =
+            WeaviateRerankSupport.searchGrouped(query, operator, groupBy, scores);
+        if (response == null) {
+            return plain.get();
+        }
+        lastRerankScores = scores;
+        return response;
+    }
+
+    /** {@link #runNearGrouped} for a grouped generative search. */
+    @NotNull
+    private GenerativeResponseGrouped<Map<String, Object>> runNearGroupedGenerative(
+        @NotNull WeaviateGenerateClient<Map<String, Object>> generate,
+        @NotNull QueryOperator operator,
+        @NotNull GenerativeTask task,
+        @NotNull GroupBy groupBy,
+        @NotNull WeaviateQuerySpec spec,
+        @NotNull java.util.function.Supplier<GenerativeResponseGrouped<Map<String, Object>>> plain
+    ) {
+        if (spec.getRerank() == null || !WeaviateRerankSupport.isGroupedGenerativeAvailable()) {
+            return plain.get();
+        }
+        Map<String, Float> scores = new HashMap<>();
+        GenerativeResponseGrouped<Map<String, Object>> response =
+            WeaviateRerankSupport.generateGrouped(generate, operator, task, groupBy, scores);
+        if (response == null) {
+            return plain.get();
+        }
+        lastRerankScores = scores;
+        return response;
     }
 
     /**
@@ -1189,7 +1438,14 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (spec.getRerank() == null) {
             return false;
         }
-        // Each path has its own seam, and either can resolve without the other.
+        // Each path has its own seam, and any can resolve without the others. Grouped is a
+        // separate seam again: a grouped reply carries its objects somewhere else entirely, so
+        // reading a score off one is not the same operation as reading it off a flat reply.
+        if (spec.isGrouped()) {
+            return spec.getGenerative() != null
+                ? WeaviateRerankSupport.isGroupedGenerativeAvailable()
+                : WeaviateRerankSupport.isGroupedAvailable();
+        }
         return spec.getGenerative() != null
             ? WeaviateRerankSupport.isGenerativeAvailable()
             : WeaviateRerankSupport.isAvailable();
@@ -1324,10 +1580,18 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (hasRerankScore(spec)) {
             rs.addColumn(WeaviateColumns.RERANK_SCORE, DBPDataKind.NUMERIC);
         }
-        if (spec.isWithCreated()) {
+        if (spec.isGrouped()) {
+            rs.addColumn(WeaviateColumns.GROUP, DBPDataKind.STRING);
+            if (spec.getGroupBy().isWithGroupStats()) {
+                rs.addColumn(WeaviateColumns.GROUP_COUNT, DBPDataKind.NUMERIC);
+                rs.addColumn(WeaviateColumns.GROUP_MIN_DISTANCE, DBPDataKind.NUMERIC);
+                rs.addColumn(WeaviateColumns.GROUP_MAX_DISTANCE, DBPDataKind.NUMERIC);
+            }
+        }
+        if (spec.isWithCreated() && !spec.isGrouped()) {
             rs.addColumn(WeaviateColumns.CREATED, DBPDataKind.STRING);
         }
-        if (spec.isWithUpdated()) {
+        if (spec.isWithUpdated() && !spec.isGrouped()) {
             rs.addColumn(WeaviateColumns.UPDATED, DBPDataKind.STRING);
         }
         if (spec.getGenerative() != null && spec.getGenerative().getSinglePrompt() != null) {
@@ -1431,6 +1695,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         describeTargets(spec, args);
         if (spec.getRerank() != null) {
             args.add("rerank=" + spec.getRerank());
+        }
+        if (spec.isGrouped()) {
+            args.add("groupBy=" + spec.getGroupBy());
         }
         WeaviateGenerativeTask generative = spec.getGenerative();
         if (generative != null) {
