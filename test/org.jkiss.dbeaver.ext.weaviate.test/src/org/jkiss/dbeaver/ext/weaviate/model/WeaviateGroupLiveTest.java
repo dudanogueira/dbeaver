@@ -19,6 +19,7 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 import io.weaviate.client6.v1.api.Authentication;
 import io.weaviate.client6.v1.api.WeaviateClient;
 import io.weaviate.client6.v1.api.collections.query.GroupBy;
+import io.weaviate.client6.v1.api.collections.query.Metadata;
 import io.weaviate.client6.v1.api.collections.query.QueryObjectGrouped;
 import io.weaviate.client6.v1.api.collections.query.QueryResponseGroup;
 import io.weaviate.client6.v1.api.collections.query.QueryResponseGrouped;
@@ -291,5 +292,44 @@ public class WeaviateGroupLiveTest extends DBeaverUnitTest {
         Assertions.assertTrue(WeaviateRerankSupport.isGroupedAvailable(),
             "the grouped rerank seam did not resolve; _rerankScore will be missing on grouped "
                 + "searches even though the ordering is still applied");
+    }
+
+    /**
+     * Grouping costs three of the four ranking metrics.
+     * <p>
+     * The server fills only {@code distance} inside {@code group_by_results}. Score, explainScore
+     * and certainty come back absent <em>even when the request names them</em> -- the outgoing
+     * metadata block carries {@code score: true} and the reply carries {@code scorePresent=false}.
+     * Both clients agree: the Python one models grouped metadata with a type that has no score
+     * field at all.
+     * <p>
+     * So the plugin hides those three columns while grouping rather than showing columns it can
+     * never fill. If this test starts failing, the server gained per-object scores in groups and
+     * the suppression in {@code readData} and {@code populateColumns} should come out.
+     */
+    @Test
+    public void aGroupedSearchLosesEveryMetricExceptDistance() {
+        requireFixture();
+        GroupBy groupBy = GroupBy.property("category", 10, 10);
+
+        QueryResponseGrouped<Map<String, Object>> keyword = grouped(q -> q.bm25("red",
+            b -> b.limit(50).returnMetadata(Metadata.SCORE, Metadata.EXPLAIN_SCORE), groupBy));
+        Assertions.assertFalse(keyword.objects().isEmpty(), "no rows to inspect");
+        for (QueryObjectGrouped<Map<String, Object>> obj : keyword.objects()) {
+            Assertions.assertNull(obj.metadata().score(),
+                "a grouped BM25 now returns a score; stop hiding the _score column");
+            Assertions.assertNull(obj.metadata().explainScore(),
+                "a grouped BM25 now returns an explainScore; stop hiding that column");
+        }
+
+        // Distance is the exception, and the one metric the grid keeps while grouping.
+        QueryResponseGrouped<Map<String, Object>> vector = grouped(q -> q.nearVector(PROBE,
+            b -> b.limit(50).returnMetadata(Metadata.DISTANCE, Metadata.CERTAINTY), groupBy));
+        for (QueryObjectGrouped<Map<String, Object>> obj : vector.objects()) {
+            Assertions.assertNotNull(obj.metadata().distance(),
+                "distance is the one metric a grouped search keeps");
+            Assertions.assertNull(obj.metadata().certainty(),
+                "a grouped search now returns certainty; stop hiding that column");
+        }
     }
 }

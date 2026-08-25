@@ -81,6 +81,12 @@ EXPECTATIONS = """
                                        client declares the overload and the Python one does not
                                        expose it at all; grouping needs a ranking to order the
                                        groups by, and a bare fetch has none
+  metadata inside a group           -> distance only. score, explainScore and certainty come back
+                                       absent even when the request names them -- confirmed on the
+                                       wire (request carries "score: true", reply carries
+                                       scorePresent=false). The Python client encodes the same
+                                       limitation by giving grouped objects a metadata type that
+                                       has no score field at all
 """
 
 

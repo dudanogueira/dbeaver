@@ -527,16 +527,21 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         }
         // Only the metric this mode actually produces: a plain fetch has neither, and showing
         // an always-empty _score or _distance column just crowds out the real properties.
-        if (spec.getMode().hasScore()) {
+        // Grouping costs three of the four metrics. The server fills only `distance` inside
+        // group_by_results: score, explainScore and certainty come back absent even when the
+        // request asks for them by name (verified on the wire against Weaviate 1.39). Offering
+        // them anyway would put permanently empty columns next to the real ones.
+        boolean groupedMetadata = exec.isGrouped();
+        if (spec.getMode().hasScore() && !groupedMetadata) {
             columnNames.add(WeaviateColumns.SCORE);
         }
-        if (spec.getMode().hasExplainScore() && spec.isExplainScore()) {
+        if (spec.getMode().hasExplainScore() && spec.isExplainScore() && !groupedMetadata) {
             columnNames.add(WeaviateColumns.EXPLAIN_SCORE);
         }
         if (spec.getMode().hasDistance()) {
             columnNames.add(WeaviateColumns.DISTANCE);
         }
-        if (spec.isWithCertainty() && spec.getMode().supportsCertainty()) {
+        if (spec.isWithCertainty() && spec.getMode().supportsCertainty() && !groupedMetadata) {
             columnNames.add(WeaviateColumns.CERTAINTY);
         }
         if (hasRerankScore(exec)) {
@@ -1565,16 +1570,17 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         }
         // Must mirror the columnNames list built in readData, or the row mapper writes values
         // into the wrong columns.
-        if (mode.hasScore()) {
+        boolean groupedMetadata = spec.isGrouped();
+        if (mode.hasScore() && !groupedMetadata) {
             rs.addColumn(WeaviateColumns.SCORE, DBPDataKind.NUMERIC);
         }
-        if (mode.hasExplainScore() && spec.isExplainScore()) {
+        if (mode.hasExplainScore() && spec.isExplainScore() && !groupedMetadata) {
             rs.addColumn(WeaviateColumns.EXPLAIN_SCORE, DBPDataKind.STRING);
         }
         if (mode.hasDistance()) {
             rs.addColumn(WeaviateColumns.DISTANCE, DBPDataKind.NUMERIC);
         }
-        if (spec.isWithCertainty() && mode.supportsCertainty()) {
+        if (spec.isWithCertainty() && mode.supportsCertainty() && !groupedMetadata) {
             rs.addColumn(WeaviateColumns.CERTAINTY, DBPDataKind.NUMERIC);
         }
         if (hasRerankScore(spec)) {
