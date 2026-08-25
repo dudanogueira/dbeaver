@@ -527,10 +527,15 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         }
         // Only the metric this mode actually produces: a plain fetch has neither, and showing
         // an always-empty _score or _distance column just crowds out the real properties.
-        // Grouping costs three of the four metrics. The server fills only `distance` inside
-        // group_by_results: score, explainScore and certainty come back absent even when the
-        // request asks for them by name (verified on the wire against Weaviate 1.39). Offering
-        // them anyway would put permanently empty columns next to the real ones.
+        // Grouping costs three of the four metrics. An object inside a group carries only
+        // `distance`, `id` and `vector` -- that is the server's whole group-hits type, and it is
+        // visible directly in the GraphQL schema: DBeaverGroupFixtureAdditionalGroupHitsAdditional
+        // has three fields where the ungrouped _additional has thirteen. So score, explainScore
+        // and certainty are unavailable through any API, not merely unrequested; asking for them
+        // by name over gRPC returns scorePresent=false. Offering the columns anyway would put
+        // permanently empty ones next to the real ones.
+        //
+        // (The same schema is why a grouped object has no timestamps, handled further down.)
         boolean groupedMetadata = exec.isGrouped();
         if (spec.getMode().hasScore() && !groupedMetadata) {
             columnNames.add(WeaviateColumns.SCORE);

@@ -297,11 +297,13 @@ public class WeaviateGroupLiveTest extends DBeaverUnitTest {
     /**
      * Grouping costs three of the four ranking metrics.
      * <p>
-     * The server fills only {@code distance} inside {@code group_by_results}. Score, explainScore
-     * and certainty come back absent <em>even when the request names them</em> -- the outgoing
-     * metadata block carries {@code score: true} and the reply carries {@code scorePresent=false}.
-     * Both clients agree: the Python one models grouped metadata with a type that has no score
-     * field at all.
+     * An object inside a group carries only {@code distance}, {@code id} and {@code vector}. That
+     * is the server's entire group-hits type, not a gRPC quirk -- GraphQL introspection shows
+     * {@code ...AdditionalGroupHitsAdditional} with those three fields where the ungrouped
+     * {@code ...Additional} has thirteen, and asking for {@code score} there is a schema error.
+     * Over gRPC the same request carries {@code score: true} and the reply comes back
+     * {@code scorePresent=false}. The Python client encodes the limitation structurally: grouped
+     * objects get a metadata type with no score field at all.
      * <p>
      * So the plugin hides those three columns while grouping rather than showing columns it can
      * never fill. If this test starts failing, the server gained per-object scores in groups and
@@ -330,6 +332,19 @@ public class WeaviateGroupLiveTest extends DBeaverUnitTest {
                 "distance is the one metric a grouped search keeps");
             Assertions.assertNull(obj.metadata().certainty(),
                 "a grouped search now returns certainty; stop hiding that column");
+        }
+    }
+
+    /** Vectors are one of the three things a grouped object does keep, so the column stays. */
+    @Test
+    public void vectorsSurviveGrouping() {
+        requireFixture();
+        GroupBy groupBy = GroupBy.property("category", 10, 10);
+        QueryResponseGrouped<Map<String, Object>> response = grouped(q -> q.nearVector(PROBE,
+            b -> b.limit(50).includeVector(), groupBy));
+
+        for (QueryObjectGrouped<Map<String, Object>> obj : response.objects()) {
+            Assertions.assertNotNull(obj.vectors(), "grouped objects lost their vectors");
         }
     }
 }
