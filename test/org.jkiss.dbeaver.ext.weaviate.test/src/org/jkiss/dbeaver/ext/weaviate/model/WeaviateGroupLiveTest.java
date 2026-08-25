@@ -347,4 +347,44 @@ public class WeaviateGroupLiveTest extends DBeaverUnitTest {
             Assertions.assertNotNull(obj.vectors(), "grouped objects lost their vectors");
         }
     }
+
+    /**
+     * Distance is present on every grouped reply, but only means anything on a vector search.
+     * <p>
+     * A grouped BM25 gets {@code distancePresent=true} with a flat {@code 0.0}, and a grouped
+     * hybrid gets {@code 0.0} for the rows its keyword half found and a real distance for the rows
+     * its vector half found. A zero there reads as a perfect match when it actually means "never
+     * vector-scored", so the plugin keeps {@code _distance} to the Near modes -- which is where
+     * {@code WeaviateQueryMode.hasDistance()} already had it.
+     * <p>
+     * The consequence is worth stating plainly: a grouped BM25 or hybrid carries no usable ranking
+     * metric at all, since the score is gone too. Only the row order survives.
+     */
+    @Test
+    public void distanceIsOnlyMeaningfulOnAGroupedVectorSearch() {
+        requireFixture();
+        GroupBy groupBy = GroupBy.property("category", 10, 10);
+
+        QueryResponseGrouped<Map<String, Object>> keyword = grouped(q -> q.bm25("red",
+            b -> b.limit(50).returnMetadata(Metadata.DISTANCE), groupBy));
+        for (QueryObjectGrouped<Map<String, Object>> obj : keyword.objects()) {
+            Float d = obj.metadata().distance();
+            Assertions.assertTrue(d == null || d == 0.0f,
+                () -> "a grouped BM25 reported a real distance (" + d + "); if the server started "
+                    + "computing one, WeaviateQueryMode.hasDistance() could include BM25");
+        }
+
+        QueryResponseGrouped<Map<String, Object>> vector = grouped(q -> q.nearVector(PROBE,
+            b -> b.limit(50).returnMetadata(Metadata.DISTANCE), groupBy));
+        boolean anyRealDistance = vector.objects().stream()
+            .map(o -> o.metadata().distance())
+            .anyMatch(d -> d != null && d > 0.0f);
+        Assertions.assertTrue(anyRealDistance,
+            "a grouped near-vector search should still report real distances");
+
+        // The three Near modes are exactly the ones that offer the column.
+        Assertions.assertFalse(WeaviateQueryMode.BM25.hasDistance());
+        Assertions.assertFalse(WeaviateQueryMode.HYBRID.hasDistance());
+        Assertions.assertTrue(WeaviateQueryMode.NEAR_VECTOR.hasDistance());
+    }
 }
