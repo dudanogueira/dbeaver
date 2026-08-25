@@ -174,12 +174,15 @@ public class WeaviateDataSource extends AbstractDataSource
 
     @Override
     public void checkContextAlive(@NotNull DBRProgressMonitor monitor) throws DBException {
-        try {
-            if (client != null && !client.isReady()) {
-                throw new DBException("Weaviate server is not ready");
-            }
-        } catch (IOException e) {
-            throw new DBException("Weaviate connectivity check failed", e);
+        if (client == null) {
+            return;
+        }
+        // Liveness first, so the message can say which of the two failed. Asking only about
+        // readiness reports a server that is down and a server that is still starting with the
+        // same words, and those want opposite responses -- fix the address, versus wait.
+        WeaviateHealth health = WeaviateHealth.probe(client);
+        if (!health.isHealthy()) {
+            throw new DBException("Weaviate server check failed: " + health.getSummary());
         }
     }
 
@@ -656,7 +659,48 @@ public class WeaviateDataSource extends AbstractDataSource
                 }
             }
         }
-        return metadataFields;
+        // Health goes on top, and is probed on every call rather than joining the cache above.
+        // meta() is cached because a version and a module list do not change; liveness does, and a
+        // remembered "ready: true" is not stale so much as untrue. Both probes are auth-free and
+        // answer in about 2ms, so re-asking costs nothing worth saving.
+        List<WeaviateMetadataField> withHealth = new ArrayList<>(metadataFields.size() + 2);
+        withHealth.addAll(healthFields());
+        withHealth.addAll(metadataFields);
+        return withHealth;
+    }
+
+    /**
+     * The live/ready rows shown at the top of the Server Metadata folder.
+     * <p>
+     * Empty when there is no client to ask -- the folder is only reachable on a live connection,
+     * but a disconnect racing a refresh should show nothing rather than claim the server is down.
+     */
+    @NotNull
+    private List<WeaviateMetadataField> healthFields() {
+        WeaviateClient current = client;
+        if (current == null) {
+            return Collections.emptyList();
+        }
+        WeaviateHealth health = WeaviateHealth.probe(current);
+        List<WeaviateMetadataField> fields = new ArrayList<>(2);
+        fields.add(new WeaviateMetadataField(this, "live", String.valueOf(health.isLive())));
+        fields.add(new WeaviateMetadataField(this, "ready", String.valueOf(health.isReady())));
+        return fields;
+    }
+
+    /**
+     * A point-in-time health probe, for the Server Status action.
+     *
+     * @throws DBException when the connection is not open; a server that is merely down is a
+     *                     result, not an error
+     */
+    @NotNull
+    public WeaviateHealth probeHealth(@NotNull DBRProgressMonitor monitor) throws DBException {
+        WeaviateClient current = client;
+        if (current == null) {
+            throw new DBException("Not connected to Weaviate");
+        }
+        return WeaviateHealth.probe(current);
     }
 
     @Association
