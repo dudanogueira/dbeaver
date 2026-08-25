@@ -53,6 +53,7 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateColumns;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterOperator;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterRow;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateGroupBySpec;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterTranslator;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateHybridFusion;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty;
@@ -166,6 +167,13 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Button filterAndRadio;
     private Button filterOrRadio;
     private final java.util.List<FilterRowUi> filterRowUis = new java.util.ArrayList<>();
+    private Composite groupByGroup;
+    private Combo groupPropertyCombo;
+    private Spinner groupMaxGroupsSpinner;
+    private Spinner groupObjectsPerGroupSpinner;
+    private Button groupStatsCheck;
+    /** Controls revealed only once a property is picked; see {@link #syncGroupByVisibility()}. */
+    private final java.util.List<Control> groupWhenGrouping = new java.util.ArrayList<>();
 
     public WeaviateQueryPanel() {
     }
@@ -299,6 +307,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
 
         createFilterSection(content);
+        createGroupBySection(content);
 
         // Must run here as well as in activatePanel(): the row starts hidden, and on first
         // display of the panel activatePanel() has not necessarily fired yet, so without this
@@ -1630,6 +1639,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             carryQueryText(displayedMode, mode);
         }
         displayedMode = mode;
+        // Group-by is a shared section, so a mode change has to re-evaluate it here; the
+        // per-mode sections are swapped wholesale below instead.
+        syncGroupByVisibility();
 
         Composite top;
         switch (mode) {
@@ -1735,6 +1747,167 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         rl.verticalSpacing = 3;
         filterRowsHolder.setLayout(rl);
         filterRowsHolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+    }
+
+    /**
+     * The group-by section: bucket the matches by one property.
+     * <p>
+     * Shared across modes rather than built per mode, the way Filters is. The client has a
+     * grouped overload for all six operators, so grouping is not a property of a particular
+     * search -- it is something done to whatever search is selected.
+     */
+    private void createGroupBySection(Composite parent) {
+        groupByGroup = createSection(parent, WeaviateUIMessages.query_group_by, "groupBy", 2, false);
+        groupByGroup.setToolTipText(WeaviateUIMessages.query_group_by_tip);
+
+        new Label(groupByGroup, SWT.NONE).setText(WeaviateUIMessages.query_group_property);
+        groupPropertyCombo = new Combo(groupByGroup, SWT.DROP_DOWN | SWT.READ_ONLY);
+        groupPropertyCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        groupPropertyCombo.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                syncGroupByVisibility();
+                updateGroupByCount();
+            }
+        });
+
+        // The three controls below say nothing until there is something to group, so they stay
+        // hidden until a property is picked -- the same choice the generative section makes for
+        // the same reason. Their values survive being hidden.
+        Label groupsLabel = new Label(groupByGroup, SWT.NONE);
+        groupsLabel.setText(WeaviateUIMessages.query_group_max_groups);
+        groupMaxGroupsSpinner = new Spinner(groupByGroup, SWT.BORDER);
+        groupMaxGroupsSpinner.setMinimum(1);
+        groupMaxGroupsSpinner.setMaximum(1000);
+        groupMaxGroupsSpinner.setSelection(WeaviateGroupBySpec.DEFAULT_MAX_GROUPS);
+        groupMaxGroupsSpinner.setToolTipText(WeaviateUIMessages.query_group_max_groups_tip);
+
+        Label perGroupLabel = new Label(groupByGroup, SWT.NONE);
+        perGroupLabel.setText(WeaviateUIMessages.query_group_objects_per_group);
+        groupObjectsPerGroupSpinner = new Spinner(groupByGroup, SWT.BORDER);
+        groupObjectsPerGroupSpinner.setMinimum(1);
+        groupObjectsPerGroupSpinner.setMaximum(1000);
+        groupObjectsPerGroupSpinner.setSelection(WeaviateGroupBySpec.DEFAULT_MAX_OBJECTS_PER_GROUP);
+        groupObjectsPerGroupSpinner.setToolTipText(
+            WeaviateUIMessages.query_group_objects_per_group_tip);
+
+        Label statsFiller = new Label(groupByGroup, SWT.NONE);
+        groupStatsCheck = new Button(groupByGroup, SWT.CHECK);
+        groupStatsCheck.setText(WeaviateUIMessages.query_group_stats);
+        groupStatsCheck.setToolTipText(WeaviateUIMessages.query_group_stats_tip);
+
+        groupWhenGrouping.clear();
+        groupWhenGrouping.add(groupsLabel);
+        groupWhenGrouping.add(groupMaxGroupsSpinner);
+        groupWhenGrouping.add(perGroupLabel);
+        groupWhenGrouping.add(groupObjectsPerGroupSpinner);
+        groupWhenGrouping.add(statsFiller);
+        groupWhenGrouping.add(groupStatsCheck);
+
+        refreshGroupProperties();
+        syncGroupByVisibility();
+    }
+
+    /**
+     * Refill the property dropdown from the collection, keeping the current choice if it is still
+     * a property. Index 0 is "no grouping", which is what makes the combo the section's on/off
+     * switch rather than needing a separate checkbox.
+     */
+    private void refreshGroupProperties() {
+        if (groupPropertyCombo == null || groupPropertyCombo.isDisposed()) {
+            return;
+        }
+        String previous = selectedGroupProperty();
+        groupPropertyCombo.removeAll();
+        groupPropertyCombo.add(WeaviateUIMessages.query_group_none);
+        for (String name : currentPropertyNames()) {
+            groupPropertyCombo.add(name);
+        }
+        int index = previous == null ? 0 : groupPropertyCombo.indexOf(previous);
+        groupPropertyCombo.select(Math.max(index, 0));
+    }
+
+    @Nullable
+    private String selectedGroupProperty() {
+        if (groupPropertyCombo == null || groupPropertyCombo.isDisposed()) {
+            return null;
+        }
+        int index = groupPropertyCombo.getSelectionIndex();
+        return index <= 0 ? null : groupPropertyCombo.getItem(index);
+    }
+
+    /**
+     * Show the section only where grouping applies, and its options only once a property is
+     * picked.
+     * <p>
+     * The whole section disappears under a plain fetch. That is not tidiness: the server refuses
+     * a grouped fetch, so offering the control there would let the user compose a query that
+     * cannot run. The choice itself survives -- switching back to a ranked mode brings it back
+     * as it was.
+     */
+    private void syncGroupByVisibility() {
+        boolean applies = currentMode().supportsGroupBy();
+        if (groupByGroup != null && !groupByGroup.isDisposed()) {
+            Composite section = groupByGroup.getParent();
+            section.setVisible(applies);
+            Object data = section.getLayoutData();
+            if (data instanceof GridData gd) {
+                gd.exclude = !applies;
+            }
+        }
+        setRowsVisible(groupWhenGrouping, applies && selectedGroupProperty() != null);
+        if (groupByGroup != null && !groupByGroup.isDisposed()) {
+            groupByGroup.layout(true, true);
+        }
+        reflow();
+    }
+
+    private void updateGroupByCount() {
+        // 1 or 0 rather than a row count: there is only ever one grouping. The number in the
+        // title is really an "on" light, and setSectionCount already drops a zero.
+        setSectionCount(groupByGroup, WeaviateUIMessages.query_group_by,
+            selectedGroupProperty() == null ? 0 : 1);
+    }
+
+    @Nullable
+    private WeaviateGroupBySpec currentGroupBy() {
+        String property = selectedGroupProperty();
+        if (property == null) {
+            return null;
+        }
+        // Kept in the spec even under a mode that cannot group, so switching back to a ranked
+        // mode restores it. The spec's own isGrouped() decides whether it is sent.
+        return new WeaviateGroupBySpec(
+            property,
+            groupMaxGroupsSpinner == null || groupMaxGroupsSpinner.isDisposed()
+                ? WeaviateGroupBySpec.DEFAULT_MAX_GROUPS
+                : groupMaxGroupsSpinner.getSelection(),
+            groupObjectsPerGroupSpinner == null || groupObjectsPerGroupSpinner.isDisposed()
+                ? WeaviateGroupBySpec.DEFAULT_MAX_OBJECTS_PER_GROUP
+                : groupObjectsPerGroupSpinner.getSelection(),
+            groupStatsCheck != null && !groupStatsCheck.isDisposed()
+                && groupStatsCheck.getSelection());
+    }
+
+    private void loadGroupByIntoUi(@NotNull WeaviateQuerySpec spec) {
+        if (groupPropertyCombo == null || groupPropertyCombo.isDisposed()) {
+            return;
+        }
+        refreshGroupProperties();
+        WeaviateGroupBySpec groupBy = spec.getGroupBy();
+        if (groupBy == null) {
+            groupPropertyCombo.select(0);
+        } else {
+            int index = groupPropertyCombo.indexOf(groupBy.getProperty());
+            // A property the collection no longer declares falls back to no grouping rather than
+            // to whatever sits at that index.
+            groupPropertyCombo.select(Math.max(index, 0));
+            groupMaxGroupsSpinner.setSelection(groupBy.getMaxGroups());
+            groupObjectsPerGroupSpinner.setSelection(groupBy.getMaxObjectsPerGroup());
+            groupStatsCheck.setSelection(groupBy.isWithGroupStats());
+        }
+        syncGroupByVisibility();
+        updateGroupByCount();
     }
 
     private void addFilterRow(@Nullable WeaviateFilterRow seed) {
@@ -1941,6 +2114,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         loadTargetsIntoUi(spec);
         loadRerankIntoUi(spec);
         loadGenerativeIntoUi(spec);
+        loadGroupByIntoUi(spec);
 
 
         // Filter rows
@@ -2119,6 +2293,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             .withCreated(currentCheck(createdChecks))
             .withUpdated(currentCheck(updatedChecks))
             .withCertainty(currentCheck(certaintyChecks))
+            .groupBy(currentGroupBy())
             .targets(targets)
             // Only sent when there is more than one target to join; with one there is nothing
             // to join and the model leaves the strategy off the request entirely.

@@ -59,6 +59,16 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_match_all;
     public static String query_match_any;
     public static String query_filters;
+    public static String query_group_by;
+    public static String query_group_by_tip;
+    public static String query_group_property;
+    public static String query_group_none;
+    public static String query_group_max_groups;
+    public static String query_group_max_groups_tip;
+    public static String query_group_objects_per_group;
+    public static String query_group_objects_per_group_tip;
+    public static String query_group_stats;
+    public static String query_group_stats_tip;
     public static String query_include_vector;
     public static String query_include_vector_tip;
     public static String query_reset;
