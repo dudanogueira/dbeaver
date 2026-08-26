@@ -70,6 +70,21 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_group_stats;
     public static String query_group_stats_tip;
     public static String query_group_unavailable;
+
+    // Tokenize preview
+    public static String tokenize_dialog_title;
+    public static String tokenize_dialog_prompt;
+    public static String tokenize_dialog_property;
+    public static String tokenize_dialog_input_hint;
+    public static String tokenize_dialog_indexed;
+    public static String tokenize_dialog_query;
+    public static String tokenize_dialog_run;
+    public static String tokenize_dialog_same;
+    public static String tokenize_dialog_differ;
+    public static String tokenize_dialog_empty;
+    public static String tokenize_dialog_no_text;
+    public static String tokenize_error_title;
+    public static String tokenize_requires_version;
     public static String query_include_vector;
     public static String query_include_vector_tip;
     public static String query_reset;
