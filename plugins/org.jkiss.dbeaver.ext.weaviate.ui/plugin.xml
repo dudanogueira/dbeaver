@@ -72,6 +72,9 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.readDocs">
                 <visibleWhen checkEnabled="true"/>
             </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.openModuleDocs">
+                <visibleWhen checkEnabled="true"/>
+            </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant">
                 <visibleWhen checkEnabled="true"/>
             </command>
@@ -137,6 +140,30 @@
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.readDocs"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateReadDocsHandler"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commands">
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.openModuleDocs"
+                name="Read Docs"
+                description="Open the documentation this module reports for itself"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commandImages">
+        <!-- The same driver icon the folder-level Read Docs uses, so the two read as one action
+             even though one opens Weaviate's docs and the other usually opens a vendor's. -->
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.openModuleDocs"
+               icon="platform:/plugin/org.jkiss.dbeaver.ext.weaviate/icons/weaviate.png"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <!-- No <enabledWhen>: the condition is whether this module reported a documentationHref,
+             which no built-in property tester exposes, and a tester from this lazily-activated
+             bundle evaluates as NOT_LOADED before the bundle starts. setEnabled() computes it. -->
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.openModuleDocs"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateOpenModuleDocsHandler"/>
     </extension>
 
     <extension point="org.eclipse.ui.commands">
