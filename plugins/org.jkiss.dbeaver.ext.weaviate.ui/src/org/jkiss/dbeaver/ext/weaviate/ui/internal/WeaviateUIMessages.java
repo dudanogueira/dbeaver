@@ -187,6 +187,13 @@ public final class WeaviateUIMessages extends NLS {
     public static String tenant_activate_now_tip;
     public static String tenant_auto_creation_menu;
     public static String tenant_auto_activation_menu;
+    public static String tenant_state_activate;
+    public static String tenant_state_deactivate;
+    public static String tenant_state_many;
+    public static String tenant_auto_creation_enable;
+    public static String tenant_auto_creation_disable;
+    public static String tenant_auto_activation_enable;
+    public static String tenant_auto_activation_disable;
 
     // Hybrid alpha slider
     public static String query_alpha_keyword_end;

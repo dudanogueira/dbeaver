@@ -841,6 +841,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             return;
         }
         dismissBanner();
+        WeaviateNavigatorRefresh.afterTenantChange(collection);
         refreshTenants();
         runQuery();
     }

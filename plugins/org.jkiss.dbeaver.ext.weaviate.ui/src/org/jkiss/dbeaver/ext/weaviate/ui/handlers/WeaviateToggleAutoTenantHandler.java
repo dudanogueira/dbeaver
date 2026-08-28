@@ -18,9 +18,7 @@ package org.jkiss.dbeaver.ext.weaviate.ui.handlers;
 
 import org.eclipse.core.commands.AbstractHandler;
 import org.eclipse.core.commands.ExecutionEvent;
-import org.eclipse.core.expressions.IEvaluationContext;
 import org.eclipse.jface.viewers.ISelection;
-import org.eclipse.ui.ISources;
 import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.commands.IElementUpdater;
 import org.eclipse.ui.handlers.HandlerUtil;
@@ -33,9 +31,10 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateServerFeature;
 import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
-import org.jkiss.dbeaver.model.navigator.DBNDatabaseFolder;
 import org.jkiss.dbeaver.model.navigator.DBNNode;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
+import org.jkiss.dbeaver.ui.DBeaverIcons;
+import org.jkiss.dbeaver.ui.UIIcon;
 import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
 import org.jkiss.dbeaver.ui.navigator.actions.NavigatorHandlerRefresh;
@@ -48,9 +47,10 @@ import java.util.Map;
  * Turns automatic tenant creation or activation on and off from the Multi-Tenancy folder, where
  * the current values are already on display.
  * <p>
- * Checkable menu items rather than a dialog: each is one boolean, the folder beneath already
- * lists what they are, and a dialog to tick one box is a dialog too many. The tick shows the
- * current value, so opening the menu is also how the settings are read.
+ * Menu entries rather than a dialog: each is one boolean, and a dialog to change one is a dialog
+ * too many. Each names the change it will make -- "Enable Automatic Tenant Creation" or
+ * "Disable ..." -- so the current value is legible from the entry itself without a tick to
+ * interpret, and reads the same way as Activate/Deactivate Tenant beside it.
  * <p>
  * One command with an {@code option} parameter rather than two commands. The two settings differ
  * only in which field they write; everything around that -- resolving the collection, gating on
@@ -65,44 +65,27 @@ public class WeaviateToggleAutoTenantHandler extends AbstractHandler implements 
     public static final String PARAM_OPTION = "option";
     public static final String OPTION_CREATION = "creation";
 
-    /** The folder these commands belong to. */
-    private static final String MULTI_TENANCY_FOLDER = "multiTenancy";
-
     /**
-     * The collection whose Multi-Tenancy folder is selected, or null for anything else.
+     * The collection these settings belong to: the same reach as Manage Tenants, so the two
+     * actions are never offered in different places.
      * <p>
-     * Deliberately narrower than Manage Tenants, which answers from four different nodes. These
-     * two settings are what the Multi-Tenancy folder is <em>for</em>, and putting them on the
-     * collection as well would add two more entries to a menu that already carries several.
+     * A server without these settings reports neither, and an entry that cannot mean anything is
+     * worse than no entry at all -- so an old server removes them rather than greying them.
      */
     @Nullable
     private static WeaviateCollection collectionOf(@Nullable DBNNode node) {
-        if (!(node instanceof DBNDatabaseFolder folder)
-            || !MULTI_TENANCY_FOLDER.equals(folder.getNodeId())
-            || !(folder.getParentObject() instanceof WeaviateCollection collection)
-            || !collection.isMultiTenant()
-        ) {
+        WeaviateCollection collection = WeaviateTenancyNodes.multiTenantCollection(node);
+        if (collection == null) {
             return null;
         }
-        // A server without these settings reports neither, and a tick that cannot mean anything
-        // is worse than no entry at all.
         return collection.getDataSource() instanceof WeaviateDataSource ds
             && ds.supports(WeaviateServerFeature.AUTO_TENANT_CREATION)
             ? collection : null;
     }
 
-    @Nullable
-    private static DBNNode selectionFrom(Object evaluationContext) {
-        if (!(evaluationContext instanceof IEvaluationContext context)) {
-            return null;
-        }
-        Object selection = context.getVariable(ISources.ACTIVE_CURRENT_SELECTION_NAME);
-        return selection instanceof ISelection sel ? NavigatorUtils.getSelectedNode(sel) : null;
-    }
-
     @Override
     public void setEnabled(Object evaluationContext) {
-        setBaseEnabled(collectionOf(selectionFrom(evaluationContext)) != null);
+        setBaseEnabled(collectionOf(WeaviateTenancyNodes.selectedNode(evaluationContext)) != null);
     }
 
     private static boolean current(@NotNull WeaviateCollection collection, boolean creation) {
@@ -167,9 +150,19 @@ public class WeaviateToggleAutoTenantHandler extends AbstractHandler implements 
             return;
         }
         boolean creation = OPTION_CREATION.equals(parameters.get(PARAM_OPTION));
-        element.setText(creation
-            ? WeaviateUIMessages.tenant_auto_creation_menu
-            : WeaviateUIMessages.tenant_auto_activation_menu);
-        element.setChecked(current(collection, creation));
+        boolean on = current(collection, creation);
+        if (creation) {
+            element.setText(on
+                ? WeaviateUIMessages.tenant_auto_creation_disable
+                : WeaviateUIMessages.tenant_auto_creation_enable);
+        } else {
+            element.setText(on
+                ? WeaviateUIMessages.tenant_auto_activation_disable
+                : WeaviateUIMessages.tenant_auto_activation_enable);
+        }
+        // Same green/dark reading as Activate/Deactivate Tenant: the bullet shows the state the
+        // setting will be in once the entry is pressed.
+        element.setIcon(DBeaverIcons.getImageDescriptor(
+            on ? UIIcon.BULLET_BLACK : UIIcon.BULLET_GREEN));
     }
 }

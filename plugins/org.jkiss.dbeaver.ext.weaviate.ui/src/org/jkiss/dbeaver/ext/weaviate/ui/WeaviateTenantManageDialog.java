@@ -281,6 +281,7 @@ public class WeaviateTenantManageDialog extends BaseDialog {
         // Show what the server holds, not what was asked for.
         autoCreation.setSelection(Boolean.TRUE.equals(collection.getAutoTenantCreation()));
         autoActivation.setSelection(Boolean.TRUE.equals(collection.getAutoTenantActivation()));
+        WeaviateNavigatorRefresh.afterTenantChange(collection);
     }
 
     /**
@@ -459,6 +460,9 @@ public class WeaviateTenantManageDialog extends BaseDialog {
         }
 
         applyFilter();
+        // The tree holds its own tenant nodes and keeps drawing them until told otherwise, so
+        // without this the navigator goes on showing the state that was just changed.
+        WeaviateNavigatorRefresh.afterTenantChange(collection);
         countLabel.setText(MessageFormat.format(
             target == WeaviateTenantStatus.ACTIVE
                 ? WeaviateUIMessages.tenant_manage_activated

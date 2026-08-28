@@ -78,16 +78,19 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageTenants">
                 <visibleWhen checkEnabled="true"/>
             </command>
-            <!-- style="toggle" so the tick reports the current setting; the handler draws it
-                 from the collection in updateElement. Both entries are the same command told
-                 apart by its option parameter. -->
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleTenantState">
+                <visibleWhen checkEnabled="true"/>
+            </command>
+            <!-- Both entries are the same command told apart by its option parameter. Their
+                 labels and icons are set per selection in the handler's updateElement, so each
+                 names the change it will make rather than carrying a tick to interpret. -->
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenant"
-                     id="weaviate.autoTenantCreation" style="toggle">
+                     id="weaviate.autoTenantCreation">
                 <parameter name="option" value="creation"/>
                 <visibleWhen checkEnabled="true"/>
             </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenant"
-                     id="weaviate.autoTenantActivation" style="toggle">
+                     id="weaviate.autoTenantActivation">
                 <parameter name="option" value="activation"/>
                 <visibleWhen checkEnabled="true"/>
             </command>
@@ -183,6 +186,24 @@
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageTenants"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateManageTenantsHandler"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commands">
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.toggleTenantState"
+                name="Activate Tenant"
+                description="Activate or deactivate the selected tenants"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <!-- No <enabledWhen>: enablement depends on the selected tenants' states, which no
+             built-in property tester exposes. setEnabled() computes it, as the other tenancy
+             handlers do. The label and icon are set per selection in updateElement, so the
+             command name above is never displayed. -->
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleTenantState"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateToggleTenantStateHandler"/>
     </extension>
 
     <extension point="org.eclipse.ui.commands">
