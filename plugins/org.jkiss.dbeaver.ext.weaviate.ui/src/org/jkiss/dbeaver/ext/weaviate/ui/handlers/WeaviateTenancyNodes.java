@@ -63,6 +63,22 @@ final class WeaviateTenancyNodes {
     }
 
     /**
+     * Same as {@link #multiTenantCollection}, but refuses a tenant node.
+     * <p>
+     * For settings that belong to the collection rather than to one tenant. Offered on a tenant,
+     * "Enable Automatic Creation" reads as though it were about that tenant, which is not what it
+     * does -- and the tenant already has its own Activate/Deactivate entry to be confused with.
+     */
+    @Nullable
+    static WeaviateCollection collectionScoped(@Nullable DBNNode node) {
+        if (node instanceof DBNDatabaseNode databaseNode
+            && databaseNode.getObject() instanceof WeaviateTenantNode) {
+            return null;
+        }
+        return multiTenantCollection(node);
+    }
+
+    /**
      * Climbs to the collection that owns this node.
      * <p>
      * The climb is not decoration. Tenants sits inside Multi-Tenancy, so a tenancy folder's parent

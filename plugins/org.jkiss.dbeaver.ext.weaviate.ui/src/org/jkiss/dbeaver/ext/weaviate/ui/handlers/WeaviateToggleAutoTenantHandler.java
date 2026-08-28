@@ -66,15 +66,16 @@ public class WeaviateToggleAutoTenantHandler extends AbstractHandler implements 
     public static final String OPTION_CREATION = "creation";
 
     /**
-     * The collection these settings belong to: the same reach as Manage Tenants, so the two
-     * actions are never offered in different places.
+     * The collection these settings belong to: its own node, or one of its tenancy folders. Not
+     * a tenant -- these are collection-wide, and an entry sitting under a tenant reads as though
+     * it were about that tenant.
      * <p>
      * A server without these settings reports neither, and an entry that cannot mean anything is
      * worse than no entry at all -- so an old server removes them rather than greying them.
      */
     @Nullable
     private static WeaviateCollection collectionOf(@Nullable DBNNode node) {
-        WeaviateCollection collection = WeaviateTenancyNodes.multiTenantCollection(node);
+        WeaviateCollection collection = WeaviateTenancyNodes.collectionScoped(node);
         if (collection == null) {
             return null;
         }
