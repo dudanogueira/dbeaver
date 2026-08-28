@@ -32,10 +32,16 @@ import java.util.List;
 public interface WeaviateTenantPrompt {
 
     /**
-     * @return the chosen tenant, or null if the user dismissed the prompt
+     * Carries whole tenants rather than names, so the picker can show which of them are switched
+     * off. Choosing an inactive tenant is not an error the user can be warned about afterwards --
+     * the read simply fails with the server's own "tenant not active" -- so it has to be visible
+     * at the moment of choosing.
+     *
+     * @return the chosen tenant's name, or null if the user dismissed the prompt
      */
     @Nullable
-    String selectTenant(@NotNull String collectionName, @NotNull List<String> tenants, @Nullable String current);
+    String selectTenant(
+        @NotNull String collectionName, @NotNull List<WeaviateTenant> tenants, @Nullable String current);
 
     /**
      * Registered by the UI bundle. Volatile because the read path runs off the UI thread.

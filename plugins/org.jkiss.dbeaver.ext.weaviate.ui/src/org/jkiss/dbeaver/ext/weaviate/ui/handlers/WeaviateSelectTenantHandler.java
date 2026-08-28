@@ -25,6 +25,7 @@ import org.eclipse.ui.handlers.HandlerUtil;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateTenantSelectDialog;
 import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
@@ -68,11 +69,11 @@ public class WeaviateSelectTenantHandler extends AbstractHandler {
 
         // Listing can be slow on a collection with many tenants, so it runs with a progress
         // dialog rather than freezing the workbench.
-        List<String>[] holder = new List[1];
+        List<WeaviateTenant>[] holder = new List[1];
         try {
             UIUtils.runInProgressService(monitor -> {
                 try {
-                    holder[0] = collection.listTenantNames(monitor);
+                    holder[0] = collection.listTenants(monitor);
                 } catch (DBException e) {
                     throw new InvocationTargetException(e);
                 }
@@ -88,7 +89,7 @@ public class WeaviateSelectTenantHandler extends AbstractHandler {
             return null;
         }
 
-        List<String> tenants = holder[0];
+        List<WeaviateTenant> tenants = holder[0];
         if (tenants == null || tenants.isEmpty()) {
             DBWorkbench.getPlatformUI().showMessageBox(
                 WeaviateUIMessages.tenant_dialog_title_plain,

@@ -128,6 +128,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
     private WeaviateUuidConstraint uuidConstraint;
 
     private volatile String lastQueryError;
+    /** Navigator nodes for the Tenants folder; dropped whenever a tenant's state changes. */
+    private volatile List<WeaviateTenantNode> tenantNodes;
     /**
      * The last grouped-task generative output, or null. One text for the whole result set, so
      * it has no row to live on -- the Query panel shows it in the Generative section, polling
@@ -694,8 +696,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
             // destroys the very controls needed to correct it and retry. The failure is still
             // loud rather than swallowed: a red banner in the panel, a workbench warning
             // notification, "ERROR" in the query text, and a logged warning.
-            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            lastQueryError = "Query failed: " + msg;
+            String msg = describeFailure(e, spec.getTenant());
+            lastQueryError = msg;
             queryLog.warn("Weaviate query failed for collection " + getName() + ": " + msg, e);
             statistics.setQueryText(queryText + " — ERROR: " + msg);
             return statistics;
@@ -778,8 +780,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 // Same reasoning as readData: report, do not throw. Falling through also
                 // delivers the rows that did arrive before the cursor failed, instead of
                 // discarding a partial page the user could still use.
-                String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                lastQueryError = "Query failed: " + msg;
+                String msg = describeFailure(e, spec.getTenant());
+                lastQueryError = msg;
                 queryLog.warn("Weaviate cursor read failed for collection " + getName() + ": " + msg, e);
                 statistics.setQueryText(queryText + " — ERROR: " + msg);
             }
@@ -1843,19 +1845,6 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
     }
 
     /**
-     * Tenants defined for this collection, ordered by name. Empty for a single-tenant collection.
-     */
-    @NotNull
-    public List<String> listTenantNames(@NotNull DBRProgressMonitor monitor) throws DBException {
-        List<WeaviateTenant> tenants = listTenants(monitor);
-        List<String> names = new ArrayList<>(tenants.size());
-        for (WeaviateTenant tenant : tenants) {
-            names.add(tenant.name());
-        }
-        return names;
-    }
-
-    /**
      * Tenants defined for this collection with their states, ordered by name.
      * <p>
      * One request, no paging, even for a collection with thousands of tenants: the server answers
@@ -1885,6 +1874,39 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
             throw new DBException(
                 "Cannot list tenants of " + getName() + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Tenants as navigator nodes, for the Tenants folder under a multi-tenant collection.
+     * <p>
+     * Cached, because the navigator asks repeatedly while painting labels, and dropped whenever
+     * a state changes so the tree cannot go on showing a tenant as active after it was switched
+     * off. A collection with thousands of tenants makes this folder large, which is the same
+     * bargain the platform already makes for a schema with thousands of tables: it is lazy, so
+     * nothing is read until someone expands it.
+     */
+    @Association
+    public List<WeaviateTenantNode> getTenantNodes(@NotNull DBRProgressMonitor monitor) throws DBException {
+        if (!isMultiTenant()) {
+            return List.of();
+        }
+        if (tenantNodes == null) {
+            List<WeaviateTenant> tenants = listTenants(monitor);
+            List<WeaviateTenantNode> nodes = new ArrayList<>(tenants.size());
+            for (WeaviateTenant tenant : tenants) {
+                nodes.add(new WeaviateTenantNode(this, tenant));
+            }
+            tenantNodes = nodes;
+        }
+        return tenantNodes;
+    }
+
+    /**
+     * Forgets the cached tenant nodes. Called after any change of state, and available to the UI
+     * so a navigator refresh shows what the server now holds.
+     */
+    public void resetTenantCache() {
+        tenantNodes = null;
     }
 
     /**
@@ -1954,8 +1976,50 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         } catch (Exception e) {
             throw new DBException("Cannot update tenants of " + getName() + ": " + e.getMessage(), e);
         } finally {
+            // Whatever happened, including a cancel partway, the cached states are now suspect.
+            resetTenantCache();
             monitor.done();
         }
+    }
+
+    /**
+     * Turns a query failure into something the user can act on.
+     * <p>
+     * Two problems with the raw text. The message that reaches the top is the paginator's
+     * ("fetch next page, page_size=100 cursor=null"), which describes the call rather than the
+     * failure -- the reason is always one or more causes down. And the most common reason on a
+     * multi-tenant collection is a tenant that is simply switched off, which the server reports
+     * as "tenant not active" wrapped in gRPC framing.
+     * <p>
+     * So the chain is walked: if anything in it says the tenant is inactive, the answer says so
+     * and where to fix it. Otherwise the deepest message wins, because that is the one describing
+     * what actually went wrong.
+     */
+    @NotNull
+    private String describeFailure(@NotNull Throwable failure, @Nullable String tenant) {
+        String deepest = null;
+        boolean tenantInactive = false;
+        for (Throwable t = failure; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (!CommonUtils.isEmpty(message)) {
+                deepest = message;
+                if (message.toLowerCase(java.util.Locale.ROOT).contains("tenant not active")) {
+                    tenantInactive = true;
+                }
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        if (tenantInactive) {
+            String name = CommonUtils.isEmpty(tenant) ? "The selected tenant" : "Tenant \"" + tenant + "\"";
+            return name + " is inactive, so Weaviate refuses to read it. Right-click "
+                + getName() + " and choose \"Manage Tenants...\" to activate it.";
+        }
+        if (deepest == null) {
+            deepest = failure.getClass().getSimpleName();
+        }
+        return "Query failed: " + deepest;
     }
 
     /**
@@ -2008,9 +2072,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         if (!session.getPurpose().isUser()) {
             return null;
         }
-        List<String> tenants;
+        List<WeaviateTenant> tenants;
         try {
-            tenants = listTenantNames(monitor);
+            tenants = listTenants(monitor);
         } catch (DBException e) {
             queryLog.warn("Cannot list tenants of " + getName(), e);
             return null;
@@ -2032,17 +2096,25 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
                 + " tenants and no searchable picker is registered");
             return null;
         }
+        // The fallback dialog takes plain labels, so the state is spelled into them -- it is the
+        // one thing that decides whether the chosen tenant can actually be read.
+        List<String> labels = new ArrayList<>(tenants.size());
+        for (WeaviateTenant tenant : tenants) {
+            labels.add(tenant.isActive()
+                ? tenant.name()
+                : tenant.name() + " (" + tenant.status().getLabel() + ")");
+        }
         DBPPlatformUI.UserChoiceResponse response = DBWorkbench.getPlatformUI().showUserChoice(
             "Select tenant",
             "\"" + getName() + "\" is a multi-tenant collection. Choose which tenant's data to show.",
-            tenants,
+            labels,
             List.of(),
             null,
             0);
         if (response.choiceIndex < 0 || response.choiceIndex >= tenants.size()) {
             return null;
         }
-        return tenants.get(response.choiceIndex);
+        return tenants.get(response.choiceIndex).name();
     }
 
     // ---- DBSDataManipulator ----------------------------------------------------------------

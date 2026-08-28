@@ -27,38 +27,45 @@ import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Text;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant;
 import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
 import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ui.dialogs.BaseDialog;
 
 import java.text.MessageFormat;
 import java.util.ArrayList;
-import java.util.Locale;
 
 /**
  * Picks one tenant from a collection's tenant list.
  * <p>
  * Built around a filter box rather than a plain list or combo: a collection can have thousands of
  * tenants, where scrolling is useless and the user almost always knows part of the name. The
- * filter is a case-insensitive substring match, applied as you type, and the count shows how much
- * of the list is currently in view so a too-broad filter is obvious.
+ * filter is the shared {@link org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantFilter}, so
+ * plain text is a substring match and a pattern such as {@code acme-eu-*} is a glob -- the same
+ * rule as the Manage Tenants dialog, since two search boxes over the same list that disagree
+ * about what a star means would be worse than either rule alone.
+ * <p>
+ * Inactive tenants are labelled as such. They can still be picked -- the choice is the user's,
+ * and a tenant may be about to be activated -- but choosing one blindly ends in the server's own
+ * "tenant not active", which arrives long after the decision and explains nothing about how to
+ * fix it.
  */
 public class WeaviateTenantSelectDialog extends BaseDialog {
 
-    private final java.util.List<String> allTenants;
+    private final java.util.List<WeaviateTenant> allTenants;
     private final String collectionName;
     private final String initialSelection;
 
     private Text filterText;
     private List tenantList;
     private Label countLabel;
-    private java.util.List<String> visible = new ArrayList<>();
+    private java.util.List<WeaviateTenant> visible = new ArrayList<>();
     private String selected;
 
     public WeaviateTenantSelectDialog(
         @NotNull Shell shell,
         @NotNull String collectionName,
-        @NotNull java.util.List<String> tenants,
+        @NotNull java.util.List<WeaviateTenant> tenants,
         @Nullable String initialSelection
     ) {
         super(shell, MessageFormat.format(WeaviateUIMessages.tenant_dialog_title, collectionName), null);
@@ -104,9 +111,11 @@ public class WeaviateTenantSelectDialog extends BaseDialog {
 
         applyFilter();
         if (initialSelection != null) {
-            int idx = visible.indexOf(initialSelection);
-            if (idx >= 0) {
-                tenantList.select(idx);
+            for (int i = 0; i < visible.size(); i++) {
+                if (visible.get(i).name().equals(initialSelection)) {
+                    tenantList.select(i);
+                    break;
+                }
             }
         }
         return area;
@@ -120,14 +129,19 @@ public class WeaviateTenantSelectDialog extends BaseDialog {
     }
 
     private void applyFilter() {
-        String needle = filterText == null ? "" : filterText.getText().trim().toLowerCase(Locale.ROOT);
-        visible = new ArrayList<>();
-        for (String tenant : allTenants) {
-            if (needle.isEmpty() || tenant.toLowerCase(Locale.ROOT).contains(needle)) {
-                visible.add(tenant);
-            }
+        visible = org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantFilter
+            .of(filterText == null ? "" : filterText.getText())
+            .filter(allTenants);
+        String[] labels = new String[visible.size()];
+        for (int i = 0; i < visible.size(); i++) {
+            WeaviateTenant tenant = visible.get(i);
+            // The state goes in the label rather than a second column, because SWT's List has no
+            // columns and the alternative -- a Table -- would be a heavier control for a picker.
+            labels[i] = tenant.isActive()
+                ? tenant.name()
+                : tenant.name() + "  (" + tenant.status().getLabel() + ")";
         }
-        tenantList.setItems(visible.toArray(new String[0]));
+        tenantList.setItems(labels);
         countLabel.setText(MessageFormat.format(
             WeaviateUIMessages.tenant_dialog_count, visible.size(), allTenants.size()));
         if (visible.size() == 1) {
@@ -146,7 +160,7 @@ public class WeaviateTenantSelectDialog extends BaseDialog {
     @Override
     protected void okPressed() {
         int idx = tenantList.getSelectionIndex();
-        selected = idx < 0 ? null : visible.get(idx);
+        selected = idx < 0 ? null : visible.get(idx).name();
         super.okPressed();
     }
 }

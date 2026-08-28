@@ -100,6 +100,12 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Composite tenantRow;
     private Label tenantLabel;
     private Combo tenantCombo;
+    /**
+     * Backs the combo, whose items carry the state in their text and so cannot be used as tenant
+     * names. Index-aligned with the combo's items.
+     */
+    private java.util.List<org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant> tenantItems =
+        java.util.List.of();
     /** One include-vectors toggle per mode, beside that mode's other result options. */
     private final Map<WeaviateQueryMode, Button> includeVectorChecks = new EnumMap<>(WeaviateQueryMode.class);
     /** Rerank section per near_* mode: property picker, optional query, module hint. */
@@ -733,19 +739,24 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         String current = collection.getQuerySpec().getTenant();
         tenantCombo.removeAll();
         try {
-            for (String name : collection.listTenantNames(new VoidProgressMonitor())) {
-                tenantCombo.add(name);
-            }
+            tenantItems = collection.listTenants(new VoidProgressMonitor());
         } catch (DBException e) {
             log.debug("Cannot list tenants", e);
             showError(e.getMessage());
             return;
         }
+        for (org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant tenant : tenantItems) {
+            // An inactive tenant refuses every read, so picking one out of a list that looks
+            // uniform ends in the server's own "tenant not active" with no hint of why.
+            tenantCombo.add(tenant.isActive()
+                ? tenant.name()
+                : tenant.name() + "  (" + tenant.status().getLabel() + ")");
+        }
         if (tenantCombo.getItemCount() == 0) {
             showError(WeaviateUIMessages.query_tenant_none);
             return;
         }
-        int idx = current == null ? -1 : tenantCombo.indexOf(current);
+        int idx = indexOfTenant(current);
         if (idx >= 0) {
             tenantCombo.select(idx);
         } else {
@@ -767,10 +778,26 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         if (current == null) {
             return;
         }
-        int idx = tenantCombo.indexOf(current);
+        int idx = indexOfTenant(current);
         if (idx >= 0 && idx != tenantCombo.getSelectionIndex()) {
             tenantCombo.select(idx);
         }
+    }
+
+    /**
+     * Position of a tenant by name. Combo#indexOf cannot be used: an inactive tenant's item text
+     * carries its state, so it never equals the bare name held in the spec.
+     */
+    private int indexOfTenant(@Nullable String name) {
+        if (name == null) {
+            return -1;
+        }
+        for (int i = 0; i < tenantItems.size(); i++) {
+            if (tenantItems.get(i).name().equals(name)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     @Nullable
@@ -779,7 +806,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             return null;
         }
         int idx = tenantCombo.getSelectionIndex();
-        return idx < 0 ? null : tenantCombo.getItem(idx);
+        return idx < 0 || idx >= tenantItems.size() ? null : tenantItems.get(idx).name();
     }
 
     private void updateAlphaLabel() {
