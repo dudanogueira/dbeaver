@@ -15,4 +15,5 @@ Bundle-ClassPath: .,
  lib/client6-6.3.1-all.jar
 Export-Package: org.jkiss.dbeaver.ext.weaviate,
  org.jkiss.dbeaver.ext.weaviate.edit,
- org.jkiss.dbeaver.ext.weaviate.model
+ org.jkiss.dbeaver.ext.weaviate.model,
+ org.jkiss.dbeaver.ext.weaviate.model.tasks

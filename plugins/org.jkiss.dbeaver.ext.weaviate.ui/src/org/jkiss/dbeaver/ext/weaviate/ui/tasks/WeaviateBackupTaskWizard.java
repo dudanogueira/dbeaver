@@ -21,10 +21,12 @@ import org.eclipse.jface.wizard.IWizardPage;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateBackupBackend;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateBackupNode;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
 import org.jkiss.dbeaver.ext.weaviate.model.tasks.WeaviateBackupSettings;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
+import org.jkiss.dbeaver.model.navigator.DBNNode;
 import org.jkiss.dbeaver.model.runtime.DBRRunnableContext;
 import org.jkiss.dbeaver.model.struct.DBSObject;
 import org.jkiss.dbeaver.model.task.DBTTask;
@@ -34,6 +36,10 @@ import org.jkiss.dbeaver.tasks.ui.wizard.TaskConfigurationWizard;
 import org.jkiss.dbeaver.tasks.ui.wizard.TaskConfigurationWizardDialog;
 import org.jkiss.dbeaver.tasks.ui.wizard.TaskWizardExecutor;
 
+import org.jkiss.dbeaver.model.runtime.VoidProgressMonitor;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -45,6 +51,9 @@ import java.util.Map;
  * {@code SQLToolTaskWizard} is the precedent for a task wizard that runs in-process.
  */
 public class WeaviateBackupTaskWizard extends TaskConfigurationWizard<WeaviateBackupSettings> {
+
+    private static final org.jkiss.dbeaver.Log log =
+        org.jkiss.dbeaver.Log.getLog(WeaviateBackupTaskWizard.class);
 
     static final String TASK_RESTORE = "weaviateBackupRestore";
 
@@ -100,27 +109,78 @@ public class WeaviateBackupTaskWizard extends TaskConfigurationWizard<WeaviateBa
         if (selection == null) {
             return;
         }
+        List<String> collections = new ArrayList<>();
         for (Object element : selection.toList()) {
-            DBSObject object = element instanceof DBNDatabaseNode node ? node.getObject() : null;
+            DBNNode node = element instanceof DBNNode n ? n : null;
+            DBSObject object = node instanceof DBNDatabaseNode databaseNode
+                ? databaseNode.getObject() : null;
+
             if (object instanceof WeaviateBackupNode backup) {
                 selectedBackup = backup;
                 settings.setBackupId(backup.getName());
                 settings.setBackendId(backup.getBackend().getBackendId());
-                rememberDataSource(backup.getBackend());
+                rememberDataSource(backup.getBackend().getDataSource());
                 return;
             }
             if (object instanceof WeaviateBackupBackend backend) {
                 settings.setBackendId(backend.getBackendId());
-                rememberDataSource(backend);
+                rememberDataSource(backend.getDataSource());
                 return;
             }
+            if (object instanceof WeaviateCollection collection) {
+                // Collected rather than returned on, so selecting eight collections carries all
+                // eight through instead of only whichever the menu was opened over.
+                collections.add(collection.getName());
+                rememberDataSource(collection.getDataSource());
+                continue;
+            }
+            if (object instanceof WeaviateDataSource weaviate) {
+                rememberDataSource(weaviate);
+            } else if (node != null && node.getParentNode() != null) {
+                // The Collections folder and the connection node both mean the whole server. An
+                // empty include list is exactly that, so there is nothing more to set.
+                rememberDataSourceOf(node);
+            }
+        }
+        if (!collections.isEmpty()) {
+            settings.setIncludeCollections(collections);
+        }
+        chooseDefaultBackend();
+    }
+
+    private void rememberDataSourceOf(@NotNull DBNNode node) {
+        if (node instanceof DBNDatabaseNode databaseNode
+            && databaseNode.getDataSource() instanceof WeaviateDataSource weaviate) {
+            rememberDataSource(weaviate);
         }
     }
 
-    private void rememberDataSource(@NotNull WeaviateBackupBackend backend) {
-        if (backend.getDataSource() instanceof WeaviateDataSource weaviate) {
+    private void rememberDataSource(@Nullable org.jkiss.dbeaver.model.DBPDataSource candidate) {
+        if (dataSource == null && candidate instanceof WeaviateDataSource weaviate) {
             dataSource = weaviate;
             settings.setDataSourceId(weaviate.getContainer().getId());
+        }
+    }
+
+    /**
+     * Picks a backend when the selection did not name one, which is every route except starting
+     * from a backend node. The first that can actually be written to; on nearly every server that
+     * is the only one.
+     */
+    private void chooseDefaultBackend() {
+        if (dataSource == null) {
+            return;
+        }
+        try {
+            WeaviateBackupBackend backend =
+                dataSource.getDefaultBackupBackend(new VoidProgressMonitor());
+            if (backend != null) {
+                settings.setBackendId(backend.getBackendId());
+            }
+        } catch (Exception e) {
+            // The page shows the backend it will use and validates before finishing, so a failure
+            // to guess here is not worth interrupting the wizard for.
+            log.debug("Cannot choose a default backup backend", e);
         }
     }
 

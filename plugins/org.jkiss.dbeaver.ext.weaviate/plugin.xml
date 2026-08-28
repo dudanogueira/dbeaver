@@ -22,6 +22,13 @@
             <datasource id="weaviate"/>
             <objectType name="org.jkiss.dbeaver.ext.weaviate.model.WeaviateBackupBackend"
                         if="object.available"/>
+            <!-- Starting from collections is at least as natural as starting from a backend, and
+                 it is the only route where the choice of what to back up arrives already made.
+                 The connection itself means all of them, which is the wizard's default. -->
+            <objectType name="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"
+                        if="object.dataSource.hasAvailableBackupBackend()"/>
+            <objectType name="org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource"
+                        if="object.hasAvailableBackupBackend()"/>
         </task>
         <task id="weaviateBackupRestore" type="weaviate"
               name="Restore backup"

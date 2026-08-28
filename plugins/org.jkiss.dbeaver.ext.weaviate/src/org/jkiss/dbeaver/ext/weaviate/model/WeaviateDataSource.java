@@ -754,6 +754,13 @@ public class WeaviateDataSource extends AbstractDataSource
                     if (!anyAvailable) {
                         result.add(new WeaviateBackupAdvice(this));
                     }
+                    // Read each enabled backend's listing now, so the row can carry its count.
+                    // One request per enabled backend, and on nearly every server that is one.
+                    for (WeaviateBackupEntry entry : result) {
+                        if (entry instanceof WeaviateBackupBackend backend) {
+                            backend.primeBackups(monitor);
+                        }
+                    }
                     backupEntries = result;
                 }
             }
@@ -949,6 +956,43 @@ public class WeaviateDataSource extends AbstractDataSource
         } catch (Exception e) {
             throw new DBException("Cannot cancel " + backupId + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Whether the server has any backend to write a backup to.
+     * <p>
+     * Reads the module list, which is already cached, rather than the backup entries -- this is
+     * asked while building a context menu, and listing backups there would put a request on the
+     * paint path.
+     */
+    public boolean hasAvailableBackupBackend() {
+        InstanceMetadata m;
+        try {
+            m = getInstanceMetadata();
+        } catch (DBException e) {
+            return false;
+        }
+        if (m == null || m.modules() == null) {
+            return false;
+        }
+        for (String backendId : WeaviateBackupBackend.KNOWN) {
+            if (m.modules().containsKey(WeaviateBackupBackend.moduleNameFor(backendId))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The first backend that can actually be written to, or null when there is none. */
+    @Nullable
+    public WeaviateBackupBackend getDefaultBackupBackend(@NotNull DBRProgressMonitor monitor)
+        throws DBException {
+        for (WeaviateBackupEntry entry : getBackupEntries(monitor)) {
+            if (entry instanceof WeaviateBackupBackend backend && backend.isAvailable()) {
+                return backend;
+            }
+        }
+        return null;
     }
 
     /** Forgets cached backup listings, so a refresh shows what the server now holds. */

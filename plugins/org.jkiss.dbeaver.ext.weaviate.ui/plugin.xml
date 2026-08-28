@@ -75,6 +75,12 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.openModuleDocs">
                 <visibleWhen checkEnabled="true"/>
             </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.createBackup">
+                <visibleWhen checkEnabled="true"/>
+            </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.restoreBackup">
+                <visibleWhen checkEnabled="true"/>
+            </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant">
                 <visibleWhen checkEnabled="true"/>
             </command>
@@ -294,6 +300,39 @@
     <!-- Registers the searchable tenant picker with the model bundle. The read path may need
          to ask for a tenant before any Weaviate UI has been opened, so this cannot wait for a
          page or panel to load. -->
+    <extension point="org.eclipse.ui.commands">
+        <command id="org.jkiss.dbeaver.ext.weaviate.ui.createBackup"
+                 name="Backup Collections..."
+                 description="Back up collections to this backend"
+                 categoryId="org.jkiss.dbeaver.core.navigator"/>
+        <command id="org.jkiss.dbeaver.ext.weaviate.ui.restoreBackup"
+                 name="Restore Backup..."
+                 description="Restore collections from this backup"
+                 categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commandImages">
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.createBackup"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/file/export.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.restoreBackup"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/file/import.svg"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <!-- These put Backup and Restore directly on the context menu. Registering the tasks
+             already contributes them under the "Tools" submenu, which is where pg_dump lives,
+             but that is two levels down and every other action in this plugin is top level.
+             Both routes open the same wizard on the same task.
+
+             No <enabledWhen>: the conditions are "this backend's module is enabled" and "this
+             backup succeeded", neither of which a built-in property tester exposes, and a tester
+             from this lazily-activated bundle evaluates as NOT_LOADED before the bundle starts. -->
+        <handler commandId="org.jkiss.dbeaver.ext.weaviate.ui.createBackup"
+                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateCreateBackupHandler"/>
+        <handler commandId="org.jkiss.dbeaver.ext.weaviate.ui.restoreBackup"
+                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateRestoreBackupHandler"/>
+    </extension>
+
     <extension point="org.jkiss.dbeaver.task.ui">
         <!-- One configurator for both tasks; the wizard reads the task type to decide which of
              the two it is building. -->

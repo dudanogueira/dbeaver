@@ -25,6 +25,7 @@ import org.jkiss.dbeaver.model.DBPImage;
 import org.jkiss.dbeaver.model.DBPImageProvider;
 import org.jkiss.dbeaver.model.DBPToolTipObject;
 import org.jkiss.dbeaver.model.meta.Property;
+import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 
 import java.util.ArrayList;
@@ -39,6 +40,8 @@ import java.util.List;
  * a broken one.
  */
 public class WeaviateBackupBackend extends WeaviateBackupEntry implements DBPImageProvider, DBPToolTipObject {
+
+    private static final Log log = Log.getLog(WeaviateBackupBackend.class);
 
     /**
      * The backends Weaviate ships, shortest name first.
@@ -74,11 +77,33 @@ public class WeaviateBackupBackend extends WeaviateBackupEntry implements DBPIma
         return "backup-" + backendId;
     }
 
+    /**
+     * The backend, with how many backups it holds once that is known: {@code filesystem (36)}.
+     * <p>
+     * The count is in the label because there is nowhere else it would be seen. The platform does
+     * draw a child counter, but {@code StatisticsNavigatorNodeRenderer} only does so for a
+     * {@code DBNDatabaseFolder}, and these are items; the same is true of the object-description
+     * renderer, and both sit behind navigator preferences that are off by default.
+     * <p>
+     * Absent until the listing has been read. Guessing would mean a request from inside
+     * {@code getName()}, which the navigator calls while painting.
+     */
     @NotNull
     @Override
     @Property(viewable = true, order = 1)
     public String getName() {
-        return id;
+        List<WeaviateBackupNode> known = backups;
+        return known == null ? id : id + " (" + known.size() + ")";
+    }
+
+    /**
+     * How many backups are here, or null before the listing has been read.
+     */
+    @Nullable
+    @Property(viewable = true, order = 4)
+    public Integer getBackupCount() {
+        List<WeaviateBackupNode> known = backups;
+        return known == null ? null : known.size();
     }
 
     /** Whether the module backing this backend is enabled on the server. */
@@ -123,6 +148,25 @@ public class WeaviateBackupBackend extends WeaviateBackupEntry implements DBPIma
             backups = nodes;
         }
         return backups;
+    }
+
+    /**
+     * Reads the listing now rather than waiting for the row to be expanded.
+     * <p>
+     * One request per enabled backend, which is almost always one, and it is what makes the count
+     * available on the row itself. Best-effort: a backend that will not answer still gets a row,
+     * just without a count, because a folder that fails to open is worse than a row that says
+     * less than it could.
+     */
+    void primeBackups(@NotNull DBRProgressMonitor monitor) {
+        if (!available || backups != null) {
+            return;
+        }
+        try {
+            getBackups(monitor);
+        } catch (Exception e) {
+            log.debug("Cannot count backups in " + id, e);
+        }
     }
 
     /** Forgets the cached listing, so a refresh shows what the server now holds. */
