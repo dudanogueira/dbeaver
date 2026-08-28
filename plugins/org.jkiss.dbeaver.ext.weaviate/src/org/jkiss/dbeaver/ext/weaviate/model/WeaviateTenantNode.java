@@ -41,7 +41,7 @@ import org.jkiss.dbeaver.model.struct.DBSObjectState;
 public class WeaviateTenantNode implements DBSObject, DBPImageProvider, DBPToolTipObject, DBPStatefulObject {
 
     /**
-     * Overlays for the states that are not "running normally".
+     * Overlays for the states the platform has no constant for.
      * <p>
      * These reach the tree through {@code DBNDatabaseNode#getNodeIcon}, which applies a stateful
      * object's overlay unconditionally. That matters: the {@code (Inactive)} text next to the
@@ -116,9 +116,15 @@ public class WeaviateTenantNode implements DBSObject, DBPImageProvider, DBPToolT
         if (tenant.status().isTransitional()) {
             return STATE_TRANSITIONAL;
         }
-        // Active is the ordinary case and gets no overlay: marking every healthy tenant would
-        // make a list of thousands noisy and leave the exception no easier to spot.
-        return tenant.isActive() ? DBSObjectState.NORMAL : STATE_INACTIVE;
+        // Green for a tenant that answers, a lock for one that does not. The platform's own
+        // ACTIVE state carries the green marker, so this is the same signal DBeaver already uses
+        // elsewhere for "running" rather than a colour invented here.
+        //
+        // Both states are marked rather than only the unusual one. Leaving active tenants bare
+        // would make "no overlay" mean healthy, which is indistinguishable from an overlay that
+        // failed to load or a state this plugin does not recognise -- and on a mixed list the
+        // pair reads faster than an absence does.
+        return tenant.isActive() ? DBSObjectState.ACTIVE : STATE_INACTIVE;
     }
 
     @Override
