@@ -18,6 +18,7 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 
 import io.weaviate.client6.v1.api.Authentication;
 import io.weaviate.client6.v1.api.WeaviateClient;
+import io.weaviate.client6.v1.api.collections.MultiTenancy;
 import io.weaviate.client6.v1.api.collections.tenants.Tenant;
 import io.weaviate.client6.v1.api.collections.tenants.WeaviateTenantsClient;
 import org.jkiss.junit.DBeaverUnitTest;
@@ -195,6 +196,47 @@ public class WeaviateTenantLiveTest extends DBeaverUnitTest {
                         + ". WeaviateCollection.TENANT_UPDATE_CHUNK is above the server's limit.");
             } finally {
                 scale.activate(chunk);
+            }
+        }
+    }
+
+    /**
+     * The auto-tenant settings can be changed on a collection that already exists, and both
+     * survive the round trip.
+     * <p>
+     * Worth pinning because the update carries a whole multiTenancy block: sending one flag
+     * without the other resets the other to a default, and sending {@code enabled} wrong is
+     * refused outright by the server. Restored to off/off afterwards, which is how the fixture
+     * seeds this collection.
+     */
+    @Test
+    public void bothAutoTenantSettingsSurviveTheRoundTrip() throws Exception {
+        requireFixture();
+        try (WeaviateClient client = connect()) {
+            var config = client.collections.use(COLLECTION).config;
+            try {
+                for (boolean creation : new boolean[]{true, false}) {
+                    for (boolean activation : new boolean[]{true, false}) {
+                        config.update(b -> b.multiTenancy(mt -> mt
+                            .enabled(true)
+                            .autoTenantCreation(creation)
+                            .autoTenantActivation(activation)));
+
+                        MultiTenancy stored = client.collections.getConfig(COLLECTION)
+                            .orElseThrow().multiTenancy();
+                        Assertions.assertTrue(stored.enabled(),
+                            "multi-tenancy must stay on -- the server refuses to switch it off");
+                        Assertions.assertEquals(creation, stored.createAutomatically(),
+                            () -> "auto-creation should be " + creation);
+                        Assertions.assertEquals(activation, stored.activateAutomatically(),
+                            () -> "auto-activation should be " + activation
+                                + " after setting creation=" + creation
+                                + "; a flag left out of the block gets reset");
+                    }
+                }
+            } finally {
+                config.update(b -> b.multiTenancy(mt -> mt
+                    .enabled(true).autoTenantCreation(false).autoTenantActivation(false)));
             }
         }
     }

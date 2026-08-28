@@ -26,6 +26,7 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Group;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Table;
@@ -33,9 +34,12 @@ import org.eclipse.swt.widgets.TableColumn;
 import org.eclipse.swt.widgets.TableItem;
 import org.eclipse.swt.widgets.Text;
 import org.jkiss.code.NotNull;
+import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateServerFeature;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantFilter;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantStatus;
@@ -79,6 +83,8 @@ public class WeaviateTenantManageDialog extends BaseDialog {
     private static final int STATUS_COLUMN_WIDTH = 90;
 
     private final WeaviateCollection collection;
+    @Nullable
+    private final String initialSelection;
 
     private List<WeaviateTenant> allTenants;
     private List<WeaviateTenant> visible = new ArrayList<>();
@@ -88,6 +94,8 @@ public class WeaviateTenantManageDialog extends BaseDialog {
     private Label countLabel;
     private Button activateButton;
     private Button deactivateButton;
+    private Button autoCreation;
+    private Button autoActivation;
     private Font boldFont;
     private Color inactiveColor;
 
@@ -96,10 +104,26 @@ public class WeaviateTenantManageDialog extends BaseDialog {
         @NotNull WeaviateCollection collection,
         @NotNull List<WeaviateTenant> tenants
     ) {
+        this(shell, collection, tenants, null);
+    }
+
+    /**
+     * @param initialSelection tenant to arrive selected, for when the dialog was opened from that
+     *                         tenant's own node. Filtering to it as well would hide its
+     *                         neighbours, and the reason to open the dialog on one tenant is
+     *                         usually to act on the group around it.
+     */
+    public WeaviateTenantManageDialog(
+        @NotNull Shell shell,
+        @NotNull WeaviateCollection collection,
+        @NotNull List<WeaviateTenant> tenants,
+        @Nullable String initialSelection
+    ) {
         super(shell, MessageFormat.format(
             WeaviateUIMessages.tenant_manage_title, collection.getName()), null);
         this.collection = collection;
         this.allTenants = tenants;
+        this.initialSelection = initialSelection;
     }
 
     @Override
@@ -180,8 +204,95 @@ public class WeaviateTenantManageDialog extends BaseDialog {
         deactivateButton = UIUtils.createDialogButton(actions, "", SelectionListener
             .widgetSelectedAdapter(e -> changeStatus(WeaviateTenantStatus.INACTIVE)));
 
+        createAutoTenantSection(group);
+
         applyFilter();
+        selectInitial();
         return area;
+    }
+
+    /**
+     * The two automatic-tenant settings, which are collection-wide rather than per tenant but
+     * belong here: they are the reason a tenant list changes on its own, and someone wondering
+     * why tenants keep appearing has come to this dialog to find out.
+     */
+    private void createAutoTenantSection(@NotNull Composite parent) {
+        Group auto = new Group(parent, SWT.NONE);
+        auto.setText(WeaviateUIMessages.tenant_manage_auto_group);
+        auto.setLayout(new GridLayout(1, false));
+        auto.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+
+        autoCreation = UIUtils.createCheckbox(auto,
+            WeaviateUIMessages.tenant_manage_auto_creation, null,
+            Boolean.TRUE.equals(collection.getAutoTenantCreation()), 1);
+        autoActivation = UIUtils.createCheckbox(auto,
+            WeaviateUIMessages.tenant_manage_auto_activation, null,
+            Boolean.TRUE.equals(collection.getAutoTenantActivation()), 1);
+
+        // Both settings landed in the same release, so one gate covers them.
+        boolean supported = collection.getDataSource() instanceof WeaviateDataSource ds
+            && ds.supports(WeaviateServerFeature.AUTO_TENANT_CREATION);
+        if (!supported) {
+            String note = MessageFormat.format(WeaviateUIMessages.tenant_manage_auto_requires,
+                WeaviateServerFeature.AUTO_TENANT_CREATION.getMinVersion());
+            autoCreation.setText(autoCreation.getText() + "  \u2014 " + note);
+            autoActivation.setText(autoActivation.getText() + "  \u2014 " + note);
+            autoCreation.setEnabled(false);
+            autoActivation.setEnabled(false);
+            return;
+        }
+        // The server can also simply not report them, which is not the same as reporting false.
+        if (collection.getAutoTenantCreation() == null && collection.getAutoTenantActivation() == null) {
+            UIUtils.createLabel(auto, WeaviateUIMessages.tenant_manage_auto_unsupported);
+            autoCreation.setEnabled(false);
+            autoActivation.setEnabled(false);
+            return;
+        }
+
+        SelectionListener apply = SelectionListener.widgetSelectedAdapter(e -> applyAutoTenant());
+        autoCreation.addSelectionListener(apply);
+        autoActivation.addSelectionListener(apply);
+    }
+
+    /**
+     * Sends both settings on any change, because the server takes them as one block -- sending
+     * only the box that moved would reset the other.
+     */
+    private void applyAutoTenant() {
+        boolean creation = autoCreation.getSelection();
+        boolean activation = autoActivation.getSelection();
+        try {
+            UIUtils.runInProgressService(monitor -> {
+                try {
+                    collection.setAutoTenantOptions(monitor, creation, activation);
+                } catch (DBException e) {
+                    throw new InvocationTargetException(e);
+                }
+            });
+        } catch (InvocationTargetException e) {
+            log.error("Cannot update multi-tenancy settings", e.getTargetException());
+            DBWorkbench.getPlatformUI().showError(getShell().getText(),
+                WeaviateUIMessages.tenant_manage_auto_failed, e.getTargetException());
+        } catch (InterruptedException e) {
+            // Fall through to the read-back below, which is what decides the boxes either way.
+        }
+        // Show what the server holds, not what was asked for.
+        autoCreation.setSelection(Boolean.TRUE.equals(collection.getAutoTenantCreation()));
+        autoActivation.setSelection(Boolean.TRUE.equals(collection.getAutoTenantActivation()));
+    }
+
+    private void selectInitial() {
+        if (initialSelection == null) {
+            return;
+        }
+        for (int i = 0; i < visible.size(); i++) {
+            if (visible.get(i).name().equals(initialSelection)) {
+                table.select(i);
+                table.showSelection();
+                updateButtons();
+                return;
+            }
+        }
     }
 
     @Override

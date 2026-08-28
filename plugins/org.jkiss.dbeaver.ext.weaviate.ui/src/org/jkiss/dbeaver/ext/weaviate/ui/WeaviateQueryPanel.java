@@ -49,7 +49,10 @@ import org.eclipse.ui.forms.events.ExpansionAdapter;
 import org.eclipse.ui.forms.events.ExpansionEvent;
 import org.eclipse.ui.forms.widgets.ExpandableComposite;
 import org.jkiss.dbeaver.ui.controls.ExpandableCompositeEx;
+import java.lang.reflect.InvocationTargetException;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantStatus;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateColumns;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterOperator;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterRow;
@@ -100,6 +103,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Composite tenantRow;
     private Label tenantLabel;
     private Combo tenantCombo;
+    private Button tenantActivateButton;
     /**
      * Backs the combo, whose items carry the state in their text and so cannot be used as tenant
      * names. Index-aligned with the combo's items.
@@ -213,7 +217,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         topRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
         tenantRow = new Composite(root, SWT.NONE);
-        GridLayout tenantLayout = new GridLayout(2, false);
+        GridLayout tenantLayout = new GridLayout(3, false);
         tenantLayout.marginWidth = 0;
         tenantLayout.marginHeight = 0;
         tenantRow.setLayout(tenantLayout);
@@ -231,9 +235,21 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 if (collection != null) {
                     collection.setQuerySpec(collection.getQuerySpec().withTenant(currentTenant()));
                 }
+                syncActivateButton();
                 // Switching tenant changes the whole result set, so reload rather than making
                 // the user press Run to see a different tenant's data.
                 runQuery();
+            }
+        });
+        // Only ever shown for the case it solves: the chosen tenant is asleep and the server
+        // will not wake it on its own, so the query is guaranteed to fail until someone acts.
+        tenantActivateButton = new Button(tenantRow, SWT.PUSH);
+        tenantActivateButton.setText(WeaviateUIMessages.tenant_activate_now);
+        tenantActivateButton.setToolTipText(WeaviateUIMessages.tenant_activate_now_tip);
+        tenantActivateButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                activateCurrentTenant();
             }
         });
         setTenantRowVisible(false);
@@ -764,6 +780,69 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             // rather than silently pointing at a different tenant's data.
             tenantCombo.deselectAll();
         }
+        syncActivateButton();
+    }
+
+    /**
+     * Shows the Activate button only when it is the answer.
+     * <p>
+     * An inactive tenant on a collection with auto-activation on is not a problem: the read wakes
+     * it. With auto-activation off it is a dead end, and the button is the shortest way out of
+     * it -- shorter than finding Manage Tenants, which is where the user would otherwise have to
+     * go to make the query they already asked for work.
+     */
+    private void syncActivateButton() {
+        if (tenantActivateButton == null || tenantActivateButton.isDisposed()) {
+            return;
+        }
+        WeaviateCollection collection = currentCollection();
+        int idx = tenantCombo.getSelectionIndex();
+        boolean asleep = collection != null
+            && idx >= 0 && idx < tenantItems.size()
+            && !tenantItems.get(idx).isActive()
+            && !Boolean.TRUE.equals(collection.getAutoTenantActivation());
+        tenantActivateButton.setVisible(asleep);
+        tenantActivateButton.setLayoutData(exclusion(!asleep));
+        tenantRow.layout();
+    }
+
+    /** Layout data that removes the button from the row entirely when it is not needed. */
+    private static GridData exclusion(boolean excluded) {
+        GridData gd = new GridData(SWT.LEFT, SWT.CENTER, false, false);
+        gd.exclude = excluded;
+        return gd;
+    }
+
+    /**
+     * Activates the selected tenant and re-runs, since the query the user already asked for is
+     * the reason they pressed it.
+     */
+    private void activateCurrentTenant() {
+        WeaviateCollection collection = currentCollection();
+        int idx = tenantCombo.getSelectionIndex();
+        if (collection == null || idx < 0 || idx >= tenantItems.size()) {
+            return;
+        }
+        WeaviateTenant tenant = tenantItems.get(idx);
+        try {
+            UIUtils.runInProgressService(monitor -> {
+                try {
+                    collection.setTenantStatus(monitor, java.util.List.of(tenant),
+                        WeaviateTenantStatus.ACTIVE);
+                } catch (DBException e) {
+                    throw new InvocationTargetException(e);
+                }
+            });
+        } catch (InvocationTargetException e) {
+            log.error("Cannot activate tenant", e.getTargetException());
+            showError(e.getTargetException().getMessage());
+            return;
+        } catch (InterruptedException e) {
+            return;
+        }
+        dismissBanner();
+        refreshTenants();
+        runQuery();
     }
 
     /**

@@ -1845,6 +1845,75 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
     }
 
     /**
+     * Whether writing to an unknown tenant creates it, or null when the server never said.
+     * <p>
+     * Null is not the same as false. Weaviate omits these fields entirely on a server older than
+     * 1.25.2, and a UI that renders the absence as an unticked box invites someone to "fix" a
+     * setting that does not exist.
+     */
+    @Nullable
+    public Boolean getAutoTenantCreation() {
+        return config.multiTenancy() == null ? null : config.multiTenancy().createAutomatically();
+    }
+
+    /** Whether reading an inactive tenant wakes it. See {@link #getAutoTenantCreation()} on null. */
+    @Nullable
+    public Boolean getAutoTenantActivation() {
+        return config.multiTenancy() == null ? null : config.multiTenancy().activateAutomatically();
+    }
+
+    /**
+     * Turns automatic tenant creation and activation on or off.
+     * <p>
+     * Both travel in one request because they are one object to the server: the update carries a
+     * whole multiTenancy block, so sending only one of them would silently reset the other to the
+     * client's default.
+     * <p>
+     * {@code enabled} is always passed through unchanged. Weaviate will not switch multi-tenancy
+     * itself on or off after a collection exists, and leaving it out of the block would ask it to.
+     */
+    public void setAutoTenantOptions(
+        @NotNull DBRProgressMonitor monitor,
+        boolean autoCreation,
+        boolean autoActivation
+    ) throws DBException {
+        if (!isMultiTenant()) {
+            throw new DBException(getName() + " is not multi-tenant");
+        }
+        monitor.subTask("Update multi-tenancy settings of " + getName());
+        try {
+            dataSource.getClient().collections.use(getName()).config.update(
+                b -> b.multiTenancy(mt -> mt
+                    .enabled(true)
+                    .autoTenantCreation(autoCreation)
+                    .autoTenantActivation(autoActivation)));
+            // Read back rather than patching the local copy: the server is free to refuse or
+            // adjust, and the checkboxes must show what it actually holds.
+            refreshConfig();
+        } catch (Exception e) {
+            throw new DBException(
+                "Cannot update multi-tenancy settings of " + getName() + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Re-reads this collection's definition from the server and drops everything derived from it.
+     */
+    public void refreshConfig() throws DBException {
+        try {
+            CollectionConfig fresh = dataSource.getClient().collections.getConfig(getName())
+                .orElseThrow(() -> new DBException(getName() + " no longer exists"));
+            this.config = fresh;
+            this.definitionNodes = null;
+            resetTenantCache();
+        } catch (DBException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new DBException("Cannot re-read " + getName() + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Tenants defined for this collection with their states, ordered by name.
      * <p>
      * One request, no paging, even for a collection with thousands of tenants: the server answers
