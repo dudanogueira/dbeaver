@@ -126,17 +126,19 @@
                                 id="multiTenancy" label="Multi-Tenancy" icon="#folder_info" description="Multi-tenancy settings">
                             <items label="Field" itemLabel="Field"
                                    path="multiTenancyField" property="multiTenancyFields"/>
-                        </folder>
-                        <!-- Only on a collection that has tenants. visibleIf keeps the folder
-                             off every single-tenant collection, where it would always be empty.
-                             Reading it is lazy, so a collection with thousands of tenants costs
-                             nothing until the folder is expanded. -->
-                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantNode"
-                                id="tenants" label="Tenants" icon="#folder_partitions"
-                                description="Tenants of this multi-tenant collection"
-                                visibleIf="object.isMultiTenant()">
-                            <items label="Tenant" itemLabel="Tenant"
-                                   path="tenant" property="tenantNodes"/>
+                            <!-- Nested here rather than beside it: the tenants are what the
+                                 multi-tenancy settings above are settings for, and a top-level
+                                 Tenants folder sat alongside them as if it were unrelated.
+                                 visibleIf keeps it off single-tenant collections, where it would
+                                 always be empty. Reading is lazy, so thousands of tenants cost
+                                 nothing until it is expanded. -->
+                            <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantNode"
+                                    id="tenants" label="Tenants" icon="#folder_partitions"
+                                    description="Tenants of this multi-tenant collection"
+                                    visibleIf="object.isMultiTenant()">
+                                <items label="Tenant" itemLabel="Tenant"
+                                       path="tenant" property="tenantNodes"/>
+                            </folder>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
                                 id="invertedIndex" label="Inverted Index" icon="#folder_info" description="Inverted index settings">

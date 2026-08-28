@@ -1850,7 +1850,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
      * One request, no paging, even for a collection with thousands of tenants: the server answers
      * with the whole list and there is no endpoint that returns part of it. Measured against a
      * 4000-tenant collection this is around 190 KiB and 25 ms, so the cost of holding them all is
-     * not what limits the UI -- rendering them is.
+     * not what limits the UI -- rendering them is. Reading is the uncapped direction; writing
+     * back is not, see {@link #TENANT_UPDATE_CHUNK}.
      */
     @NotNull
     public List<WeaviateTenant> listTenants(@NotNull DBRProgressMonitor monitor) throws DBException {
@@ -1912,11 +1913,17 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
     /**
      * How many tenants go in one activate/deactivate request.
      * <p>
-     * Not a server limit -- 4000 in a single request is accepted, and takes about 800 ms. The
-     * chunking is for the user: a progress bar that moves, and a Cancel that can be honoured
-     * between chunks rather than only after everything has already happened.
+     * This is the server's hard limit, not a tuning choice. Weaviate rejects an update naming
+     * more than 100 tenants with
+     * {@code 422 maximum number of tenants allowed to be updated simultaneously is 100}
+     * ({@code usecases/schema/tenant.go}, {@code validateTenants(..., allowOverHundred=false)}).
+     * Creating tenants is uncapped -- only updates are limited -- which is why seeding thousands
+     * works and switching them off in one go does not.
+     * <p>
+     * Chunking also buys a progress bar that moves and a Cancel that can be honoured between
+     * chunks, but those are the secondary reasons. The limit is the reason.
      */
-    private static final int TENANT_UPDATE_CHUNK = 500;
+    public static final int TENANT_UPDATE_CHUNK = 100;
 
     /**
      * Activates or deactivates the named tenants, and reports how many actually changed.

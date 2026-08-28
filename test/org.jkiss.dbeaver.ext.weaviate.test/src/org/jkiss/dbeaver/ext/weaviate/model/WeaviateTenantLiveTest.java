@@ -45,6 +45,8 @@ import java.util.List;
 public class WeaviateTenantLiveTest extends DBeaverUnitTest {
 
     private static final String COLLECTION = "DBeaverTenantFixture";
+    /** Only exists when the fixture was seeded with --scale; large enough to fill a chunk. */
+    private static final String SCALE_COLLECTION = "DBeaverTenantScaleFixture";
 
     /**
      * Skip unless a fixture server is configured. Called first in every test rather than from a
@@ -154,6 +156,45 @@ public class WeaviateTenantLiveTest extends DBeaverUnitTest {
             } finally {
                 // Leave the fixture as it was found, so the test can be run twice.
                 tenantsClient.activate(List.of(subject));
+            }
+        }
+    }
+
+    /**
+     * The chunk size against the server that enforces it.
+     * <p>
+     * This is the test that was missing. A batch update is capped at 100 by Weaviate
+     * ({@code validateTenants(..., allowOverHundred=false)}), and the plugin shipped a chunk of
+     * 500 because the limit was measured through the Python client -- which quietly chunks at 100
+     * of its own accord, so the probe reported "4000 in one request, no cap" and measured the
+     * client rather than the server. The Java client sends what it is given.
+     * <p>
+     * Needs a collection with at least a chunk's worth of tenants, so it runs only when the
+     * fixture was seeded with --scale.
+     */
+    @Test
+    public void aFullChunkIsAcceptedByTheServer() throws Exception {
+        requireFixture();
+        try (WeaviateClient client = connect()) {
+            WeaviateTenantsClient scale = client.collections.use(SCALE_COLLECTION).tenants;
+            List<String> names;
+            try {
+                names = asModel(scale.list()).stream().map(WeaviateTenant::name).sorted().toList();
+            } catch (Exception e) {
+                Assumptions.abort("seed with --scale to run this: " + e.getMessage());
+                return;
+            }
+            Assumptions.assumeTrue(names.size() >= WeaviateCollection.TENANT_UPDATE_CHUNK,
+                () -> SCALE_COLLECTION + " has only " + names.size()
+                    + " tenants; seed with --scale " + (WeaviateCollection.TENANT_UPDATE_CHUNK * 2));
+
+            List<String> chunk = names.subList(0, WeaviateCollection.TENANT_UPDATE_CHUNK);
+            try {
+                Assertions.assertDoesNotThrow(() -> scale.deactivate(chunk),
+                    () -> "the server refused a batch of " + chunk.size()
+                        + ". WeaviateCollection.TENANT_UPDATE_CHUNK is above the server's limit.");
+            } finally {
+                scale.activate(chunk);
             }
         }
     }
