@@ -23,6 +23,7 @@ import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.ui.ISources;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.handlers.HandlerUtil;
+import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
@@ -40,7 +41,7 @@ import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
 
 import java.lang.reflect.InvocationTargetException;
-import java.text.MessageFormat;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -70,39 +71,72 @@ public class WeaviateManageTenantsHandler extends AbstractHandler {
 
     /**
      * The collection a node is talking about, whether the node is the collection, one of its
-     * tenancy folders, or a single tenant.
+     * tenancy folders, or a single tenant -- and only when that collection is multi-tenant.
+     * <p>
+     * Returning null for a single-tenant collection hides the menu entry, because the item's
+     * {@code visibleWhen checkEnabled} turns "not enabled" into "not shown". That is the right
+     * answer here: whether a collection has tenants is a permanent fact about it, not a state
+     * the user could change from this dialog, so an entry that only ever explains why it does
+     * nothing is noise on every non-tenant collection in the tree. The Multi-Tenancy and Tenants
+     * folders already appear only where they apply; this makes the collection node agree.
      */
     @Nullable
     private static WeaviateCollection collectionOf(@Nullable DBNNode node) {
-        if (node instanceof DBNDatabaseFolder folder) {
-            if (!TENANCY_FOLDERS.contains(folder.getNodeId())) {
+        WeaviateCollection collection = owningCollection(node);
+        return collection != null && collection.isMultiTenant() ? collection : null;
+    }
+
+    /**
+     * Walks up to the collection that owns this node.
+     * <p>
+     * The walk is not decoration. Tenants sits inside Multi-Tenancy, so a tenancy folder's parent
+     * may be another folder, and {@code DBNDatabaseFolder.getObject()} answers with the folder
+     * itself rather than what it hangs under -- meaning one hop lands on a folder, not on a
+     * collection. Climbing until a collection appears handles either depth, and any nesting added
+     * later.
+     */
+    @Nullable
+    private static WeaviateCollection owningCollection(@Nullable DBNNode node) {
+        boolean viaFolder = false;
+        for (DBNNode current = node; current != null; current = current.getParentNode()) {
+            if (current instanceof DBNDatabaseFolder folder) {
+                // Only the tenancy folders offer this; Properties or Vectorizers must not.
+                if (!viaFolder && !TENANCY_FOLDERS.contains(folder.getNodeId())) {
+                    return null;
+                }
+                viaFolder = true;
+                continue;
+            }
+            if (!(current instanceof DBNDatabaseNode databaseNode)) {
                 return null;
             }
-            // A folder node's getObject() returns the folder itself, not what it hangs under;
-            // getParentObject() is the collection.
-            return folder.getParentObject() instanceof WeaviateCollection collection
-                ? collection : null;
-        }
-        if (node instanceof DBNDatabaseNode databaseNode) {
             DBSObject object = databaseNode.getObject();
             if (object instanceof WeaviateCollection collection) {
                 return collection;
             }
-            if (object instanceof WeaviateTenantNode tenant
-                && tenant.getParentObject() instanceof WeaviateCollection collection) {
-                return collection;
+            if (object instanceof WeaviateTenantNode tenant) {
+                return tenant.getParentObject() instanceof WeaviateCollection owner ? owner : null;
             }
+            return null;
         }
         return null;
     }
 
-    /** The tenant to arrive selected, when the action was invoked on one. */
-    @Nullable
-    private static String tenantOf(@Nullable DBNNode node) {
-        return node instanceof DBNDatabaseNode databaseNode
-            && databaseNode.getObject() instanceof WeaviateTenantNode tenant
-            ? tenant.getName()
-            : null;
+    /**
+     * Tenants to arrive selected: every tenant node in the selection, so picking several in the
+     * tree and choosing Manage Tenants carries all of them through rather than only the one the
+     * menu happened to be opened over.
+     */
+    @NotNull
+    private static List<String> tenantsOf(@NotNull ISelection selection) {
+        List<String> names = new ArrayList<>();
+        for (DBNNode node : NavigatorUtils.getSelectedNodes(selection)) {
+            if (node instanceof DBNDatabaseNode databaseNode
+                && databaseNode.getObject() instanceof WeaviateTenantNode tenant) {
+                names.add(tenant.getName());
+            }
+        }
+        return names;
     }
 
     @Nullable
@@ -127,15 +161,8 @@ public class WeaviateManageTenantsHandler extends AbstractHandler {
         if (collection == null) {
             return null;
         }
-        String initialTenant = tenantOf(node);
+        List<String> initialTenants = tenantsOf(selection);
         Shell shell = HandlerUtil.getActiveShell(event);
-        if (!collection.isMultiTenant()) {
-            DBWorkbench.getPlatformUI().showMessageBox(
-                WeaviateUIMessages.tenant_manage_title_plain,
-                MessageFormat.format(WeaviateUIMessages.tenant_not_multi_tenant, collection.getName()),
-                false);
-            return null;
-        }
 
         // One request, but it crosses the network, so it runs with a progress dialog rather
         // than freezing the workbench.
@@ -167,7 +194,7 @@ public class WeaviateManageTenantsHandler extends AbstractHandler {
                 false);
             return null;
         }
-        new WeaviateTenantManageDialog(shell, collection, tenants, initialTenant).open();
+        new WeaviateTenantManageDialog(shell, collection, tenants, initialTenants).open();
         return null;
     }
 }

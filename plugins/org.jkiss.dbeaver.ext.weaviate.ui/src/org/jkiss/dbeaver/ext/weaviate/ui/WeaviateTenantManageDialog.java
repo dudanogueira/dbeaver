@@ -51,7 +51,9 @@ import org.jkiss.dbeaver.ui.dialogs.BaseDialog;
 import java.lang.reflect.InvocationTargetException;
 import java.text.MessageFormat;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Lists a collection's tenants and activates or deactivates them, one at a time or by the
@@ -83,8 +85,8 @@ public class WeaviateTenantManageDialog extends BaseDialog {
     private static final int STATUS_COLUMN_WIDTH = 90;
 
     private final WeaviateCollection collection;
-    @Nullable
-    private final String initialSelection;
+    @NotNull
+    private final Set<String> initialSelection;
 
     private List<WeaviateTenant> allTenants;
     private List<WeaviateTenant> visible = new ArrayList<>();
@@ -108,22 +110,22 @@ public class WeaviateTenantManageDialog extends BaseDialog {
     }
 
     /**
-     * @param initialSelection tenant to arrive selected, for when the dialog was opened from that
-     *                         tenant's own node. Filtering to it as well would hide its
-     *                         neighbours, and the reason to open the dialog on one tenant is
-     *                         usually to act on the group around it.
+     * @param initialSelection tenants to arrive selected, for when the dialog was opened from
+     *                         their own nodes. Selected rather than filtered to: the reason to
+     *                         open the dialog on a tenant is usually to act on the group around
+     *                         it, and a filter would hide exactly that.
      */
     public WeaviateTenantManageDialog(
         @NotNull Shell shell,
         @NotNull WeaviateCollection collection,
         @NotNull List<WeaviateTenant> tenants,
-        @Nullable String initialSelection
+        @Nullable Collection<String> initialSelection
     ) {
         super(shell, MessageFormat.format(
             WeaviateUIMessages.tenant_manage_title, collection.getName()), null);
         this.collection = collection;
         this.allTenants = tenants;
-        this.initialSelection = initialSelection;
+        this.initialSelection = initialSelection == null ? Set.of() : Set.copyOf(initialSelection);
     }
 
     @Override
@@ -281,18 +283,32 @@ public class WeaviateTenantManageDialog extends BaseDialog {
         autoActivation.setSelection(Boolean.TRUE.equals(collection.getAutoTenantActivation()));
     }
 
+    /**
+     * Selects the tenants the dialog was opened on. Indices are collected first and applied in
+     * one call: Table#select on a multi-selection table adds to the selection one row at a time,
+     * and scrolling to each of them in turn would leave the view on whichever came last rather
+     * than on the first.
+     */
     private void selectInitial() {
-        if (initialSelection == null) {
+        if (initialSelection.isEmpty()) {
             return;
         }
+        List<Integer> indices = new ArrayList<>();
         for (int i = 0; i < visible.size(); i++) {
-            if (visible.get(i).name().equals(initialSelection)) {
-                table.select(i);
-                table.showSelection();
-                updateButtons();
-                return;
+            if (initialSelection.contains(visible.get(i).name())) {
+                indices.add(i);
             }
         }
+        if (indices.isEmpty()) {
+            return;
+        }
+        int[] rows = new int[indices.size()];
+        for (int i = 0; i < rows.length; i++) {
+            rows[i] = indices.get(i);
+        }
+        table.setSelection(rows);
+        table.showSelection();
+        updateButtons();
     }
 
     @Override
