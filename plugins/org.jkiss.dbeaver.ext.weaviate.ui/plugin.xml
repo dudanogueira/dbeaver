@@ -75,6 +75,9 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant">
                 <visibleWhen checkEnabled="true"/>
             </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageTenants">
+                <visibleWhen checkEnabled="true"/>
+            </command>
             <!-- checkEnabled hides the item on a property that is not tokenized at all, which
                  is a permanent fact about that property. A server merely being too old is not
                  handled by hiding: the handler leaves the command enabled and rewrites its label
@@ -123,6 +126,42 @@
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateSelectTenantHandler">
+            <enabledWhen>
+                <with variable="selection">
+                    <count value="1"/>
+                    <iterate operator="and">
+                        <adapt type="org.jkiss.dbeaver.model.struct.DBSObject">
+                            <instanceof value="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"/>
+                        </adapt>
+                    </iterate>
+                </with>
+            </enabledWhen>
+        </handler>
+    </extension>
+
+    <extension point="org.eclipse.ui.commands">
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.manageTenants"
+                name="Manage Tenants..."
+                description="Activate or deactivate this collection's tenants"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commandImages">
+        <!-- Borrowed from the shared UI bundle rather than shipping another asset.
+             Configuring how a collection is partitioned is the nearest existing idea. -->
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageTenants"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/config_table.svg"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <!-- Same shape as selectTenant: an instanceof on the collection is all the enablement
+             needed, since a single-tenant collection is answered by the handler with a message
+             rather than by hiding the item. Hiding it would leave someone who expected tenants
+             on this collection with nothing to click and no explanation. -->
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageTenants"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateManageTenantsHandler">
             <enabledWhen>
                 <with variable="selection">
                     <count value="1"/>

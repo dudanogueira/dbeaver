@@ -155,6 +155,29 @@ public final class WeaviateUIMessages extends NLS {
     public static String tenant_list_failed;
     public static String tenant_selected;
 
+    // Manage tenants
+    public static String tenant_manage_title;
+    public static String tenant_manage_title_plain;
+    public static String tenant_manage_prompt;
+    public static String tenant_manage_filter_hint;
+    public static String tenant_manage_column_name;
+    public static String tenant_manage_column_status;
+    public static String tenant_manage_count;
+    public static String tenant_manage_scope_all;
+    public static String tenant_manage_scope_contains;
+    public static String tenant_manage_scope_pattern;
+    public static String tenant_manage_scope_selected_suffix;
+    public static String tenant_manage_scope_matching_suffix;
+    public static String tenant_manage_activate;
+    public static String tenant_manage_deactivate;
+    public static String tenant_manage_confirm_activate;
+    public static String tenant_manage_confirm_deactivate;
+    public static String tenant_manage_confirm_unchanged;
+    public static String tenant_manage_activated;
+    public static String tenant_manage_deactivated;
+    public static String tenant_manage_failed;
+    public static String tenant_manage_none;
+
     // Hybrid alpha slider
     public static String query_alpha_keyword_end;
     public static String query_alpha_vector_end;
