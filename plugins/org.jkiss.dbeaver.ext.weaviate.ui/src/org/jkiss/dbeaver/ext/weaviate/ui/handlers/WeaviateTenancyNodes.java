@@ -30,8 +30,11 @@ import org.jkiss.dbeaver.model.struct.DBSObject;
 import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Works out which collection a navigator node is talking about, for the tenancy actions.
@@ -111,6 +114,51 @@ final class WeaviateTenancyNodes {
             return null;
         }
         return null;
+    }
+
+    /**
+     * Every distinct multi-tenant collection the selection points at, for the settings that can
+     * be applied across collections.
+     * <p>
+     * Deduplicated by identity, because selecting a collection and its Multi-Tenancy folder both
+     * resolve to the same collection and applying a change to it twice is not what that means.
+     * Nodes that resolve to nothing -- a single-tenant collection, a Properties folder, a tenant
+     * -- are dropped rather than failing the whole selection: a stray node in a multi-selection
+     * should not make the action disappear.
+     */
+    @NotNull
+    static List<WeaviateCollection> selectedCollections(@Nullable ISelection selection) {
+        return distinctCollections(selection, WeaviateTenancyNodes::collectionScoped);
+    }
+
+    /**
+     * Like {@link #selectedCollections}, but a tenant counts as its collection.
+     * <p>
+     * For the actions that work on a collection reached through any of its tenancy nodes, where
+     * the question is "how many collections is this selection about" -- one, so a dialog can open
+     * on it, or several, which no single-collection dialog can answer.
+     */
+    @NotNull
+    static List<WeaviateCollection> selectedTenancyCollections(@Nullable ISelection selection) {
+        return distinctCollections(selection, WeaviateTenancyNodes::multiTenantCollection);
+    }
+
+    @NotNull
+    private static List<WeaviateCollection> distinctCollections(
+        @Nullable ISelection selection, @NotNull Function<DBNNode, WeaviateCollection> resolver
+    ) {
+        List<WeaviateCollection> collections = new ArrayList<>();
+        if (selection == null) {
+            return collections;
+        }
+        Set<WeaviateCollection> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (DBNNode node : NavigatorUtils.getSelectedNodes(selection)) {
+            WeaviateCollection collection = resolver.apply(node);
+            if (collection != null && seen.add(collection)) {
+                collections.add(collection);
+            }
+        }
+        return collections;
     }
 
     /** Every tenant node in the selection, in selection order. */

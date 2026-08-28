@@ -31,10 +31,8 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantNode;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateTenantManageDialog;
 import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
-import org.jkiss.dbeaver.model.navigator.DBNNode;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.ui.UIUtils;
-import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
@@ -77,18 +75,22 @@ public class WeaviateManageTenantsHandler extends AbstractHandler {
 
     @Override
     public void setEnabled(Object evaluationContext) {
-        setBaseEnabled(WeaviateTenancyNodes.multiTenantCollection(
-            WeaviateTenancyNodes.selectedNode(evaluationContext)) != null);
+        // Exactly one: the dialog manages one collection's tenants, and with several selected
+        // there is no non-arbitrary answer to which one it should open on. Several tenants of
+        // the same collection still count as one, which is the case that matters.
+        setBaseEnabled(WeaviateTenancyNodes.selectedTenancyCollections(
+            WeaviateTenancyNodes.selectionOf(evaluationContext)).size() == 1);
     }
 
     @Override
     public Object execute(ExecutionEvent event) {
         ISelection selection = HandlerUtil.getCurrentSelection(event);
-        DBNNode node = NavigatorUtils.getSelectedNode(selection);
-        WeaviateCollection collection = WeaviateTenancyNodes.multiTenantCollection(node);
-        if (collection == null) {
+        List<WeaviateCollection> collections =
+            WeaviateTenancyNodes.selectedTenancyCollections(selection);
+        if (collections.size() != 1) {
             return null;
         }
+        WeaviateCollection collection = collections.get(0);
         List<String> initialTenants = tenantsOf(selection);
         Shell shell = HandlerUtil.getActiveShell(event);
 
