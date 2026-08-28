@@ -148,31 +148,28 @@
     </extension>
 
     <extension point="org.eclipse.ui.commandImages">
-        <!-- Borrowed from the shared UI bundle rather than shipping another asset.
-             Configuring how a collection is partitioned is the nearest existing idea. -->
+        <!-- All borrowed from the shared UI bundle rather than shipping new assets.
+             manageTenants: configuring how a collection is partitioned.
+             selectTenant:  a partition, the same icon a tenant node carries in the tree, so the
+                            command and the thing it picks look like each other.
+             exportSchema:  the platform's own export arrow. -->
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageTenants"
                icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/config_table.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant"
+               icon="platform:/plugin/org.jkiss.dbeaver.model/icons/tree/partition.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.exportSchema"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/sql/table_export.svg"/>
     </extension>
 
     <extension point="org.eclipse.ui.handlers">
-        <!-- Same shape as selectTenant: an instanceof on the collection is all the enablement
-             needed, since a single-tenant collection is answered by the handler with a message
-             rather than by hiding the item. Hiding it would leave someone who expected tenants
-             on this collection with nothing to click and no explanation. -->
+        <!-- No <enabledWhen>: the action is offered on the collection, its Multi-Tenancy and
+             Tenants folders, and a single tenant. Folders are matched on their meta id, which no
+             built-in property tester exposes, and a tester from this lazily-activated bundle
+             would evaluate as NOT_LOADED before the bundle starts. The handler's setEnabled()
+             computes it instead, as WeaviateReadDocsHandler does. -->
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageTenants"
-                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateManageTenantsHandler">
-            <enabledWhen>
-                <with variable="selection">
-                    <count value="1"/>
-                    <iterate operator="and">
-                        <adapt type="org.jkiss.dbeaver.model.struct.DBSObject">
-                            <instanceof value="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"/>
-                        </adapt>
-                    </iterate>
-                </with>
-            </enabledWhen>
-        </handler>
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateManageTenantsHandler"/>
     </extension>
 
     <extension point="org.eclipse.ui.commands">
