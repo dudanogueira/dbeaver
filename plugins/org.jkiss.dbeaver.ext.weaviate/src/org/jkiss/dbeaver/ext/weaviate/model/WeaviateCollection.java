@@ -61,6 +61,7 @@ import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.model.DBPDataKind;
 import org.jkiss.dbeaver.model.DBPDataSource;
+import org.jkiss.dbeaver.model.DBPRefreshableObject;
 import org.jkiss.dbeaver.model.DBUtils;
 import org.jkiss.dbeaver.model.data.DBDAttributeConstraint;
 import org.jkiss.dbeaver.model.data.DBDDataFilter;
@@ -98,7 +99,7 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.TreeMap;
 
-public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
+public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRefreshableObject {
 
     private static final String[] SUPPORTED_FEATURES = new String[]{
         FEATURE_DATA_SELECT,
@@ -1904,6 +1905,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
             CollectionConfig fresh = dataSource.getClient().collections.getConfig(getName())
                 .orElseThrow(() -> new DBException(getName() + " no longer exists"));
             this.config = fresh;
+            this.attributes = null;
             this.definitionNodes = null;
             resetTenantCache();
         } catch (DBException e) {
@@ -1911,6 +1913,26 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator {
         } catch (Exception e) {
             throw new DBException("Cannot re-read " + getName() + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Re-reads this collection when the navigator refreshes its node.
+     * <p>
+     * Without this the collection is not a {@link DBPRefreshableObject}, and
+     * {@code DBNDatabaseNode#refreshNode} falls through to {@code DBNNode#refreshNode}, which
+     * hands the request to the parent -- recursively, all the way up to the datasource node. That
+     * disconnects and reconnects the connection, so refreshing one collection tore down the
+     * client and every later call failed with a null {@code getClient()} until the editor was
+     * reopened.
+     *
+     * @return this collection, since Weaviate has nothing to replace it with -- the definition is
+     *         re-read in place
+     */
+    @Nullable
+    @Override
+    public DBSObject refreshObject(@NotNull DBRProgressMonitor monitor) throws DBException {
+        refreshConfig();
+        return this;
     }
 
     /**
