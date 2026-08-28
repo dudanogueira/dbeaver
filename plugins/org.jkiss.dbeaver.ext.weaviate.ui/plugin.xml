@@ -78,6 +78,19 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageTenants">
                 <visibleWhen checkEnabled="true"/>
             </command>
+            <!-- style="toggle" so the tick reports the current setting; the handler draws it
+                 from the collection in updateElement. Both entries are the same command told
+                 apart by its option parameter. -->
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenant"
+                     id="weaviate.autoTenantCreation" style="toggle">
+                <parameter name="option" value="creation"/>
+                <visibleWhen checkEnabled="true"/>
+            </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenant"
+                     id="weaviate.autoTenantActivation" style="toggle">
+                <parameter name="option" value="activation"/>
+                <visibleWhen checkEnabled="true"/>
+            </command>
             <!-- checkEnabled hides the item on a property that is not tokenized at all, which
                  is a permanent fact about that property. A server merely being too old is not
                  handled by hiding: the handler leaves the command enabled and rewrites its label
@@ -170,6 +183,27 @@
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageTenants"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateManageTenantsHandler"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commands">
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenant"
+                name="Automatic Tenants"
+                description="Turn automatic tenant creation or activation on and off"
+                categoryId="org.jkiss.dbeaver.core.navigator">
+            <!-- Which of the two settings an invocation is about. The label shown in the menu is
+                 set per element by the handler, so the command name above is never displayed. -->
+            <commandParameter id="option" name="Option" optional="false"/>
+        </command>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <!-- No <enabledWhen>: the condition is a folder meta id, which no built-in property
+             tester exposes, and a tester from this lazily-activated bundle evaluates as
+             NOT_LOADED before the bundle starts. setEnabled() computes it. -->
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenant"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateToggleAutoTenantHandler"/>
     </extension>
 
     <extension point="org.eclipse.ui.commands">
