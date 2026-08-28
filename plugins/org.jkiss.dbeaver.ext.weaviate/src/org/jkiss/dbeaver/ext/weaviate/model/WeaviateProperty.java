@@ -21,13 +21,14 @@ import io.weaviate.client6.v1.api.collections.Property;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.model.DBPDataKind;
+import org.jkiss.dbeaver.model.DBPToolTipObject;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.struct.DBSEntity;
 import org.jkiss.dbeaver.model.struct.DBSEntityAttribute;
 
 import java.util.List;
 
-public class WeaviateProperty implements DBSEntityAttribute {
+public class WeaviateProperty implements DBSEntityAttribute, DBPToolTipObject {
 
     private final WeaviateCollection collection;
     private final Property property;
@@ -41,6 +42,27 @@ public class WeaviateProperty implements DBSEntityAttribute {
         this.collection = collection;
         this.property = property;
         this.ordinalPosition = ordinalPosition;
+    }
+
+    /**
+     * The type shown beside the property name in the navigator, e.g. {@code title (text, word)}.
+     * <p>
+     * Every JDBC-backed column gets this for free by extending {@code AbstractAttribute}, whose
+     * {@code getObjectToolTip} returns the full type name -- which is why a Postgres column reads
+     * {@code id (int4)}. This class implements {@code DBSEntityAttribute} directly, so without
+     * this it showed a bare name while every other database showed a type.
+     * <p>
+     * The tokenization is appended when there is one, because for a text property it is the thing
+     * that actually explains search behaviour, and it is otherwise buried in the properties grid.
+     * The label provider wraps this in parentheses, so it must stay short.
+     */
+    @Nullable
+    @Override
+    public String getObjectToolTip() {
+        String tokenization = getTokenization();
+        return tokenization == null
+            ? getTypeName()
+            : getTypeName() + ", " + tokenization.toLowerCase(java.util.Locale.ROOT);
     }
 
     @NotNull

@@ -19,6 +19,7 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.model.DBPDataKind;
+import org.jkiss.dbeaver.model.DBPToolTipObject;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.struct.DBSEntity;
 import org.jkiss.dbeaver.model.struct.DBSEntityAttribute;
@@ -35,7 +36,7 @@ import org.jkiss.dbeaver.model.struct.DBSObject;
  *
  * @see WeaviateUuidConstraint the primary key over this attribute, which makes row deletion work
  */
-public class WeaviateUuidAttribute implements DBSEntityAttribute {
+public class WeaviateUuidAttribute implements DBSEntityAttribute, DBPToolTipObject {
 
     private final WeaviateCollection collection;
 
@@ -58,6 +59,13 @@ public class WeaviateUuidAttribute implements DBSEntityAttribute {
     @Override
     public String getTypeName() {
         return "uuid";
+    }
+
+    /** Matches the real properties, so the synthetic column does not read as a different kind. */
+    @Nullable
+    @Override
+    public String getObjectToolTip() {
+        return getTypeName();
     }
 
     @NotNull

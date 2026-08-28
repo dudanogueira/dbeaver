@@ -18,6 +18,7 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 
 import io.weaviate.client6.v1.api.collections.DataType;
 import org.jkiss.dbeaver.model.DBPDataKind;
+import org.jkiss.dbeaver.model.DBPToolTipObject;
 import org.jkiss.junit.DBeaverUnitTest;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -119,5 +120,22 @@ public class WeaviatePropertyTest extends DBeaverUnitTest {
     @Test
     public void unknownTypeMapsToObject() {
         Assertions.assertEquals(DBPDataKind.OBJECT, WeaviateProperty.mapDataKind("_unknown_future_type_"));
+    }
+
+    /**
+     * The navigator appends this in parentheses after the name, so a text property reads
+     * {@code title (text, word)} rather than a bare {@code title}.
+     * <p>
+     * Every JDBC-backed column gets this free from {@code AbstractAttribute}; this class
+     * implements {@code DBSEntityAttribute} directly and so had to opt in. Asserted here because
+     * the symptom of losing it is subtle -- the tree still works, it just says less than every
+     * other driver does.
+     */
+    @Test
+    public void propertyAndUuidBothAdvertiseATooltip() {
+        Assertions.assertTrue(DBPToolTipObject.class.isAssignableFrom(WeaviateProperty.class),
+            "WeaviateProperty must implement DBPToolTipObject or the navigator shows a bare name");
+        Assertions.assertTrue(DBPToolTipObject.class.isAssignableFrom(WeaviateUuidAttribute.class),
+            "the synthetic uuid column should read like the real ones");
     }
 }
