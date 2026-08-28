@@ -30,10 +30,10 @@ import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.ui.dialogs.DialogUtils;
 import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * Writes the selected collection's definition to a JSON file.
@@ -59,7 +59,7 @@ public class WeaviateExportSchemaHandler extends AbstractHandler {
         // so there is no server round-trip to push off the UI thread here.
         String json = collection.toSchemaJson();
 
-        File file = DialogUtils.selectFileForSave(
+        Path file = DialogUtils.selectFileForSave(
             shell,
             WeaviateUIMessages.export_schema_title,
             new String[]{"*.json", "*", "*.*"},
@@ -68,7 +68,7 @@ public class WeaviateExportSchemaHandler extends AbstractHandler {
             return null;
         }
         try {
-            Files.writeString(file.toPath(), json, StandardCharsets.UTF_8);
+            Files.writeString(file, json, StandardCharsets.UTF_8);
         } catch (IOException e) {
             log.error("Cannot write collection schema to " + file, e);
             DBWorkbench.getPlatformUI().showError(

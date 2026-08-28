@@ -43,10 +43,10 @@ import org.jkiss.dbeaver.ui.dialogs.BaseDialog;
 import org.jkiss.dbeaver.ui.dialogs.DialogUtils;
 import org.jkiss.utils.CommonUtils;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * Editor for a Weaviate collection definition, expressed as REST schema JSON.
@@ -166,17 +166,17 @@ public class WeaviateCollectionEditDialog extends BaseDialog {
     }
 
     private void loadFromFile() {
-        File file = DialogUtils.openFile(getShell(), new String[]{"*.json", "*", "*.*"});
+        Path file = DialogUtils.openFile(getShell(), new String[]{"*.json", "*", "*.*"});
         if (file == null) {
             return;
         }
         try {
-            jsonText.setText(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+            jsonText.setText(Files.readString(file, StandardCharsets.UTF_8));
         } catch (IOException e) {
             log.debug("Cannot read collection definition from " + file, e);
             DBWorkbench.getPlatformUI().showError(
                 WeaviateUIMessages.collection_dialog_title,
-                NLS.bind(WeaviateUIMessages.collection_dialog_read_error, file.getName(), e.getMessage()),
+                NLS.bind(WeaviateUIMessages.collection_dialog_read_error, file.getFileName(), e.getMessage()),
                 e);
         }
     }
