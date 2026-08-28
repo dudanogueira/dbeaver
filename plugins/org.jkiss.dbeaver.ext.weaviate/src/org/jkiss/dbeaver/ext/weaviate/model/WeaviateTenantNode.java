@@ -21,11 +21,14 @@ import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBPImage;
 import org.jkiss.dbeaver.model.DBPImageProvider;
+import org.jkiss.dbeaver.model.DBPStatefulObject;
 import org.jkiss.dbeaver.model.DBPToolTipObject;
 import org.jkiss.dbeaver.model.DBIcon;
 import org.jkiss.dbeaver.model.DBIconComposite;
 import org.jkiss.dbeaver.model.meta.Property;
+import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.struct.DBSObject;
+import org.jkiss.dbeaver.model.struct.DBSObjectState;
 
 /**
  * One tenant of a multi-tenant collection, as a navigator node.
@@ -35,7 +38,21 @@ import org.jkiss.dbeaver.model.struct.DBSObject;
  * is the server's own answer, which arrives as
  * {@code UNKNOWN: explorer: list class: search: ... tenant not active}.
  */
-public class WeaviateTenantNode implements DBSObject, DBPImageProvider, DBPToolTipObject {
+public class WeaviateTenantNode implements DBSObject, DBPImageProvider, DBPToolTipObject, DBPStatefulObject {
+
+    /**
+     * Overlays for the states that are not "running normally".
+     * <p>
+     * These reach the tree through {@code DBNDatabaseNode#getNodeIcon}, which applies a stateful
+     * object's overlay unconditionally. That matters: the {@code (Inactive)} text next to the
+     * name comes from {@link #getObjectToolTip()} and only appears when the "Show object tips"
+     * navigator preference is on, which it is not by default. The overlay is the part that is
+     * always there.
+     */
+    private static final DBSObjectState STATE_INACTIVE =
+        new DBSObjectState("Inactive", DBIcon.OVER_LOCK);
+    private static final DBSObjectState STATE_TRANSITIONAL =
+        new DBSObjectState("In transition", DBIcon.OVER_UNKNOWN);
 
     private final WeaviateCollection collection;
     private final WeaviateTenant tenant;
@@ -64,28 +81,50 @@ public class WeaviateTenantNode implements DBSObject, DBPImageProvider, DBPToolT
     }
 
     /**
-     * Puts the state in the label, as {@code acme-ap-south (Inactive)}. Active tenants are left
-     * unadorned: the normal case should not be noisy, and it is the exception that has to carry
-     * a warning.
+     * Puts the state in the label, as {@code acme-ap-south (Inactive)}.
+     * <p>
+     * Only rendered when the navigator's "Show object tips" preference is on, so it cannot be the
+     * only signal -- see {@link #getObjectState()} for the one that always shows. Given it is
+     * opt-in, every tenant names its state rather than only the unusual ones: someone who turned
+     * that preference on wants to read states, not infer them from an absence.
      */
     @Nullable
     @Override
     public String getObjectToolTip() {
-        return tenant.isActive() ? null : tenant.status().getLabel();
+        return tenant.status().getLabel();
     }
 
     /**
-     * A partition, since that is what a tenant is. An inactive one gets the platform's greyed
-     * treatment plus a lock, which is the same visual language the navigator already uses for
-     * something present but not available -- rather than a new icon nobody has seen before.
+     * A partition, since that is what a tenant is, greyed out when the tenant will not answer.
+     * <p>
+     * The lock is not added here -- {@link #getObjectState()} supplies it, and the platform
+     * composes the two. Doing both here would put two overlays in the same corner, since
+     * {@code DBNModel#getStateOverlayImage} writes the state into the bottom right of whatever
+     * composite it is handed.
      */
     @NotNull
     @Override
     public DBPImage getObjectImage() {
-        if (tenant.isActive()) {
-            return DBIcon.TREE_PARTITION;
+        return tenant.isActive()
+            ? DBIcon.TREE_PARTITION
+            : new DBIconComposite(DBIcon.TREE_PARTITION, true, null, null, null, null);
+    }
+
+    @NotNull
+    @Override
+    public DBSObjectState getObjectState() {
+        if (tenant.status().isTransitional()) {
+            return STATE_TRANSITIONAL;
         }
-        return new DBIconComposite(DBIcon.TREE_PARTITION, true, null, null, null, DBIcon.OVER_LOCK);
+        // Active is the ordinary case and gets no overlay: marking every healthy tenant would
+        // make a list of thousands noisy and leave the exception no easier to spot.
+        return tenant.isActive() ? DBSObjectState.NORMAL : STATE_INACTIVE;
+    }
+
+    @Override
+    public void refreshObjectState(@NotNull DBRProgressMonitor monitor) {
+        // The state travels with the tenant this node was built from, and the list is rebuilt by
+        // WeaviateCollection#getTenantNodes after any change, so there is nothing to re-read here.
     }
 
     @Nullable
