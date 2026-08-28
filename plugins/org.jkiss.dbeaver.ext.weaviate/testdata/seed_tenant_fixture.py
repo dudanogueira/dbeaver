@@ -15,7 +15,10 @@ are mixed on purpose; a fixture where every tenant is ACTIVE cannot show a statu
 OFFLOADED is not seeded. It needs an offload module (offload-s3) on the server, and a stock
 Weaviate has none, so the script reports that rather than pretending the status is unreachable.
 
-    uv run --with weaviate-client seed_tenant_fixture.py
+Pass a count to also seed a large collection, for seeing how the UI holds up:
+
+    uv run --with weaviate-client seed_tenant_fixture.py            # the three above
+    uv run --with weaviate-client seed_tenant_fixture.py --scale 4000
 
 Environment:
     WEAVIATE_HTTP_HOST / _PORT, WEAVIATE_GRPC_HOST / _PORT, WEAVIATE_API_KEY
@@ -25,6 +28,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 import weaviate
 import weaviate.classes.config as wc
@@ -34,6 +38,7 @@ from weaviate.classes.tenants import Tenant, TenantActivityStatus
 MAIN = "DBeaverTenantFixture"
 AUTO = "DBeaverTenantAutoFixture"
 MIXED = "DBeaverTenantMixedFixture"
+SCALE = "DBeaverTenantScaleFixture"
 
 HTTP_HOST = os.environ.get("WEAVIATE_HTTP_HOST", "localhost")
 HTTP_PORT = int(os.environ.get("WEAVIATE_HTTP_PORT", "8080"))
@@ -169,6 +174,39 @@ def seed_mixed(client: weaviate.WeaviateClient) -> None:
     print(f"  {sleeper}: set INACTIVE, {outcome}, now {status.value}")
 
 
+def seed_scale(client: weaviate.WeaviateClient, total: int) -> None:
+    """A collection big enough that a UI which renders every row will show it.
+
+    Names are <company>-<type>-<n>, three axes, so a wildcard on any one of them selects a
+    different slice: company01-* is 200 tenants, company01-type1-* is 50, *-type1-* is 1000.
+    """
+    print(f"\n{SCALE}: {total} tenants")
+    collection = recreate(client, SCALE, wc.Configure.multi_tenancy(enabled=True))
+
+    per_type = 50
+    names = [f"company{c:02d}-type{t}-{r:03d}"
+             for c in range(1, 21) for t in range(1, 5) for r in range(1, per_type + 1)][:total]
+
+    # Chunked because the create is a single request otherwise, and a few thousand tenants in
+    # one body is a slow way to find out something is wrong.
+    chunk = 500
+    t0 = time.time()
+    for i in range(0, len(names), chunk):
+        collection.tenants.create([Tenant(name=n) for n in names[i:i + chunk]])
+    print(f"  created in {time.time() - t0:.1f}s")
+
+    # A slice deactivated, so the status column has something to show at this scale too.
+    sleepers = [n for n in names if n.startswith("company01-type1-")]
+    t0 = time.time()
+    collection.tenants.update([
+        Tenant(name=n, activity_status=TenantActivityStatus.INACTIVE) for n in sleepers])
+    print(f"  deactivated {len(sleepers)} matching company01-type1-* in {time.time() - t0:.1f}s")
+
+    t0 = time.time()
+    listed = collection.tenants.get()
+    print(f"  listing all {len(listed)} back: {(time.time() - t0) * 1000:.0f} ms")
+
+
 def report(client: weaviate.WeaviateClient) -> None:
     print("\ntenants as the server sees them:\n")
     print(f"  {'collection':28s} {'tenant':20s} {'status':10s} objects")
@@ -185,15 +223,23 @@ def report(client: weaviate.WeaviateClient) -> None:
         else "not seeded -- this server has no offload module, so the status is unreachable"))
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
+    scale = 0
+    if "--scale" in argv:
+        scale = int(argv[argv.index("--scale") + 1])
+
     with connect() as client:
         seed_main(client)
         seed_auto(client)
         seed_mixed(client)
+        if scale:
+            seed_scale(client, scale)
         report(client)
-        print(f"\nOpen {MAIN} in DBeaver and use Select Tenant to switch between them.")
+        print(f"\nOpen {MAIN} in DBeaver and right-click it -> Manage Tenants.")
+        if scale:
+            print(f"For the scale test, open {SCALE} and filter on company01-type1-*")
         return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
