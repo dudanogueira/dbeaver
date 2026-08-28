@@ -267,6 +267,7 @@ public class WeaviateTenantManageDialog extends BaseDialog {
             UIUtils.runInProgressService(monitor -> {
                 try {
                     collection.setAutoTenantOptions(monitor, creation, activation);
+                    WeaviateNavigatorRefresh.afterTenantChange(monitor, collection);
                 } catch (DBException e) {
                     throw new InvocationTargetException(e);
                 }
@@ -281,7 +282,6 @@ public class WeaviateTenantManageDialog extends BaseDialog {
         // Show what the server holds, not what was asked for.
         autoCreation.setSelection(Boolean.TRUE.equals(collection.getAutoTenantCreation()));
         autoActivation.setSelection(Boolean.TRUE.equals(collection.getAutoTenantActivation()));
-        WeaviateNavigatorRefresh.afterTenantChange(collection);
     }
 
     /**
@@ -444,6 +444,7 @@ public class WeaviateTenantManageDialog extends BaseDialog {
                     // Cancelling stops at a chunk boundary, so what the server holds now is not
                     // necessarily what was asked for. Re-read rather than patch the local list.
                     allTenants = collection.listTenants(monitor);
+                    WeaviateNavigatorRefresh.afterTenantChange(monitor, collection);
                 } catch (DBException e) {
                     throw new InvocationTargetException(e);
                 }
@@ -460,9 +461,6 @@ public class WeaviateTenantManageDialog extends BaseDialog {
         }
 
         applyFilter();
-        // The tree holds its own tenant nodes and keeps drawing them until told otherwise, so
-        // without this the navigator goes on showing the state that was just changed.
-        WeaviateNavigatorRefresh.afterTenantChange(collection);
         countLabel.setText(MessageFormat.format(
             target == WeaviateTenantStatus.ACTIVE
                 ? WeaviateUIMessages.tenant_manage_activated

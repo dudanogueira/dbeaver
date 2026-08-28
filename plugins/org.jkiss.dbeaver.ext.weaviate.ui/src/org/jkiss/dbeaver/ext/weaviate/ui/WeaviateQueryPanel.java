@@ -829,6 +829,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 try {
                     collection.setTenantStatus(monitor, java.util.List.of(tenant),
                         WeaviateTenantStatus.ACTIVE);
+                    WeaviateNavigatorRefresh.afterTenantChange(monitor, collection);
                 } catch (DBException e) {
                     throw new InvocationTargetException(e);
                 }
@@ -841,7 +842,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             return;
         }
         dismissBanner();
-        WeaviateNavigatorRefresh.afterTenantChange(collection);
         refreshTenants();
         runQuery();
     }

@@ -126,6 +126,7 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
             UIUtils.runInProgressService(monitor -> {
                 try {
                     collection.setTenantStatus(monitor, tenants, target);
+                    WeaviateNavigatorRefresh.afterTenantChange(monitor, collection);
                 } catch (DBException e) {
                     throw new InvocationTargetException(e);
                 }
@@ -140,7 +141,6 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
         } catch (InterruptedException e) {
             return null;
         }
-        WeaviateNavigatorRefresh.afterTenantChange(collection);
         return null;
     }
 

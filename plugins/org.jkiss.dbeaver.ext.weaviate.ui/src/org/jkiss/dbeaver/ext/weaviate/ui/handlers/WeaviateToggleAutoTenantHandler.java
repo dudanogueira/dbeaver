@@ -199,6 +199,9 @@ public class WeaviateToggleAutoTenantHandler extends AbstractHandler implements 
                         }
                         monitor.worked(1);
                     }
+                    // One pass at the end rather than one per collection: refreshing a node is
+                    // not free, and nothing between the loop and here reads the tree.
+                    WeaviateNavigatorRefresh.afterTenantChange(monitor, changed);
                 } finally {
                     monitor.done();
                 }
@@ -214,9 +217,6 @@ public class WeaviateToggleAutoTenantHandler extends AbstractHandler implements 
             // Whatever was applied before the cancel stands, so fall through and refresh.
         }
 
-        for (WeaviateCollection collection : changed) {
-            WeaviateNavigatorRefresh.afterTenantChange(collection);
-        }
         if (!failed.isEmpty()) {
             DBWorkbench.getPlatformUI().showMessageBox(
                 WeaviateUIMessages.tenant_manage_auto_group,
