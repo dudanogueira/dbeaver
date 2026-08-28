@@ -67,6 +67,7 @@ public class WeaviateDataSource extends AbstractDataSource
     private volatile InstanceMetadata cachedMetadata;
     private volatile List<WeaviateMetadataField> metadataFields;
     private volatile List<WeaviateModule> modules;
+    private volatile List<WeaviateBackupEntry> backupEntries;
     private final long id;
     private final DBPExclusiveResource exclusiveLock = new SimpleExclusiveLock();
     /**
@@ -369,6 +370,7 @@ public class WeaviateDataSource extends AbstractDataSource
         cachedMetadata = null;
         metadataFields = null;
         modules = null;
+        backupEntries = null;
         if (client != null) {
             try {
                 client.close();
@@ -721,6 +723,108 @@ public class WeaviateDataSource extends AbstractDataSource
             }
         }
         return modules;
+    }
+
+    /**
+     * The backup backends, always all four, plus one advisory row when none of them is enabled.
+     * <p>
+     * Nothing here is gated on a module being present -- the folder has to appear on a server
+     * with no backup module at all, because "backups are not set up" is a thing worth being told
+     * and an absent folder tells nobody anything.
+     */
+    @Association
+    public List<WeaviateBackupEntry> getBackupEntries(@NotNull DBRProgressMonitor monitor)
+        throws DBException {
+        if (backupEntries == null) {
+            synchronized (this) {
+                if (backupEntries == null) {
+                    InstanceMetadata m = getInstanceMetadata();
+                    java.util.Map<String, Object> modules =
+                        m == null || m.modules() == null ? java.util.Map.of() : m.modules();
+
+                    List<WeaviateBackupEntry> result = new ArrayList<>();
+                    boolean anyAvailable = false;
+                    for (String backendId : WeaviateBackupBackend.KNOWN) {
+                        Object module = modules.get(WeaviateBackupBackend.moduleNameFor(backendId));
+                        boolean available = module != null;
+                        anyAvailable |= available;
+                        result.add(new WeaviateBackupBackend(
+                            this, backendId, available, destinationOf(module)));
+                    }
+                    if (!anyAvailable) {
+                        result.add(new WeaviateBackupAdvice(this));
+                    }
+                    backupEntries = result;
+                }
+            }
+        }
+        return backupEntries;
+    }
+
+    /**
+     * Where a backend writes, as it describes itself in {@code /v1/meta}.
+     * <p>
+     * Each backup module reports its own destination under its own key -- filesystem says
+     * {@code backupsPath}, the object stores say {@code bucketName} -- so this reads the first one
+     * that is there rather than assuming a shape. Null is a fine answer; the row just shows no
+     * destination.
+     */
+    @Nullable
+    private static String destinationOf(@Nullable Object module) {
+        if (!(module instanceof java.util.Map<?, ?> map)) {
+            return null;
+        }
+        for (String key : new String[]{"backupsPath", "bucketName", "bucket", "container", "path"}) {
+            Object value = map.get(key);
+            if (value != null && !value.toString().isBlank()) {
+                return value.toString();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Backups held by one backend, newest first, which is the server's own default ordering.
+     */
+    @NotNull
+    public List<WeaviateBackup> listBackups(
+        @NotNull DBRProgressMonitor monitor, @NotNull String backendId
+    ) throws DBException {
+        monitor.subTask("Read backups from " + backendId);
+        try {
+            List<WeaviateBackup> result = new ArrayList<>();
+            for (io.weaviate.client6.v1.api.backup.Backup b : getClient().backup.list(backendId)) {
+                result.add(toModel(b, backendId));
+            }
+            return result;
+        } catch (Exception e) {
+            throw new DBException(
+                "Cannot list backups of " + backendId + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Translates the client's backup record across the bundle boundary.
+     * <p>
+     * The status is resolved from the enum's <em>name</em> rather than switched on, because the
+     * client's enum is missing TRANSFERRED and Gson answers null for a name it does not know --
+     * see {@link WeaviateBackupStatus}. Reading {@code status()} and calling a method on it would
+     * throw partway through every restore.
+     */
+    @NotNull
+    static WeaviateBackup toModel(
+        @NotNull io.weaviate.client6.v1.api.backup.Backup b, @NotNull String backendId
+    ) {
+        return new WeaviateBackup(
+            b.id(),
+            b.backend() == null ? backendId : b.backend(),
+            b.path(),
+            b.includesCollections() == null ? List.of() : b.includesCollections(),
+            WeaviateBackupStatus.fromName(b.status() == null ? null : b.status().name()),
+            b.error(),
+            b.startedAt(),
+            b.completedAt(),
+            b.sizeGiB());
     }
 
     public WeaviateClient getClient() {

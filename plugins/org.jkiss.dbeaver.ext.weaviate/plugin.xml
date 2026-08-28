@@ -54,6 +54,20 @@
                         </folder>
                     </items>
                 </folder>
+                <!-- No visibleIf: this folder appears on every Weaviate connection, including
+                     one with no backup module at all. That case is the reason it exists. An
+                     absent folder cannot say "backups are not configured here", and an empty one
+                     is indistinguishable from a broken one, so getBackupEntries adds a row that
+                     names the setting instead. -->
+                <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateBackupEntry"
+                        id="backups" label="Backups" icon="#folder_admin"
+                        description="Backup backends and the backups they hold">
+                    <items label="Backend" itemLabel="Backend"
+                           path="backupBackend" property="backupEntries">
+                        <items label="Backup" itemLabel="Backup"
+                               path="backup" property="backups"/>
+                    </items>
+                </folder>
                 <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"
                         label="Collections"
                         icon="#folder_table"
