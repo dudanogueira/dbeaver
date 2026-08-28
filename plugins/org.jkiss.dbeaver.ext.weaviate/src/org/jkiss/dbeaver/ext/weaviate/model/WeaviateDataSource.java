@@ -827,6 +827,142 @@ public class WeaviateDataSource extends AbstractDataSource
             b.sizeGiB());
     }
 
+    /**
+     * Starts a backup and returns as soon as the server has accepted it.
+     * <p>
+     * Deliberately does not wait. The client offers {@code Backup.waitForCompletion}, which
+     * blocks inside the client with no way to see which phase it is in, cannot be cancelled from
+     * outside, and gives up after a fixed hour -- so a large backup that is still running would
+     * report as failed. Callers poll {@link #getBackupStatus} instead, which costs a loop and buys
+     * a progress line and a Cancel that reaches the server.
+     *
+     * @param include collections to back up, or empty for all
+     * @param exclude collections to skip; the server refuses a request carrying both
+     */
+    @NotNull
+    public WeaviateBackup startBackup(
+        @NotNull DBRProgressMonitor monitor,
+        @NotNull String backendId,
+        @NotNull String backupId,
+        @NotNull List<String> include,
+        @NotNull List<String> exclude,
+        @Nullable Integer cpuPercentage
+    ) throws DBException {
+        if (!include.isEmpty() && !exclude.isEmpty()) {
+            // The server says "malformed request: 'include' and 'exclude' cannot both contain
+            // values"; saying it here keeps the round trip out of an obvious mistake.
+            throw new DBException("A backup can name collections to include or to exclude, not both");
+        }
+        monitor.subTask("Start backup " + backupId);
+        try {
+            io.weaviate.client6.v1.api.backup.Backup started =
+                getClient().backup.create(backupId, backendId, b -> {
+                    if (!include.isEmpty()) b.includeCollections(include);
+                    if (!exclude.isEmpty()) b.excludeCollections(exclude);
+                    if (cpuPercentage != null) b.cpuPercentage(cpuPercentage);
+                    return b;
+                });
+            return toModel(started, backendId);
+        } catch (Exception e) {
+            throw new DBException("Cannot start backup " + backupId + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Starts a restore. Same no-wait reasoning as {@link #startBackup}.
+     * <p>
+     * Restoring a collection that already exists fails, and fails after the data has been staged
+     * rather than up front -- the server treats it as a per-class failure during the schema apply.
+     * Callers are expected to have said so before getting here.
+     */
+    @NotNull
+    public WeaviateBackup startRestore(
+        @NotNull DBRProgressMonitor monitor,
+        @NotNull String backendId,
+        @NotNull String backupId,
+        @NotNull List<String> include,
+        @NotNull List<String> exclude,
+        @Nullable Integer cpuPercentage
+    ) throws DBException {
+        if (!include.isEmpty() && !exclude.isEmpty()) {
+            throw new DBException("A restore can name collections to include or to exclude, not both");
+        }
+        monitor.subTask("Start restore of " + backupId);
+        try {
+            io.weaviate.client6.v1.api.backup.Backup started =
+                getClient().backup.restore(backupId, backendId, b -> {
+                    if (!include.isEmpty()) b.includeCollections(include);
+                    if (!exclude.isEmpty()) b.excludeCollections(exclude);
+                    if (cpuPercentage != null) b.cpuPercentage(cpuPercentage);
+                    return b;
+                });
+            return toModel(started, backendId);
+        } catch (Exception e) {
+            throw new DBException("Cannot restore " + backupId + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Current state of a create or a restore.
+     * <p>
+     * Empty is a real answer, not a failure: a backup that has never been restored has no restore
+     * status, and the server says so with a 404 that the client models as an empty Optional.
+     */
+    @NotNull
+    public java.util.Optional<WeaviateBackup> getBackupStatus(
+        @NotNull DBRProgressMonitor monitor,
+        @NotNull String backendId,
+        @NotNull String backupId,
+        boolean restore
+    ) throws DBException {
+        try {
+            java.util.Optional<io.weaviate.client6.v1.api.backup.Backup> found = restore
+                ? getClient().backup.getRestoreStatus(backupId, backendId)
+                : getClient().backup.getCreateStatus(backupId, backendId);
+            return found.map(b -> toModel(b, backendId));
+        } catch (Exception e) {
+            throw new DBException(
+                "Cannot read the status of " + backupId + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Asks the server to stop a running create or restore.
+     * <p>
+     * The two are separate calls on purpose. {@code Backup.cancel(client)} looks like it would do
+     * either, but it forwards to the create endpoint whatever the operation is, so cancelling a
+     * restore through it silently addresses the wrong thing.
+     */
+    public void cancelBackup(
+        @NotNull DBRProgressMonitor monitor,
+        @NotNull String backendId,
+        @NotNull String backupId,
+        boolean restore
+    ) throws DBException {
+        monitor.subTask("Cancel " + backupId);
+        try {
+            if (restore) {
+                getClient().backup.cancelRestore(backupId, backendId);
+            } else {
+                getClient().backup.cancelCreate(backupId, backendId);
+            }
+        } catch (Exception e) {
+            throw new DBException("Cannot cancel " + backupId + ": " + e.getMessage(), e);
+        }
+    }
+
+    /** Forgets cached backup listings, so a refresh shows what the server now holds. */
+    public void resetBackupCache() {
+        List<WeaviateBackupEntry> entries = backupEntries;
+        if (entries != null) {
+            for (WeaviateBackupEntry entry : entries) {
+                if (entry instanceof WeaviateBackupBackend backend) {
+                    backend.resetBackupCache();
+                }
+            }
+        }
+    }
+
     public WeaviateClient getClient() {
         return client;
     }

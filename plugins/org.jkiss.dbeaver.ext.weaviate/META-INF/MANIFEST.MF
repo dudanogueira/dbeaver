@@ -9,7 +9,8 @@ Bundle-RequiredExecutionEnvironment: JavaSE-21
 Bundle-Vendor: DBeaver Corp
 Automatic-Module-Name: org.jkiss.dbeaver.ext.weaviate
 Require-Bundle: org.jkiss.dbeaver.model,
- org.jkiss.dbeaver.model.sql
+ org.jkiss.dbeaver.model.sql,
+ org.jkiss.dbeaver.registry
 Bundle-ClassPath: .,
  lib/client6-6.3.1-all.jar
 Export-Package: org.jkiss.dbeaver.ext.weaviate,

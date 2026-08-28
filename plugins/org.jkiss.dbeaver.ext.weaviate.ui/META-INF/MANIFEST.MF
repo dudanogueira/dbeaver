@@ -7,6 +7,8 @@ Bundle-Vendor: DBeaver Corp
 Bundle-RequiredExecutionEnvironment: JavaSE-21
 Bundle-ActivationPolicy: lazy
 Require-Bundle: org.jkiss.dbeaver.model,
+ org.jkiss.dbeaver.registry,
+ org.jkiss.dbeaver.tasks.ui,
  org.jkiss.dbeaver.ext.weaviate,
  org.jkiss.dbeaver.ui,
  org.jkiss.dbeaver.ui.navigator,

@@ -294,6 +294,37 @@
     <!-- Registers the searchable tenant picker with the model bundle. The read path may need
          to ask for a tenant before any Weaviate UI has been opened, so this cannot wait for a
          page or panel to load. -->
+    <extension point="org.jkiss.dbeaver.task.ui">
+        <!-- One configurator for both tasks; the wizard reads the task type to decide which of
+             the two it is building. -->
+        <configurator type="weaviateBackupCreate"
+                      class="org.jkiss.dbeaver.ext.weaviate.ui.tasks.WeaviateBackupTaskConfigurator"
+                      supportsPanel="false"/>
+        <configurator type="weaviateBackupRestore"
+                      class="org.jkiss.dbeaver.ext.weaviate.ui.tasks.WeaviateBackupTaskConfigurator"
+                      supportsPanel="false"/>
+    </extension>
+
+    <extension point="org.jkiss.dbeaver.tools">
+        <!-- Registering the tool is all that is needed for the entry to appear in both the
+             navigator's Tools submenu and the Database menu; the platform contributes those.
+             Enablement comes from the tasks' own <objectType> matching, which is evaluated in the
+             always-active tasks.ui.view bundle and so avoids the NOT_LOADED problem every
+             hand-rolled command in this plugin has had to work around. -->
+        <tools>
+            <tool id="org.jkiss.dbeaver.ext.weaviate.tools.Backup"
+                  label="Backup Collections..." description="Back up collections to a backend"
+                  icon="#export" singleton="false">
+                <task id="weaviateBackupCreate"/>
+            </tool>
+            <tool id="org.jkiss.dbeaver.ext.weaviate.tools.Restore"
+                  label="Restore Backup..." description="Restore collections from this backup"
+                  icon="#import" singleton="true">
+                <task id="weaviateBackupRestore"/>
+            </tool>
+        </tools>
+    </extension>
+
     <extension point="org.eclipse.ui.startup">
         <startup class="org.jkiss.dbeaver.ext.weaviate.ui.WeaviateUIStartup"/>
     </extension>
