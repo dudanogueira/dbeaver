@@ -97,7 +97,7 @@
                      is indistinguishable from a broken one, so getBackupEntries adds a row that
                      names the setting instead. -->
                 <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateBackupEntry"
-                        id="backups" label="Backups" icon="#folder_admin"
+                        id="backups" label="Backups" icon="#folder_database"
                         description="Backup backends and the backups they hold">
                     <items label="Backend" itemLabel="Backend"
                            path="backupBackend" property="backupEntries">

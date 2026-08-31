@@ -996,51 +996,6 @@ public class WeaviateDataSource extends AbstractDataSource
         return null;
     }
 
-    /**
-     * Deletes several collections as one operation.
-     * <p>
-     * A request per collection, deliberately, even for "delete everything". The client has a
-     * {@code deleteAll} that does it in one call, and using it was a mistake: on a server with a
-     * few dozen collections that single request outlives the HTTP read timeout, and the client
-     * then throws while the server carries on and finishes. A timeout is not a failure, but there
-     * is no way to tell them apart from here -- so the operation reports one, the tree is left
-     * showing collections that no longer exist, and the user is told something untrue.
-     * <p>
-     * One request each cannot time out, reports progress as it goes, and can be cancelled. It is
-     * still one command, one confirmation and one progress bar, which is what the platform's
-     * per-object delete does not give.
-     * <p>
-     * Failures are collected rather than thrown at the first one. Stopping halfway through a bulk
-     * delete leaves the user to work out which half, and the ones that did go are already gone.
-     *
-     * @return the names that could not be deleted, with the reason
-     */
-    @NotNull
-    public java.util.Map<String, String> deleteCollections(
-        @NotNull DBRProgressMonitor monitor, @NotNull List<String> names
-    ) {
-        java.util.Map<String, String> failed = new java.util.LinkedHashMap<>();
-        monitor.beginTask("Delete " + names.size() + " collections", names.size());
-        try {
-            for (String name : names) {
-                if (monitor.isCanceled()) {
-                    break;
-                }
-                monitor.subTask(name);
-                try {
-                    getClient().collections.delete(name);
-                } catch (Exception e) {
-                    failed.put(name, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
-                }
-                monitor.worked(1);
-            }
-        } finally {
-            invalidateCollections();
-            monitor.done();
-        }
-        return failed;
-    }
-
     /** Forgets cached backup listings, so a refresh shows what the server now holds. */
     public void resetBackupCache() {
         List<WeaviateBackupEntry> entries = backupEntries;
