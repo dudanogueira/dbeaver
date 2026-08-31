@@ -26,6 +26,14 @@ public class WeaviateShard implements DBSObject {
 
     private final WeaviateNode parent;
     private final Shard shard;
+    /**
+     * The read/write state, stamped on by the shard group once it has read it.
+     * <p>
+     * Not available from the cluster API this shard was built from -- that reports how the vector
+     * index is doing, which is a different question and not one any request can answer. It arrives
+     * separately so the row can show the thing that is actually changeable.
+     */
+    private volatile WeaviateShardStatus status = WeaviateShardStatus.UNKNOWN;
 
     public WeaviateShard(@NotNull WeaviateNode parent, @NotNull Shard shard) {
         this.parent = parent;
@@ -37,15 +45,47 @@ public class WeaviateShard implements DBSObject {
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 1)
     public String getName() {
         StringBuilder sb = new StringBuilder(shard.name());
-        boolean hasStatus = shard.vectorIndexingStatus() != null;
-        if (hasStatus || shard.objectCount() > 0) {
+        // Both states, named so they cannot be confused: the first is what can be changed, the
+        // second is what the server is doing. They share the value READY and mean different things.
+        boolean hasIndexing = shard.vectorIndexingStatus() != null;
+        if (status != WeaviateShardStatus.UNKNOWN || hasIndexing || shard.objectCount() > 0) {
             sb.append(" (");
-            if (hasStatus) sb.append(shard.vectorIndexingStatus().name());
-            if (hasStatus) sb.append(", ");
+            boolean first = true;
+            if (status != WeaviateShardStatus.UNKNOWN) {
+                sb.append(status.name());
+                first = false;
+            }
+            if (hasIndexing) {
+                if (!first) sb.append(", ");
+                sb.append("indexing ").append(shard.vectorIndexingStatus().name());
+                first = false;
+            }
+            if (!first) sb.append(", ");
             sb.append(shard.objectCount()).append(" objects");
             sb.append(")");
         }
         return sb.toString();
+    }
+
+    /** The shard name on its own, which is what the update endpoint expects. */
+    @NotNull
+    public String getShardName() {
+        return shard.name();
+    }
+
+    @NotNull
+    public WeaviateShardStatus getShardStatus() {
+        return status;
+    }
+
+    void setShardStatus(@NotNull WeaviateShardStatus status) {
+        this.status = status;
+    }
+
+    @NotNull
+    @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 2)
+    public String getStatus() {
+        return status.getLabel();
     }
 
     @Nullable

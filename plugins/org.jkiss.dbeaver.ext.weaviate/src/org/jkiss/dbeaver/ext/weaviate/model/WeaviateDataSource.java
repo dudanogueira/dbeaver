@@ -996,6 +996,63 @@ public class WeaviateDataSource extends AbstractDataSource
         return null;
     }
 
+    /**
+     * The read/write state of a collection's shards, by shard name.
+     * <p>
+     * A different endpoint from the one the Shards tree is built from. The cluster API describes
+     * shards per node and reports how their vector index is doing; this one is per collection and
+     * reports the only state that can be set. Matching them by shard name is safe because a shard
+     * name identifies one shard within its collection.
+     */
+    @NotNull
+    public java.util.Map<String, WeaviateShardStatus> listShardStatuses(
+        @NotNull DBRProgressMonitor monitor, @NotNull String collectionName
+    ) throws DBException {
+        monitor.subTask("Read shard status of " + collectionName);
+        try {
+            java.util.Map<String, WeaviateShardStatus> statuses = new java.util.HashMap<>();
+            for (io.weaviate.client6.v1.api.collections.config.Shard shard
+                : getClient().collections.use(collectionName).config.getShards()
+            ) {
+                statuses.put(shard.name(), WeaviateShardStatus.fromName(shard.status()));
+            }
+            return statuses;
+        } catch (Exception e) {
+            throw new DBException(
+                "Cannot read shard status of " + collectionName + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Sets the read/write state of some of a collection's shards.
+     * <p>
+     * One request for the whole set -- the endpoint takes a list, unlike tenants -- so there is no
+     * chunking to get wrong here.
+     */
+    public void setShardStatus(
+        @NotNull DBRProgressMonitor monitor,
+        @NotNull String collectionName,
+        @NotNull List<String> shardNames,
+        @NotNull WeaviateShardStatus target
+    ) throws DBException {
+        if (!target.isSettable()) {
+            throw new DBException("Shards cannot be set to " + target.getLabel());
+        }
+        if (shardNames.isEmpty()) {
+            return;
+        }
+        monitor.subTask("Set " + shardNames.size() + " shards of " + collectionName
+            + " to " + target.name());
+        try {
+            getClient().collections.use(collectionName).config.updateShards(
+                io.weaviate.client6.v1.api.collections.config.ShardStatus.valueOf(target.name()),
+                shardNames);
+        } catch (Exception e) {
+            throw new DBException(
+                "Cannot set shard status on " + collectionName + ": " + e.getMessage(), e);
+        }
+    }
+
     /** Forgets cached backup listings, so a refresh shows what the server now holds. */
     public void resetBackupCache() {
         List<WeaviateBackupEntry> entries = backupEntries;

@@ -87,6 +87,12 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.backupDocs">
                 <visibleWhen checkEnabled="true"/>
             </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.setShardStatus">
+                <visibleWhen checkEnabled="true"/>
+            </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.setAllShardsReady">
+                <visibleWhen checkEnabled="true"/>
+            </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant">
                 <visibleWhen checkEnabled="true"/>
             </command>
@@ -315,6 +321,27 @@
                  name="Restore Backup..."
                  description="Restore collections from this backup"
                  categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commands">
+        <command id="org.jkiss.dbeaver.ext.weaviate.ui.setShardStatus"
+                 name="Set Shard Status"
+                 description="Set the selected shards to READY or READONLY"
+                 categoryId="org.jkiss.dbeaver.core.navigator"/>
+        <command id="org.jkiss.dbeaver.ext.weaviate.ui.setAllShardsReady"
+                 name="Set All Shards READY"
+                 description="Set every read-only shard of this collection back to READY"
+                 categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <!-- Labels and icons are set per selection in updateElement, so the command names above
+             are never displayed. No <enabledWhen>: the conditions are the shards' current states,
+             which no built-in property tester exposes. -->
+        <handler commandId="org.jkiss.dbeaver.ext.weaviate.ui.setShardStatus"
+                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateSetShardStatusHandler"/>
+        <handler commandId="org.jkiss.dbeaver.ext.weaviate.ui.setAllShardsReady"
+                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateSetGroupStatusHandler"/>
     </extension>
 
     <extension point="org.eclipse.ui.commands">
