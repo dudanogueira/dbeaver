@@ -253,12 +253,12 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
     private static WeaviateShardStatus targetFor(@NotNull List<WeaviateShard> shards) {
         boolean known = false;
         for (WeaviateShard shard : shards) {
-            String status = shard.getVectorIndexingStatus();
-            if (status == null) {
+            WeaviateShardStatus status = shard.getShardStatus();
+            if (status == WeaviateShardStatus.UNKNOWN) {
                 continue;
             }
             known = true;
-            if (WeaviateShardStatus.fromName(status) == WeaviateShardStatus.READONLY) {
+            if (status == WeaviateShardStatus.READONLY) {
                 return WeaviateShardStatus.READY;
             }
         }
@@ -272,8 +272,12 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
     ) {
         List<WeaviateShard> changing = new ArrayList<>();
         for (WeaviateShard shard : shards) {
-            String status = shard.getVectorIndexingStatus();
-            if (status != null && !status.equalsIgnoreCase(target.name())) {
+            // A transient state is a reason to change a shard, not a reason to skip it: a
+            // LAZY_LOADING shard accepts a READONLY write and reports READONLY afterwards.
+            // Only a status this plugin could not read is left out, since there is nothing to
+            // compare it against.
+            WeaviateShardStatus status = shard.getShardStatus();
+            if (status != WeaviateShardStatus.UNKNOWN && status != target) {
                 changing.add(shard);
             }
         }

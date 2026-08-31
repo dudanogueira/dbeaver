@@ -18,7 +18,6 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
-import org.jkiss.dbeaver.model.DBIcon;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBPStatefulObject;
 import org.jkiss.dbeaver.model.struct.DBSObjectState;
@@ -36,14 +35,6 @@ import java.util.List;
  * any of them belongs to; this groups them so the collection is the thing you navigate by.
  */
 public class WeaviateShardGroup implements DBSObject, DBPStatefulObject {
-
-    private static final DBSObjectState STATE_READONLY =
-        new DBSObjectState("Read-only", DBIcon.OVER_ERROR);
-    private static final DBSObjectState STATE_LOADING =
-        new DBSObjectState("Loading", DBIcon.OVER_UNKNOWN);
-
-    private static final org.jkiss.dbeaver.Log LOG =
-        org.jkiss.dbeaver.Log.getLog(WeaviateShardGroup.class);
 
     private final WeaviateNode parent;
     private final String collection;
@@ -144,32 +135,36 @@ public class WeaviateShardGroup implements DBSObject, DBPStatefulObject {
     }
 
     /**
-     * The worst state under this collection, so a read-only shard is visible without expanding a
-     * list that can run to thousands. Red beats orange beats green, which is the order in which
-     * they need attention.
+     * The state most worth attention under this collection, so a read-only shard is visible
+     * without expanding a list that can run to thousands.
+     * <p>
+     * The order is how much a human needs to know about it, not how the server ranks them:
+     * something stopped or refusing writes outranks something merely busy, which outranks a shard
+     * doing its job. A group of four READY shards and one READONLY shows the READONLY.
      */
+    private static final java.util.List<WeaviateShardStatus> SEVERITY = java.util.List.of(
+        WeaviateShardStatus.READY,
+        WeaviateShardStatus.LAZY_LOADING,
+        WeaviateShardStatus.LOADING,
+        WeaviateShardStatus.INDEXING,
+        WeaviateShardStatus.READONLY,
+        WeaviateShardStatus.SHUTDOWN);
+
+
     @NotNull
     @Override
     public DBSObjectState getObjectState() {
-        boolean loading = false;
-        boolean ready = false;
+        WeaviateShardStatus worst = null;
         for (WeaviateShard shard : shards) {
-            String status = shard.getVectorIndexingStatus();
-            if (status == null) {
+            WeaviateShardStatus status = shard.getShardStatus();
+            if (status == WeaviateShardStatus.UNKNOWN) {
                 continue;
             }
-            switch (WeaviateShardStatus.fromName(status)) {
-                case READONLY -> {
-                    return STATE_READONLY;
-                }
-                case READY -> ready = true;
-                default -> loading = true;
+            if (worst == null || SEVERITY.indexOf(status) > SEVERITY.indexOf(worst)) {
+                worst = status;
             }
         }
-        if (loading) {
-            return STATE_LOADING;
-        }
-        return ready ? DBSObjectState.ACTIVE : DBSObjectState.NORMAL;
+        return worst == null ? DBSObjectState.NORMAL : worst.getObjectState();
     }
 
     @Override
@@ -194,8 +189,8 @@ public class WeaviateShardGroup implements DBSObject, DBPStatefulObject {
     public List<WeaviateShard> getShardsToChange(@NotNull WeaviateShardStatus target) {
         List<WeaviateShard> changing = new java.util.ArrayList<>();
         for (WeaviateShard shard : shards) {
-            String status = shard.getVectorIndexingStatus();
-            if (status != null && !status.equalsIgnoreCase(target.name())) {
+            WeaviateShardStatus status = shard.getShardStatus();
+            if (status != WeaviateShardStatus.UNKNOWN && status != target) {
                 changing.add(shard);
             }
         }

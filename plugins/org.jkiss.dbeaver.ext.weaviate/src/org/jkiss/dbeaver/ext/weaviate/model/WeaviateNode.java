@@ -16,8 +16,6 @@
  */
 package org.jkiss.dbeaver.ext.weaviate.model;
 
-import io.weaviate.client6.v1.api.cluster.CollectionStats;
-import io.weaviate.client6.v1.api.cluster.Node;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
@@ -37,11 +35,11 @@ import java.util.TreeMap;
 public class WeaviateNode implements DBSObject, DBSObjectContainer {
 
     private final WeaviateDataSource dataSource;
-    private final Node node;
+    private final WeaviateNodesRest.NodeInfo node;
     private List<WeaviateShard> shards;
     private List<WeaviateShardGroup> shardGroups;
 
-    public WeaviateNode(@NotNull WeaviateDataSource dataSource, @NotNull Node node) {
+    public WeaviateNode(@NotNull WeaviateDataSource dataSource, @NotNull WeaviateNodesRest.NodeInfo node) {
         this.dataSource = dataSource;
         this.node = node;
     }
@@ -56,7 +54,7 @@ public class WeaviateNode implements DBSObject, DBSObjectContainer {
     @Nullable
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 2)
     public String getStatus() {
-        return node.status() == null ? null : node.status().name();
+        return node.status();
     }
 
     @Nullable
@@ -73,13 +71,13 @@ public class WeaviateNode implements DBSObject, DBSObjectContainer {
 
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 5)
     public long getObjectCount() {
-        CollectionStats stats = node.stats();
+        WeaviateNodesRest.NodeStats stats = node.stats();
         return stats == null ? 0 : stats.objectCount();
     }
 
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 6)
     public int getShardCount() {
-        CollectionStats stats = node.stats();
+        WeaviateNodesRest.NodeStats stats = node.stats();
         return stats == null ? 0 : stats.shardCount();
     }
 
@@ -147,8 +145,8 @@ public class WeaviateNode implements DBSObject, DBSObjectContainer {
     public List<WeaviateShard> getShards(@NotNull DBRProgressMonitor monitor) {
         if (shards == null) {
             List<WeaviateShard> result = new ArrayList<>();
-            if (node.shards() != null) {
-                for (io.weaviate.client6.v1.api.cluster.Shard shard : node.shards()) {
+            {
+                for (WeaviateNodesRest.ShardInfo shard : node.shardsOrEmpty()) {
                     result.add(new WeaviateShard(this, shard));
                 }
             }

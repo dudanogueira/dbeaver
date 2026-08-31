@@ -19,8 +19,6 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 import io.weaviate.client6.v1.api.Authentication;
 import io.weaviate.client6.v1.api.InstanceMetadata;
 import io.weaviate.client6.v1.api.WeaviateClient;
-import io.weaviate.client6.v1.api.cluster.Node;
-import io.weaviate.client6.v1.api.cluster.NodeVerbosity;
 import io.weaviate.client6.v1.api.collections.CollectionConfig;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
@@ -614,18 +612,19 @@ public class WeaviateDataSource extends AbstractDataSource
         return nodes;
     }
 
+    /**
+     * Read over REST rather than through {@code client.cluster.listNodes}: the client drops a
+     * shard's status whenever the server reports one its three-constant enum does not know, which
+     * on a server with lazily-loaded tenant shards is most of them. See {@link WeaviateNodesRest}.
+     */
     private List<WeaviateNode> loadNodes() throws DBException {
-        try {
-            List<Node> rawNodes = client.cluster.listNodes(b -> b.verbosity(NodeVerbosity.VERBOSE));
-            List<WeaviateNode> result = new ArrayList<>(rawNodes.size());
-            for (Node n : rawNodes) {
-                result.add(new WeaviateNode(this, n));
-            }
-            DBUtils.orderObjects(result);
-            return result;
-        } catch (IOException e) {
-            throw new DBException("Failed to list Weaviate cluster nodes", e);
+        List<WeaviateNodesRest.NodeInfo> rawNodes = WeaviateNodesRest.listNodes(this);
+        List<WeaviateNode> result = new ArrayList<>(rawNodes.size());
+        for (WeaviateNodesRest.NodeInfo n : rawNodes) {
+            result.add(new WeaviateNode(this, n));
         }
+        DBUtils.orderObjects(result);
+        return result;
     }
 
     private InstanceMetadata getInstanceMetadata() throws DBException {

@@ -16,10 +16,8 @@
  */
 package org.jkiss.dbeaver.ext.weaviate.model;
 
-import io.weaviate.client6.v1.api.cluster.Shard;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
-import org.jkiss.dbeaver.model.DBIcon;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBPStatefulObject;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
@@ -28,27 +26,8 @@ import org.jkiss.dbeaver.model.struct.DBSObject;
 
 public class WeaviateShard implements DBSObject, DBPStatefulObject {
 
-    /**
-     * Colours for the three states a shard is normally in.
-     * <p>
-     * Overlays rather than row colour, which the navigator does not offer: its label provider
-     * answers {@code getForeground} for datasources, locked nodes and unsaved objects only, with
-     * no per-object hook. An overlay is the one channel that carries colour per row, and
-     * {@code DBNDatabaseNode#getNodeIcon} applies it unconditionally -- unlike the status text
-     * beside the name, which needs a navigator preference that is off by default.
-     * <p>
-     * Green is the platform's own ACTIVE state. Orange is {@code conditional_ovr}, which really is
-     * orange (RGB 240,96,0). Red is the error overlay: a read-only shard is not a fault, so the
-     * marker overstates it slightly, but red is the signal that reads at a glance and a shard left
-     * read-only by accident is worth noticing.
-     */
-    private static final DBSObjectState STATE_READONLY =
-        new DBSObjectState("Read-only", DBIcon.OVER_ERROR);
-    private static final DBSObjectState STATE_LOADING =
-        new DBSObjectState("Loading", DBIcon.OVER_UNKNOWN);
-
     private final WeaviateNode parent;
-    private final Shard shard;
+    private final WeaviateNodesRest.ShardInfo shard;
     /**
      * Set after this plugin changes the status, so the row reflects it without a re-read.
      * <p>
@@ -60,7 +39,7 @@ public class WeaviateShard implements DBSObject, DBPStatefulObject {
      */
     private volatile String statusOverride;
 
-    public WeaviateShard(@NotNull WeaviateNode parent, @NotNull Shard shard) {
+    public WeaviateShard(@NotNull WeaviateNode parent, @NotNull WeaviateNodesRest.ShardInfo shard) {
         this.parent = parent;
         this.shard = shard;
     }
@@ -89,23 +68,18 @@ public class WeaviateShard implements DBSObject, DBPStatefulObject {
     }
 
     /**
-     * The status as one of the two settable values, or UNKNOWN for anything else -- LAZY_LOADING
-     * and INDEXING are real states a shard can be in, but not ones that can be asked for.
+     * The overlay for this shard's status, coloured per state by {@link WeaviateShardStatus}.
+     * <p>
+     * An overlay rather than row colour, which the navigator does not offer: its label provider
+     * answers {@code getForeground} for datasources, locked nodes and unsaved objects only, with
+     * no per-object hook. The overlay is the one channel that carries colour per row, and
+     * {@code DBNDatabaseNode#getNodeIcon} applies it unconditionally -- unlike the status text
+     * beside the name, which needs a navigator preference that is off by default.
      */
     @NotNull
     @Override
     public DBSObjectState getObjectState() {
-        String status = getVectorIndexingStatus();
-        if (status == null) {
-            return DBSObjectState.NORMAL;
-        }
-        return switch (WeaviateShardStatus.fromName(status)) {
-            case READY -> DBSObjectState.ACTIVE;
-            case READONLY -> STATE_READONLY;
-            // LAZY_LOADING, INDEXING and anything else a newer server reports: work in progress,
-            // which is neither healthy nor broken.
-            default -> STATE_LOADING;
-        };
+        return getShardStatus().getObjectState();
     }
 
     @Override
@@ -140,7 +114,7 @@ public class WeaviateShard implements DBSObject, DBPStatefulObject {
     }
 
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 3)
-    public int getObjectCount() {
+    public long getObjectCount() {
         return shard.objectCount();
     }
 
@@ -150,12 +124,12 @@ public class WeaviateShard implements DBSObject, DBPStatefulObject {
         if (statusOverride != null) {
             return statusOverride;
         }
-        return shard.vectorIndexingStatus() == null ? null : shard.vectorIndexingStatus().name();
+        return WeaviateNodesRest.statusOf(shard);
     }
 
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 5)
     public int getVectorQueueLength() {
-        return shard.vectorQueueLenght();
+        return shard.vectorQueueLength();
     }
 
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 6)
