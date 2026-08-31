@@ -84,6 +84,9 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.deleteCollections">
                 <visibleWhen checkEnabled="true"/>
             </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.backupDocs">
+                <visibleWhen checkEnabled="true"/>
+            </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant">
                 <visibleWhen checkEnabled="true"/>
             </command>
@@ -312,6 +315,25 @@
                  name="Restore Backup..."
                  description="Restore collections from this backup"
                  categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commands">
+        <command id="org.jkiss.dbeaver.ext.weaviate.ui.backupDocs"
+                 name="Read more about Weaviate Backups"
+                 description="How to configure a backup backend on the server"
+                 categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commandImages">
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.backupDocs"
+               icon="platform:/plugin/org.jkiss.dbeaver.ext.weaviate/icons/weaviate.png"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <!-- Offered only on a backend whose module is off, and on the row that appears when none
+             is enabled. Those rows say what is missing; this says what to do about it. -->
+        <handler commandId="org.jkiss.dbeaver.ext.weaviate.ui.backupDocs"
+                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateBackupDocsHandler"/>
     </extension>
 
     <extension point="org.eclipse.ui.commands">
