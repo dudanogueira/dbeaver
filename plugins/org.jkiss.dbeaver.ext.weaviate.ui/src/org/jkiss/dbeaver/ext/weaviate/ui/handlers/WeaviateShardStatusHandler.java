@@ -47,9 +47,9 @@ import org.jkiss.dbeaver.ui.DBeaverIcons;
 import org.jkiss.dbeaver.ui.UIIcon;
 import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateInactiveTenantShardsDialog;
+import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateShardChangeDialog;
 import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
-import org.jkiss.dbeaver.ui.navigator.dialogs.NavigatorNodesDeletionConfirmations;
-import org.jkiss.dbeaver.ui.dialogs.Reply;
+import org.jkiss.utils.CommonUtils;
 
 import java.lang.reflect.InvocationTargetException;
 import java.text.MessageFormat;
@@ -403,13 +403,14 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
 
         // Only the ones that would actually change are listed, so the table is what is about to
         // happen rather than what was selected.
-        List<DBNNode> changingNodes = new ArrayList<>();
         List<WeaviateShard> toChange = new ArrayList<>();
         for (DBNNode node : shardNodes) {
             WeaviateShard shard = shardOf(node);
-            String status = shard == null ? null : shard.getVectorIndexingStatus();
-            if (status != null && !status.equalsIgnoreCase(target.name())) {
-                changingNodes.add(node);
+            if (shard == null) {
+                continue;
+            }
+            WeaviateShardStatus status = shard.getShardStatus();
+            if (status != WeaviateShardStatus.UNKNOWN && status != target) {
                 toChange.add(shard);
             }
         }
@@ -431,6 +432,7 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
         // lists a tenant's shard while it is active, so "every shard of this collection" quietly
         // means "every shard of its active tenants". Offer the rest rather than skip them
         // silently.
+        List<WeaviateInactiveTenantShardsDialog.Entry> chosenHidden = new ArrayList<>();
         List<WeaviateInactiveTenantShardsDialog.Entry> hidden =
             findInactiveTenants(dataSourceOf(toChange), byCollection.keySet());
         if (!hidden.isEmpty()) {
@@ -443,25 +445,29 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
                 // On a multi-tenant collection the shard name is the tenant name.
                 byCollection.computeIfAbsent(entry.collection(), c -> new ArrayList<>())
                     .add(entry.tenant());
+                chosenHidden.add(entry);
             }
         }
-        int totalShards = 0;
-        for (List<String> names : byCollection.values()) {
-            totalShards += names.size();
-        }
 
-        // The platform's own confirmation, the one Delete uses: it lists the objects with their
-        // names, types and descriptions instead of asking the user to trust a number. Passing a
-        // null deleter drops the parts that only make sense for a delete -- the script preview
-        // and its options -- and keeps the object table.
-        Reply reply = NavigatorNodesDeletionConfirmations.confirm(
-            HandlerUtil.getActiveShell(event),
-            "Set shard status",
-            MessageFormat.format("Set {0} shard(s) to {1}, across {2} collection(s)?",
-                totalShards, target.name(), byCollection.size()),
-            changingNodes,
-            null);
-        if (reply != Reply.YES) {
+        // Every shard about to change, listed. Not the platform's deletion confirmation, which
+        // was used here before and cannot show this: it builds its object table only for more
+        // than one object, and skips any row that is not a DBNNode -- which is exactly the
+        // inactive tenants' shards, since the cluster API never lists them.
+        List<WeaviateShardChangeDialog.Row> rows = new ArrayList<>(toChange.size());
+        for (WeaviateShard shard : toChange) {
+            rows.add(new WeaviateShardChangeDialog.Row(
+                shard.getShardName(),
+                CommonUtils.notEmpty(shard.getCollection()),
+                shard.getVectorIndexingStatus(),
+                true));
+        }
+        for (WeaviateInactiveTenantShardsDialog.Entry entry : chosenHidden) {
+            rows.add(new WeaviateShardChangeDialog.Row(
+                entry.tenant(), entry.collection(), null, false));
+        }
+        WeaviateShardChangeDialog confirmation = new WeaviateShardChangeDialog(
+            HandlerUtil.getActiveShell(event), rows, target);
+        if (confirmation.open() != org.eclipse.jface.dialogs.IDialogConstants.OK_ID) {
             return null;
         }
 
