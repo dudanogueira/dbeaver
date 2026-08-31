@@ -30,12 +30,15 @@ import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateNode;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateShard;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateShardGroup;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateShardStatus;
 import org.jkiss.dbeaver.model.DBUtils;
+import org.jkiss.dbeaver.model.navigator.DBNDatabaseFolder;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
 import org.jkiss.dbeaver.model.navigator.DBNNode;
+import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.struct.DBSObject;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.ui.DBeaverIcons;
@@ -46,68 +49,160 @@ import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
 import java.lang.reflect.InvocationTargetException;
 import java.text.MessageFormat;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Sets a shard's read/write state, on one shard or on a whole collection's worth.
+ * Sets shard status from any level of the tree: a shard, a collection's shards, a node's Shards
+ * folder, a whole node, or any mixture of those across several nodes.
  * <p>
- * Only READY and READONLY exist here. The other states a shard row shows -- LAZY_LOADING,
- * INDEXING -- belong to the vector index and describe work the server is doing; no request
- * changes them, so nothing here offers to.
+ * One command rather than one per level. The levels differ only in how many shards they stand
+ * for, and a selection is free to mix them -- two nodes and a stray collection is a perfectly
+ * ordinary thing to select, and it should be one request set, not three separate menu entries.
  * <p>
- * On a shard the entry names the change it will make, as Activate/Deactivate Tenant does. On a
- * collection it offers the restorative direction only, and says how many shards it would touch:
- * turning a whole collection read-only is a maintenance decision that deserves to be made shard
- * by shard, while putting it back is the thing you want in one click.
+ * The direction is decided by what is there, not by which level was clicked:
+ * <ul>
+ *   <li>any READONLY shard under the selection, and the entry offers <b>READY</b> -- the
+ *       direction that restores service, and the reason anyone looks at this menu;</li>
+ *   <li>otherwise it offers <b>READONLY</b>, which is what you want before maintenance.</li>
+ * </ul>
+ * Writing is per collection because that is the only endpoint that accepts a change, so a
+ * selection spanning collections becomes one request each. Reading costs nothing extra: the
+ * status travels in the nodes response the tree is already built from.
  */
-public abstract class WeaviateShardStatusHandler extends AbstractHandler implements IElementUpdater {
+public class WeaviateShardStatusHandler extends AbstractHandler implements IElementUpdater {
 
     private static final Log log = Log.getLog(WeaviateShardStatusHandler.class);
 
-    /** Whether this handler works on a whole collection rather than the selected shards. */
-    protected abstract boolean isGroup();
+    /** The Shards folder under a cluster node, which stands for every shard on that node. */
+    private static final String SHARDS_FOLDER = "shardGroups";
 
-    /** Selected shards of one collection, or empty when the selection is not that. */
-    @NotNull
-    private static List<WeaviateShard> selectedShards(@Nullable ISelection selection) {
-        List<WeaviateShard> shards = new ArrayList<>();
-        if (selection == null) {
-            return shards;
+    /**
+     * Whether this node is one the action can act on. Shape only, no fetching: this runs while
+     * the context menu is being built.
+     */
+    private static boolean isShardBearing(@NotNull DBNNode node) {
+        if (node instanceof DBNDatabaseFolder folder) {
+            return SHARDS_FOLDER.equals(folder.getNodeId())
+                && folder.getParentObject() instanceof WeaviateNode;
         }
-        String collection = null;
+        if (!(node instanceof DBNDatabaseNode databaseNode)) {
+            return false;
+        }
+        DBSObject object = databaseNode.getObject();
+        return object instanceof WeaviateShard
+            || object instanceof WeaviateShardGroup
+            || object instanceof WeaviateNode;
+    }
+
+    /**
+     * Every shard the selection stands for, deduplicated.
+     * <p>
+     * Selecting a node and one of its collections should not act on those shards twice, and with
+     * replication the same shard name appears under more than one node -- which is one shard to
+     * the endpoint that changes it. Keyed on collection and name for exactly that reason.
+     *
+     * @param monitor null to use only what is already loaded, for callers that must not fetch
+     */
+    @NotNull
+    private static List<WeaviateShard> shardsOf(
+        @Nullable ISelection selection, @Nullable DBRProgressMonitor monitor
+    ) {
+        if (selection == null) {
+            return List.of();
+        }
+        Map<String, WeaviateShard> unique = new LinkedHashMap<>();
         for (DBNNode node : NavigatorUtils.getSelectedNodes(selection)) {
-            if (!(node instanceof DBNDatabaseNode databaseNode)
-                || !(databaseNode.getObject() instanceof WeaviateShard shard)
-            ) {
+            if (!isShardBearing(node)) {
+                // A selection containing anything else is not an instruction about shards.
                 return List.of();
             }
-            if (shard.getVectorIndexingStatus() == null) {
-                // No status to compare against, so there is no change to name.
-                return List.of();
+            for (WeaviateShard shard : shardsUnder(node, monitor)) {
+                unique.putIfAbsent(shard.getCollection() + "/" + shard.getShardName(), shard);
             }
-            if (collection == null) {
-                collection = shard.getCollection();
-            } else if (!collection.equals(shard.getCollection())) {
-                // One request per collection, so a selection spanning two is not one action.
-                return List.of();
-            }
-            shards.add(shard);
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    @NotNull
+    private static List<WeaviateShard> shardsUnder(
+        @NotNull DBNNode node, @Nullable DBRProgressMonitor monitor
+    ) {
+        if (node instanceof DBNDatabaseFolder folder) {
+            return folder.getParentObject() instanceof WeaviateNode clusterNode
+                ? shardsOfNode(clusterNode, monitor) : List.of();
+        }
+        if (!(node instanceof DBNDatabaseNode databaseNode)) {
+            return List.of();
+        }
+        DBSObject object = databaseNode.getObject();
+        if (object instanceof WeaviateShard shard) {
+            return List.of(shard);
+        }
+        if (object instanceof WeaviateShardGroup group) {
+            return group.getShards(new org.jkiss.dbeaver.model.runtime.VoidProgressMonitor());
+        }
+        if (object instanceof WeaviateNode clusterNode) {
+            return shardsOfNode(clusterNode, monitor);
+        }
+        return List.of();
+    }
+
+    @NotNull
+    private static List<WeaviateShard> shardsOfNode(
+        @NotNull WeaviateNode clusterNode, @Nullable DBRProgressMonitor monitor
+    ) {
+        List<WeaviateShardGroup> groups = monitor == null
+            ? clusterNode.getLoadedShardGroups()
+            : clusterNode.getShardGroups(monitor);
+        if (groups == null) {
+            // Not expanded yet and we are not allowed to fetch. The caller shows a plain label;
+            // execute() asks again with a monitor.
+            return List.of();
+        }
+        List<WeaviateShard> shards = new ArrayList<>();
+        for (WeaviateShardGroup group : groups) {
+            shards.addAll(group.getShards(new org.jkiss.dbeaver.model.runtime.VoidProgressMonitor()));
         }
         return shards;
     }
 
+    /**
+     * READY when anything under the selection is read-only, READONLY when everything is already
+     * serving. Null when nothing is known yet, which is not the same as nothing to do.
+     */
     @Nullable
-    private static WeaviateShardGroup selectedGroup(@Nullable ISelection selection) {
-        if (selection == null) {
-            return null;
+    private static WeaviateShardStatus targetFor(@NotNull List<WeaviateShard> shards) {
+        boolean known = false;
+        for (WeaviateShard shard : shards) {
+            String status = shard.getVectorIndexingStatus();
+            if (status == null) {
+                continue;
+            }
+            known = true;
+            if (WeaviateShardStatus.fromName(status) == WeaviateShardStatus.READONLY) {
+                return WeaviateShardStatus.READY;
+            }
         }
-        List<DBNNode> nodes = NavigatorUtils.getSelectedNodes(selection);
-        if (nodes.size() != 1 || !(nodes.get(0) instanceof DBNDatabaseNode databaseNode)) {
-            return null;
+        return known ? WeaviateShardStatus.READONLY : null;
+    }
+
+    /** Shards that are not already in {@code target}. */
+    @NotNull
+    private static List<WeaviateShard> changing(
+        @NotNull List<WeaviateShard> shards, @NotNull WeaviateShardStatus target
+    ) {
+        List<WeaviateShard> changing = new ArrayList<>();
+        for (WeaviateShard shard : shards) {
+            String status = shard.getVectorIndexingStatus();
+            if (status != null && !status.equalsIgnoreCase(target.name())) {
+                changing.add(shard);
+            }
         }
-        DBSObject object = databaseNode.getObject();
-        return object instanceof WeaviateShardGroup group ? group : null;
+        return changing;
     }
 
     @Nullable
@@ -119,96 +214,102 @@ public abstract class WeaviateShardStatusHandler extends AbstractHandler impleme
         return selection instanceof ISelection sel ? sel : null;
     }
 
-    /**
-     * What the entry would do: on a group always READY, on shards the opposite of what they are.
-     * A mixed selection is offered READY, the direction that restores service.
-     */
-    @Nullable
-    private WeaviateShardStatus targetFor(@Nullable ISelection selection) {
-        if (isGroup()) {
-            WeaviateShardGroup group = selectedGroup(selection);
-            return group == null || group.getShardsToChange(WeaviateShardStatus.READY).isEmpty()
-                ? null : WeaviateShardStatus.READY;
-        }
-        List<WeaviateShard> shards = selectedShards(selection);
-        if (shards.isEmpty()) {
-            return null;
-        }
-        // Anything that is not READY -- READONLY, but also LAZY_LOADING or INDEXING -- is offered
-        // READY, the direction that restores service and the same one the collection-level action
-        // takes. Only a set that is already entirely READY is offered the other way.
-        for (WeaviateShard shard : shards) {
-            String status = shard.getVectorIndexingStatus();
-            if (status != null && !status.equalsIgnoreCase(WeaviateShardStatus.READY.name())) {
-                return WeaviateShardStatus.READY;
-            }
-        }
-        return WeaviateShardStatus.READONLY;
-    }
-
     @Override
     public void setEnabled(Object evaluationContext) {
-        setBaseEnabled(targetFor(selectionFrom(evaluationContext)) != null);
+        ISelection selection = selectionFrom(evaluationContext);
+        if (selection == null) {
+            setBaseEnabled(false);
+            return;
+        }
+        List<DBNNode> nodes = NavigatorUtils.getSelectedNodes(selection);
+        if (nodes.isEmpty()) {
+            setBaseEnabled(false);
+            return;
+        }
+        // Shape only. Whether there is anything to change needs the shards, and a node that has
+        // not been expanded would have to be fetched to find out -- on the UI thread, while the
+        // menu is being built. execute() settles it properly.
+        for (DBNNode node : nodes) {
+            if (!isShardBearing(node)) {
+                setBaseEnabled(false);
+                return;
+            }
+        }
+        setBaseEnabled(true);
     }
 
     @Override
     public Object execute(ExecutionEvent event) {
         ISelection selection = HandlerUtil.getCurrentSelection(event);
-        WeaviateShardStatus target = targetFor(selection);
+
+        List<WeaviateShard>[] holder = new List[1];
+        try {
+            UIUtils.runInProgressService(monitor -> holder[0] = shardsOf(selection, monitor));
+        } catch (InvocationTargetException e) {
+            log.error("Cannot read shards", e.getTargetException());
+            DBWorkbench.getPlatformUI().showError(
+                "Shard status", "Cannot read the shard list", e.getTargetException());
+            return null;
+        } catch (InterruptedException e) {
+            return null;
+        }
+
+        List<WeaviateShard> shards = holder[0] == null ? List.of() : holder[0];
+        WeaviateShardStatus target = targetFor(shards);
         if (target == null) {
+            DBWorkbench.getPlatformUI().showMessageBox(
+                "Shard status", "No shard status could be read for this selection.", false);
+            return null;
+        }
+        List<WeaviateShard> toChange = changing(shards, target);
+        if (toChange.isEmpty()) {
+            DBWorkbench.getPlatformUI().showMessageBox("Shard status",
+                "Every shard here is already " + target.name() + ".", false);
             return null;
         }
 
-        List<WeaviateShard> shards;
-        String collection;
-        DBSObject refreshSubject;
-        if (isGroup()) {
-            WeaviateShardGroup group = selectedGroup(selection);
-            if (group == null) {
-                return null;
-            }
-            shards = group.getShardsToChange(target);
-            collection = group.getCollectionName();
-            refreshSubject = group;
-        } else {
-            shards = new ArrayList<>();
-            for (WeaviateShard shard : selectedShards(selection)) {
-                String status = shard.getVectorIndexingStatus();
-                if (status != null && !status.equalsIgnoreCase(target.name())) {
-                    shards.add(shard);
-                }
-            }
-            collection = shards.isEmpty() ? null : shards.get(0).getCollection();
-            refreshSubject = shards.isEmpty() ? null : shards.get(0);
+        // One request per collection: the endpoint that accepts a change takes a collection and a
+        // list of its shard names, so a selection spanning collections is that many requests.
+        Map<String, List<String>> byCollection = new LinkedHashMap<>();
+        Set<String> collections = new LinkedHashSet<>();
+        for (WeaviateShard shard : toChange) {
+            byCollection.computeIfAbsent(shard.getCollection(), c -> new ArrayList<>())
+                .add(shard.getShardName());
+            collections.add(shard.getCollection());
         }
-        if (shards.isEmpty() || collection == null) {
+
+        String question = MessageFormat.format(
+            "Set {0} shard(s) to {1}?\n\nAcross {2} collection(s): {3}",
+            toChange.size(), target.name(), collections.size(), String.join(", ", collections));
+        if (!UIUtils.confirmAction(HandlerUtil.getActiveShell(event), "Shard status", question)) {
             return null;
         }
 
-        List<String> names = new ArrayList<>(shards.size());
-        for (WeaviateShard shard : shards) {
-            names.add(shard.getShardName());
-        }
-
-        if (names.size() > 1 && !UIUtils.confirmAction(
-            HandlerUtil.getActiveShell(event),
-            "Shard status",
-            MessageFormat.format("Set {0} shards of \"{1}\" to {2}?",
-                names.size(), collection, target.name()))
-        ) {
+        if (!(toChange.get(0).getDataSource() instanceof WeaviateDataSource dataSource)) {
             return null;
         }
-
-        if (!(shards.get(0).getDataSource() instanceof WeaviateDataSource dataSource)) {
-            return null;
-        }
-        String targetCollection = collection;
+        Map<String, String> failed = new LinkedHashMap<>();
         try {
             UIUtils.runInProgressService(monitor -> {
+                monitor.beginTask("Set shard status", byCollection.size());
                 try {
-                    dataSource.setShardStatus(monitor, targetCollection, names, target);
-                } catch (DBException e) {
-                    throw new InvocationTargetException(e);
+                    for (Map.Entry<String, List<String>> entry : byCollection.entrySet()) {
+                        if (monitor.isCanceled()) {
+                            break;
+                        }
+                        try {
+                            dataSource.setShardStatus(monitor, entry.getKey(), entry.getValue(), target);
+                        } catch (DBException e) {
+                            // One collection refusing should not abandon the rest; what failed is
+                            // named once at the end.
+                            log.error("Cannot set shard status on " + entry.getKey(), e);
+                            failed.put(entry.getKey(),
+                                e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                        }
+                        monitor.worked(1);
+                    }
+                } finally {
+                    monitor.done();
                 }
             });
         } catch (InvocationTargetException e) {
@@ -217,44 +318,49 @@ public abstract class WeaviateShardStatusHandler extends AbstractHandler impleme
                 "Shard status", "Failed to set the shard status", e.getTargetException());
             return null;
         } catch (InterruptedException e) {
-            return null;
+            // Cancelled partway; whatever was accepted stands, and is recorded below.
         }
 
-        // The server accepted it, so record it on the shards themselves: their labels are built
-        // from this, and the group's summary counts it. Re-reading from the server would say the
-        // same thing at the cost of a round trip, and refreshing the node would rebuild the whole
-        // shard list to change one word in it.
-        for (WeaviateShard shard : shards) {
-            shard.setShardStatus(target);
+        // Record what the server took, so the labels are right without a re-read. Collections that
+        // failed keep their old status, which is more truthful than refreshing would be.
+        Set<DBSObject> touched = new LinkedHashSet<>();
+        for (WeaviateShard shard : toChange) {
+            if (!failed.containsKey(shard.getCollection())) {
+                shard.setShardStatus(target);
+                touched.add(shard.getParentObject());
+            }
         }
-        if (refreshSubject != null) {
-            DBUtils.fireObjectUpdate(refreshSubject);
-            DBUtils.fireObjectUpdate(refreshSubject.getParentObject());
+        for (DBSObject parent : touched) {
+            DBUtils.fireObjectUpdate(parent);
+        }
+
+        if (!failed.isEmpty()) {
+            StringBuilder message = new StringBuilder("These collections were not changed:\n\n");
+            failed.forEach((name, reason) -> message.append(name).append(" - ").append(reason).append('\n'));
+            DBWorkbench.getPlatformUI().showMessageBox("Shard status", message.toString(), true);
         }
         return null;
     }
 
+    /**
+     * Names the direction and how many shards it would touch, from whatever is already loaded.
+     * A selection whose shards have not been read yet gets a plain label rather than a fetch.
+     */
     @Override
     public void updateElement(UIElement element, @SuppressWarnings("rawtypes") Map parameters) {
         IWorkbenchWindow window = element.getServiceLocator().getService(IWorkbenchWindow.class);
         if (window == null || window.getSelectionService() == null) {
             return;
         }
-        ISelection selection = window.getSelectionService().getSelection();
-        WeaviateShardStatus target = targetFor(selection);
+        List<WeaviateShard> shards = shardsOf(window.getSelectionService().getSelection(), null);
+        WeaviateShardStatus target = targetFor(shards);
         if (target == null) {
+            element.setText("Set All Shards READY");
             return;
         }
-        if (isGroup()) {
-            WeaviateShardGroup group = selectedGroup(selection);
-            int count = group == null ? 0 : group.getShardsToChange(target).size();
-            element.setText(MessageFormat.format("Set All Shards READY ({0} to change)", count));
-        } else {
-            int count = selectedShards(selection).size();
-            element.setText(count == 1
-                ? "Set Shard " + target.name()
-                : MessageFormat.format("Set {0} Shards {1}", count, target.name()));
-        }
+        int count = changing(shards, target).size();
+        element.setText(MessageFormat.format(
+            "Set All Shards {0} ({1} to change)", target.name(), count));
         element.setIcon(DBeaverIcons.getImageDescriptor(
             target == WeaviateShardStatus.READY ? UIIcon.BULLET_GREEN : UIIcon.BULLET_BLACK));
     }

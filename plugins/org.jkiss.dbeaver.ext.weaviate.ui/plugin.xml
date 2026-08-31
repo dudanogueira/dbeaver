@@ -90,9 +90,6 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.setShardStatus">
                 <visibleWhen checkEnabled="true"/>
             </command>
-            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.setAllShardsReady">
-                <visibleWhen checkEnabled="true"/>
-            </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant">
                 <visibleWhen checkEnabled="true"/>
             </command>
@@ -325,12 +322,8 @@
 
     <extension point="org.eclipse.ui.commands">
         <command id="org.jkiss.dbeaver.ext.weaviate.ui.setShardStatus"
-                 name="Set Shard Status"
-                 description="Set the selected shards to READY or READONLY"
-                 categoryId="org.jkiss.dbeaver.core.navigator"/>
-        <command id="org.jkiss.dbeaver.ext.weaviate.ui.setAllShardsReady"
-                 name="Set All Shards READY"
-                 description="Set every read-only shard of this collection back to READY"
+                 name="Set All Shards Status"
+                 description="Set every shard under the selection to READY or READONLY"
                  categoryId="org.jkiss.dbeaver.core.navigator"/>
     </extension>
 
@@ -339,9 +332,7 @@
              are never displayed. No <enabledWhen>: the conditions are the shards' current states,
              which no built-in property tester exposes. -->
         <handler commandId="org.jkiss.dbeaver.ext.weaviate.ui.setShardStatus"
-                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateSetShardStatusHandler"/>
-        <handler commandId="org.jkiss.dbeaver.ext.weaviate.ui.setAllShardsReady"
-                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateSetGroupStatusHandler"/>
+                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateShardStatusHandler"/>
     </extension>
 
     <extension point="org.eclipse.ui.commands">

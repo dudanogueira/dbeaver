@@ -113,6 +113,17 @@ public class WeaviateNode implements DBSObject, DBSObjectContainer {
      * collections name a shard per tenant, so this is what makes a node with hundreds of shards
      * navigable.
      */
+    /**
+     * Shard groups already in memory, or null if this node has not been expanded.
+     * <p>
+     * For callers that run while a menu is being built, where fetching would put a network round
+     * trip on the UI thread. A null answer means "not known yet", not "none".
+     */
+    @Nullable
+    public List<WeaviateShardGroup> getLoadedShardGroups() {
+        return shardGroups;
+    }
+
     @Association
     public List<WeaviateShardGroup> getShardGroups(@NotNull DBRProgressMonitor monitor) {
         if (shardGroups == null) {
