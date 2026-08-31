@@ -29,13 +29,12 @@ import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
+import org.jkiss.dbeaver.model.DBUtils;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseFolder;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
 import org.jkiss.dbeaver.model.navigator.DBNNode;
-import org.jkiss.dbeaver.model.navigator.DBNUtils;
-import org.jkiss.dbeaver.model.runtime.VoidProgressMonitor;
 import org.jkiss.dbeaver.model.struct.DBSObject;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.ui.UIUtils;
@@ -69,7 +68,19 @@ public class WeaviateDeleteCollectionsHandler extends AbstractHandler implements
      * What the action would remove: either the named collections, or every collection on the
      * connection.
      */
-    private record Target(@NotNull WeaviateDataSource dataSource, @NotNull List<String> names, boolean all) {
+    private record Target(
+        @NotNull WeaviateDataSource dataSource,
+        @NotNull List<WeaviateCollection> collections,
+        boolean all
+    ) {
+        @NotNull
+        List<String> names() {
+            List<String> names = new ArrayList<>(collections.size());
+            for (WeaviateCollection collection : collections) {
+                names.add(collection.getName());
+            }
+            return names;
+        }
     }
 
     @Nullable
@@ -90,7 +101,7 @@ public class WeaviateDeleteCollectionsHandler extends AbstractHandler implements
             return new Target(ds, List.of(), true);
         }
 
-        List<String> names = new ArrayList<>();
+        List<WeaviateCollection> collections = new ArrayList<>();
         WeaviateDataSource dataSource = null;
         for (DBNNode node : nodes) {
             if (!(node instanceof DBNDatabaseNode databaseNode)
@@ -107,10 +118,11 @@ public class WeaviateDeleteCollectionsHandler extends AbstractHandler implements
                 // Two connections cannot be one operation.
                 return null;
             }
-            names.add(collection.getName());
+            collections.add(collection);
         }
         // One collection is the platform's job; see the class comment.
-        return names.size() > 1 && dataSource != null ? new Target(dataSource, names, false) : null;
+        return collections.size() > 1 && dataSource != null
+            ? new Target(dataSource, collections, false) : null;
     }
 
     @Nullable
@@ -135,24 +147,23 @@ public class WeaviateDeleteCollectionsHandler extends AbstractHandler implements
         }
         WeaviateDataSource dataSource = target.dataSource();
 
-        List<String> names = target.names();
+        List<WeaviateCollection> collections = target.collections();
         if (target.all()) {
-            // Listed only to say how many there are. The delete itself is one call that does not
-            // depend on this list, so a collection created in between still goes.
-            try {
-                names = new ArrayList<>();
-                for (WeaviateCollection collection : dataSource.getCollections(new VoidProgressMonitor())) {
-                    names.add(collection.getName());
-                }
-            } catch (Exception e) {
-                log.debug("Cannot count collections before deleting them all", e);
-                names = List.of();
+            // Read for two reasons: to put a number in the confirmation, and to know which nodes
+            // to take out of the tree afterwards. The delete itself does not depend on this list.
+            collections = listCollections(dataSource);
+            if (collections == null) {
+                return null;
             }
-            if (names.isEmpty()) {
+            if (collections.isEmpty()) {
                 DBWorkbench.getPlatformUI().showMessageBox("Delete collections",
                     "There are no collections to delete.", false);
                 return null;
             }
+        }
+        List<String> names = new ArrayList<>(collections.size());
+        for (WeaviateCollection collection : collections) {
+            names.add(collection.getName());
         }
 
         String question = target.all()
@@ -168,16 +179,20 @@ public class WeaviateDeleteCollectionsHandler extends AbstractHandler implements
             return null;
         }
 
-        List<String> toDelete = names;
+        List<WeaviateCollection> toDelete = collections;
         Map<String, String>[] failures = new Map[1];
         try {
             UIUtils.runInProgressService(monitor -> {
                 try {
+                    List<String> targetNames = new ArrayList<>(toDelete.size());
+                    for (WeaviateCollection collection : toDelete) {
+                        targetNames.add(collection.getName());
+                    }
                     if (target.all()) {
                         dataSource.deleteAllCollections(monitor);
                         failures[0] = Map.of();
                     } else {
-                        failures[0] = dataSource.deleteCollections(monitor, toDelete);
+                        failures[0] = dataSource.deleteCollections(monitor, targetNames);
                     }
                 } catch (DBException e) {
                     throw new InvocationTargetException(e);
@@ -187,15 +202,26 @@ public class WeaviateDeleteCollectionsHandler extends AbstractHandler implements
             log.error("Cannot delete collections", e.getTargetException());
             DBWorkbench.getPlatformUI().showError(
                 "Delete collections", "Failed to delete collections", e.getTargetException());
+            return null;
         } catch (InterruptedException e) {
-            // Cancelled partway; whatever was deleted stays deleted, and the refresh below shows
-            // exactly which.
+            // Cancelled partway. Whatever went is gone, and the removals below cover exactly those.
         }
 
-        refresh(dataSource);
+        Map<String, String> failed = failures[0] == null ? Map.of() : failures[0];
+        // Take the deleted nodes out of the tree one by one rather than refreshing.
+        //
+        // Refreshing the connection node was the first attempt and it was wrong twice over: it
+        // re-reads the whole schema, which froze the workbench when done on the UI thread, and a
+        // datasource refresh reconnects -- shutting the HTTP pool down underneath deletes that
+        // were still running, which is where "Connection pool shut down" came from. This is what
+        // WeaviateCollectionManager already does after deleting a single collection.
+        for (WeaviateCollection collection : toDelete) {
+            if (!failed.containsKey(collection.getName())) {
+                DBUtils.fireObjectRemove(collection);
+            }
+        }
 
-        Map<String, String> failed = failures[0];
-        if (failed != null && !failed.isEmpty()) {
+        if (!failed.isEmpty()) {
             StringBuilder message = new StringBuilder("These collections were not deleted:\n\n");
             failed.forEach((name, reason) -> message.append(name).append(" - ").append(reason).append('\n'));
             DBWorkbench.getPlatformUI().showMessageBox(
@@ -204,15 +230,32 @@ public class WeaviateDeleteCollectionsHandler extends AbstractHandler implements
         return null;
     }
 
-    private static void refresh(@NotNull WeaviateDataSource dataSource) {
+    /**
+     * Reads the collections under a progress dialog, or null if the user cancelled.
+     * <p>
+     * Under progress rather than inline because it can reach the server, and a UI that freezes
+     * only when the cache happens to be cold is worse than one that never does.
+     */
+    @Nullable
+    private static List<WeaviateCollection> listCollections(@NotNull WeaviateDataSource dataSource) {
+        List<WeaviateCollection>[] holder = new List[1];
         try {
-            DBNNode node = DBNUtils.getNodeByObject(dataSource);
-            if (node != null) {
-                node.refreshNode(new VoidProgressMonitor(), WeaviateDeleteCollectionsHandler.class);
-            }
-        } catch (Exception e) {
-            log.debug("Cannot refresh the navigator after deleting collections", e);
+            UIUtils.runInProgressService(monitor -> {
+                try {
+                    holder[0] = new ArrayList<>(dataSource.getCollections(monitor));
+                } catch (DBException e) {
+                    throw new InvocationTargetException(e);
+                }
+            });
+        } catch (InvocationTargetException e) {
+            log.error("Cannot list collections", e.getTargetException());
+            DBWorkbench.getPlatformUI().showError(
+                "Delete collections", "Cannot read the collection list", e.getTargetException());
+            return null;
+        } catch (InterruptedException e) {
+            return null;
         }
+        return holder[0];
     }
 
     @Override
@@ -227,6 +270,6 @@ public class WeaviateDeleteCollectionsHandler extends AbstractHandler implements
         }
         element.setText(target.all()
             ? "Delete All Collections"
-            : MessageFormat.format("Delete {0} Collections", target.names().size()));
+            : MessageFormat.format("Delete {0} Collections", target.collections().size()));
     }
 }
