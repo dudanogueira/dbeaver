@@ -81,6 +81,9 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.restoreBackup">
                 <visibleWhen checkEnabled="true"/>
             </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.deleteCollections">
+                <visibleWhen checkEnabled="true"/>
+            </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant">
                 <visibleWhen checkEnabled="true"/>
             </command>
@@ -302,8 +305,8 @@
          page or panel to load. -->
     <extension point="org.eclipse.ui.commands">
         <command id="org.jkiss.dbeaver.ext.weaviate.ui.createBackup"
-                 name="Backup Collections..."
-                 description="Back up collections to this backend"
+                 name="Create New Backup..."
+                 description="Back up collections to a backup backend"
                  categoryId="org.jkiss.dbeaver.core.navigator"/>
         <command id="org.jkiss.dbeaver.ext.weaviate.ui.restoreBackup"
                  name="Restore Backup..."
@@ -311,11 +314,29 @@
                  categoryId="org.jkiss.dbeaver.core.navigator"/>
     </extension>
 
+    <extension point="org.eclipse.ui.commands">
+        <command id="org.jkiss.dbeaver.ext.weaviate.ui.deleteCollections"
+                 name="Delete Collections"
+                 description="Delete the selected collections, or all of them, in one operation"
+                 categoryId="org.jkiss.dbeaver.core.navigator"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <!-- Only for several collections at once, or the Collections folder. A single collection
+             is already handled by the platform's Delete, which also gives the navigator refresh
+             and the standard confirmation; a second Delete entry beside it would just make the
+             menu ambiguous. -->
+        <handler commandId="org.jkiss.dbeaver.ext.weaviate.ui.deleteCollections"
+                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateDeleteCollectionsHandler"/>
+    </extension>
+
     <extension point="org.eclipse.ui.commandImages">
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.createBackup"
                icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/file/export.svg"/>
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.restoreBackup"
                icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/file/import.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.deleteCollections"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/object_remove.svg"/>
     </extension>
 
     <extension point="org.eclipse.ui.handlers">
@@ -352,7 +373,7 @@
              hand-rolled command in this plugin has had to work around. -->
         <tools>
             <tool id="org.jkiss.dbeaver.ext.weaviate.tools.Backup"
-                  label="Backup Collections..." description="Back up collections to a backend"
+                  label="Create New Backup..." description="Back up collections to a backend"
                   icon="#export" singleton="false">
                 <task id="weaviateBackupCreate"/>
             </tool>

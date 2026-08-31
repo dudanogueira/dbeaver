@@ -995,6 +995,62 @@ public class WeaviateDataSource extends AbstractDataSource
         return null;
     }
 
+    /**
+     * Deletes several collections as one operation.
+     * <p>
+     * Weaviate has no endpoint that takes a list, so this is still a request per collection -- but
+     * one command, one confirmation and one progress bar, rather than the platform's per-object
+     * delete which stages a separate command for each and reports them one at a time.
+     * <p>
+     * Failures are collected rather than thrown at the first one. Stopping halfway through a bulk
+     * delete leaves the user to work out which half, and the ones that did go are already gone.
+     *
+     * @return the names that could not be deleted, with the reason
+     */
+    @NotNull
+    public java.util.Map<String, String> deleteCollections(
+        @NotNull DBRProgressMonitor monitor, @NotNull List<String> names
+    ) {
+        java.util.Map<String, String> failed = new java.util.LinkedHashMap<>();
+        monitor.beginTask("Delete " + names.size() + " collections", names.size());
+        try {
+            for (String name : names) {
+                if (monitor.isCanceled()) {
+                    break;
+                }
+                monitor.subTask(name);
+                try {
+                    getClient().collections.delete(name);
+                } catch (Exception e) {
+                    failed.put(name, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                }
+                monitor.worked(1);
+            }
+        } finally {
+            invalidateCollections();
+            monitor.done();
+        }
+        return failed;
+    }
+
+    /**
+     * Deletes every collection, in one request.
+     * <p>
+     * The client has a {@code deleteAll} for exactly this, so "delete everything" is one call
+     * rather than a loop that could half-succeed. It also means a collection created between the
+     * listing and the delete goes too, which is what "all" was asked to mean.
+     */
+    public void deleteAllCollections(@NotNull DBRProgressMonitor monitor) throws DBException {
+        monitor.subTask("Delete all collections");
+        try {
+            getClient().collections.deleteAll();
+        } catch (Exception e) {
+            throw new DBException("Cannot delete all collections: " + e.getMessage(), e);
+        } finally {
+            invalidateCollections();
+        }
+    }
+
     /** Forgets cached backup listings, so a refresh shows what the server now holds. */
     public void resetBackupCache() {
         List<WeaviateBackupEntry> entries = backupEntries;
