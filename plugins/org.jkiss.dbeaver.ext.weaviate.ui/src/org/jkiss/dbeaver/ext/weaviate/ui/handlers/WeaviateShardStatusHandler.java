@@ -45,6 +45,8 @@ import org.jkiss.dbeaver.ui.DBeaverIcons;
 import org.jkiss.dbeaver.ui.UIIcon;
 import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
+import org.jkiss.dbeaver.ui.navigator.dialogs.NavigatorNodesDeletionConfirmations;
+import org.jkiss.dbeaver.ui.dialogs.Reply;
 
 import java.lang.reflect.InvocationTargetException;
 import java.text.MessageFormat;
@@ -171,6 +173,76 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
     }
 
     /**
+     * The navigator nodes for every shard the selection stands for.
+     * <p>
+     * Nodes rather than model objects because the confirmation lists them, and the platform's
+     * object table renders a {@code DBNNode} -- name, type and description -- and silently skips
+     * anything else. Materialising them also loads a node that has not been expanded, which is
+     * why this runs under a progress monitor and the label path does not use it.
+     */
+    @NotNull
+    private static List<DBNNode> shardNodesOf(
+        @Nullable ISelection selection, @NotNull DBRProgressMonitor monitor
+    ) throws DBException {
+        if (selection == null) {
+            return List.of();
+        }
+        Map<String, DBNNode> unique = new LinkedHashMap<>();
+        for (DBNNode node : NavigatorUtils.getSelectedNodes(selection)) {
+            if (!isShardBearing(node)) {
+                return List.of();
+            }
+            for (DBNNode shardNode : shardNodesUnder(node, monitor)) {
+                WeaviateShard shard = shardOf(shardNode);
+                if (shard != null) {
+                    // Same key as the model path: a node and one of its collections must not
+                    // contribute the same shard twice, and a replicated shard appears under
+                    // several nodes while being one shard to the endpoint that changes it.
+                    unique.putIfAbsent(shard.getCollection() + "/" + shard.getShardName(), shardNode);
+                }
+            }
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    @NotNull
+    private static List<DBNNode> shardNodesUnder(
+        @NotNull DBNNode node, @NotNull DBRProgressMonitor monitor
+    ) throws DBException {
+        if (shardOf(node) != null) {
+            return List.of(node);
+        }
+        List<DBNNode> shards = new ArrayList<>();
+        DBNNode[] children = node.getChildren(monitor);
+        if (children == null) {
+            return shards;
+        }
+        for (DBNNode child : children) {
+            if (shardOf(child) != null) {
+                shards.add(child);
+            } else if (isContainerOfShards(child)) {
+                shards.addAll(shardNodesUnder(child, monitor));
+            }
+        }
+        return shards;
+    }
+
+    /** Whether descending into this node could reach shards. */
+    private static boolean isContainerOfShards(@NotNull DBNNode node) {
+        if (node instanceof DBNDatabaseFolder folder) {
+            return SHARDS_FOLDER.equals(folder.getNodeId());
+        }
+        return node instanceof DBNDatabaseNode databaseNode
+            && databaseNode.getObject() instanceof WeaviateShardGroup;
+    }
+
+    @Nullable
+    private static WeaviateShard shardOf(@NotNull DBNNode node) {
+        return node instanceof DBNDatabaseNode databaseNode
+            && databaseNode.getObject() instanceof WeaviateShard shard ? shard : null;
+    }
+
+    /**
      * READY when anything under the selection is read-only, READONLY when everything is already
      * serving. Null when nothing is known yet, which is not the same as nothing to do.
      */
@@ -242,9 +314,15 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
     public Object execute(ExecutionEvent event) {
         ISelection selection = HandlerUtil.getCurrentSelection(event);
 
-        List<WeaviateShard>[] holder = new List[1];
+        List<DBNNode>[] holder = new List[1];
         try {
-            UIUtils.runInProgressService(monitor -> holder[0] = shardsOf(selection, monitor));
+            UIUtils.runInProgressService(monitor -> {
+                try {
+                    holder[0] = shardNodesOf(selection, monitor);
+                } catch (DBException e) {
+                    throw new InvocationTargetException(e);
+                }
+            });
         } catch (InvocationTargetException e) {
             log.error("Cannot read shards", e.getTargetException());
             DBWorkbench.getPlatformUI().showError(
@@ -254,14 +332,34 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
             return null;
         }
 
-        List<WeaviateShard> shards = holder[0] == null ? List.of() : holder[0];
+        List<DBNNode> shardNodes = holder[0] == null ? List.of() : holder[0];
+        List<WeaviateShard> shards = new ArrayList<>(shardNodes.size());
+        for (DBNNode node : shardNodes) {
+            WeaviateShard shard = shardOf(node);
+            if (shard != null) {
+                shards.add(shard);
+            }
+        }
+
         WeaviateShardStatus target = targetFor(shards);
         if (target == null) {
             DBWorkbench.getPlatformUI().showMessageBox(
                 "Shard status", "No shard status could be read for this selection.", false);
             return null;
         }
-        List<WeaviateShard> toChange = changing(shards, target);
+
+        // Only the ones that would actually change are listed, so the table is what is about to
+        // happen rather than what was selected.
+        List<DBNNode> changingNodes = new ArrayList<>();
+        List<WeaviateShard> toChange = new ArrayList<>();
+        for (DBNNode node : shardNodes) {
+            WeaviateShard shard = shardOf(node);
+            String status = shard == null ? null : shard.getVectorIndexingStatus();
+            if (status != null && !status.equalsIgnoreCase(target.name())) {
+                changingNodes.add(node);
+                toChange.add(shard);
+            }
+        }
         if (toChange.isEmpty()) {
             DBWorkbench.getPlatformUI().showMessageBox("Shard status",
                 "Every shard here is already " + target.name() + ".", false);
@@ -271,17 +369,23 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
         // One request per collection: the endpoint that accepts a change takes a collection and a
         // list of its shard names, so a selection spanning collections is that many requests.
         Map<String, List<String>> byCollection = new LinkedHashMap<>();
-        Set<String> collections = new LinkedHashSet<>();
         for (WeaviateShard shard : toChange) {
             byCollection.computeIfAbsent(shard.getCollection(), c -> new ArrayList<>())
                 .add(shard.getShardName());
-            collections.add(shard.getCollection());
         }
 
-        String question = MessageFormat.format(
-            "Set {0} shard(s) to {1}?\n\nAcross {2} collection(s): {3}",
-            toChange.size(), target.name(), collections.size(), String.join(", ", collections));
-        if (!UIUtils.confirmAction(HandlerUtil.getActiveShell(event), "Shard status", question)) {
+        // The platform's own confirmation, the one Delete uses: it lists the objects with their
+        // names, types and descriptions instead of asking the user to trust a number. Passing a
+        // null deleter drops the parts that only make sense for a delete -- the script preview
+        // and its options -- and keeps the object table.
+        Reply reply = NavigatorNodesDeletionConfirmations.confirm(
+            HandlerUtil.getActiveShell(event),
+            "Set shard status",
+            MessageFormat.format("Set {0} shard(s) to {1}, across {2} collection(s)?",
+                toChange.size(), target.name(), byCollection.size()),
+            changingNodes,
+            null);
+        if (reply != Reply.YES) {
             return null;
         }
 
@@ -355,12 +459,12 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
         List<WeaviateShard> shards = shardsOf(window.getSelectionService().getSelection(), null);
         WeaviateShardStatus target = targetFor(shards);
         if (target == null) {
-            element.setText("Set All Shards READY");
+            element.setText("Set Selected Shards READY");
             return;
         }
         int count = changing(shards, target).size();
         element.setText(MessageFormat.format(
-            "Set All Shards {0} ({1} to change)", target.name(), count));
+            "Set Selected Shards {0} ({1} to change)", target.name(), count));
         element.setIcon(DBeaverIcons.getImageDescriptor(
             target == WeaviateShardStatus.READY ? UIIcon.BULLET_GREEN : UIIcon.BULLET_BLACK));
     }

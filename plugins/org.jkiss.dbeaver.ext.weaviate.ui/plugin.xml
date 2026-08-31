@@ -322,7 +322,7 @@
 
     <extension point="org.eclipse.ui.commands">
         <command id="org.jkiss.dbeaver.ext.weaviate.ui.setShardStatus"
-                 name="Set All Shards Status"
+                 name="Set Selected Shards Status"
                  description="Set every shard under the selection to READY or READONLY"
                  categoryId="org.jkiss.dbeaver.core.navigator"/>
     </extension>
