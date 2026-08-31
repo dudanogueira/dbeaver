@@ -118,7 +118,9 @@ public class WeaviateShardChangeDialog extends BaseDialog {
         UIUtils.createTableColumn(table, SWT.LEFT, "Change");
         table.addListener(SWT.SetData, event -> {
             TableItem item = (TableItem) event.item;
-            Row row = rows.get(table.indexOf(item));
+            // event.index, not Table#indexOf: indexOf is a linear scan, which would make
+            // painting a table of thousands quadratic -- the thing VIRTUAL is here to avoid.
+            Row row = rows.get(event.index);
             // Composited the way the navigator does it, so a row here carries the same icon the
             // same shard has in the tree. The overlay alone is a corner badge and reads as
             // nothing on its own.
