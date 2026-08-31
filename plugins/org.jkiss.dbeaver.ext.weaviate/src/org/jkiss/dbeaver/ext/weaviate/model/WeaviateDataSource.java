@@ -23,6 +23,7 @@ import io.weaviate.client6.v1.api.collections.CollectionConfig;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
+import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.ext.weaviate.WeaviateConstants;
 import org.jkiss.dbeaver.model.DBPAdaptable;
 import org.jkiss.dbeaver.model.DBPDataSourceContainer;
@@ -60,6 +61,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class WeaviateDataSource extends AbstractDataSource
     implements DBSInstance, DBCExecutionContext, DBSObjectContainer, DBPAdaptable, DBPRefreshableObject {
 
+    private static final Log log = Log.getLog(WeaviateDataSource.class);
+
     private WeaviateClient client;
     private volatile List<WeaviateCollection> collections;
     private volatile List<WeaviateNode> nodes;
@@ -67,6 +70,10 @@ public class WeaviateDataSource extends AbstractDataSource
     private volatile List<WeaviateMetadataField> metadataFields;
     private volatile List<WeaviateModule> modules;
     private volatile List<WeaviateBackupEntry> backupEntries;
+    private volatile List<WeaviateSecurityEntry> securityEntries;
+    private volatile List<WeaviateRole> roles;
+    private volatile List<WeaviateDbUser> dbUsers;
+    private volatile List<WeaviateOidcGroup> oidcGroups;
     private final long id;
     private final DBPExclusiveResource exclusiveLock = new SimpleExclusiveLock();
     /**
@@ -1052,6 +1059,145 @@ public class WeaviateDataSource extends AbstractDataSource
         }
     }
 
+    // -- RBAC -------------------------------------------------------------------------------
+
+    /**
+     * The rows directly under Security: who this connection is, and what it cannot do.
+     * <p>
+     * Never throws. This folder's whole job is to explain a situation, and a folder that errors
+     * instead of explaining is the situation it exists to prevent.
+     */
+    @NotNull
+    @Association
+    public List<WeaviateSecurityEntry> getSecurityEntries(@NotNull DBRProgressMonitor monitor) {
+        List<WeaviateSecurityEntry> known = securityEntries;
+        if (known == null) {
+            synchronized (this) {
+                known = securityEntries;
+                if (known == null) {
+                    known = loadSecurityEntries();
+                    securityEntries = known;
+                }
+            }
+        }
+        return known;
+    }
+
+    @NotNull
+    private List<WeaviateSecurityEntry> loadSecurityEntries() {
+        List<WeaviateSecurityEntry> result = new ArrayList<>();
+        if (!isRestApiAvailable()) {
+            result.add(WeaviateRbacAdvice.needsApiKey(this));
+            return result;
+        }
+        try {
+            WeaviateRbacRest.OwnInfo own = WeaviateRbacRest.ownInfo(this);
+            List<String> roleNames = new ArrayList<>();
+            if (own.roles() != null) {
+                for (WeaviateRbacRest.RoleInfo role : own.roles()) {
+                    roleNames.add(role.name());
+                }
+            }
+            result.add(new WeaviateRbacIdentity(this, own.username(), roleNames,
+                own.groups() == null ? List.of() : own.groups()));
+            if (!own.rbacEnabled()) {
+                result.add(WeaviateRbacAdvice.notEnabled(this));
+            }
+        } catch (DBException e) {
+            log.debug("Cannot read own info", e);
+            result.add(WeaviateRbacAdvice.refused(this,
+                e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+        return result;
+    }
+
+    @NotNull
+    @Association
+    public List<WeaviateRole> getRoles(@NotNull DBRProgressMonitor monitor) throws DBException {
+        List<WeaviateRole> known = roles;
+        if (known == null) {
+            synchronized (this) {
+                known = roles;
+                if (known == null) {
+                    List<WeaviateRole> loaded = new ArrayList<>();
+                    for (WeaviateRbacRest.RoleInfo role : WeaviateRbacRest.listRoles(this)) {
+                        loaded.add(new WeaviateRole(this, role));
+                    }
+                    // Built-in roles last: they are the ones nobody can change, so they are the
+                    // ones nobody is looking for. Alphabetical within each group.
+                    loaded.sort((a, b) -> {
+                        if (a.isBuiltIn() != b.isBuiltIn()) {
+                            return a.isBuiltIn() ? 1 : -1;
+                        }
+                        return a.getName().compareToIgnoreCase(b.getName());
+                    });
+                    roles = loaded;
+                    known = loaded;
+                }
+            }
+        }
+        return known;
+    }
+
+    @NotNull
+    @Association
+    public List<WeaviateDbUser> getDbUsers(@NotNull DBRProgressMonitor monitor) throws DBException {
+        List<WeaviateDbUser> known = dbUsers;
+        if (known == null) {
+            synchronized (this) {
+                known = dbUsers;
+                if (known == null) {
+                    List<WeaviateDbUser> loaded = new ArrayList<>();
+                    for (WeaviateRbacRest.DbUserInfo user : WeaviateRbacRest.listDbUsers(this)) {
+                        loaded.add(new WeaviateDbUser(this, user));
+                    }
+                    loaded.sort((a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+                    dbUsers = loaded;
+                    known = loaded;
+                }
+            }
+        }
+        return known;
+    }
+
+    @NotNull
+    @Association
+    public List<WeaviateOidcGroup> getOidcGroups(@NotNull DBRProgressMonitor monitor)
+        throws DBException {
+        List<WeaviateOidcGroup> known = oidcGroups;
+        if (known == null) {
+            synchronized (this) {
+                known = oidcGroups;
+                if (known == null) {
+                    List<WeaviateOidcGroup> loaded = new ArrayList<>();
+                    for (String group : WeaviateRbacRest.listOidcGroups(this)) {
+                        loaded.add(new WeaviateOidcGroup(this, group));
+                    }
+                    loaded.sort((a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+                    oidcGroups = loaded;
+                    known = loaded;
+                }
+            }
+        }
+        return known;
+    }
+
+    /** Forgets everything RBAC, so the next expansion asks the server again. */
+    public void resetRbacCache() {
+        synchronized (this) {
+            securityEntries = null;
+            roles = null;
+            dbUsers = null;
+            oidcGroups = null;
+        }
+    }
+
+    /** Roles already in memory, or null. For callers that must not fetch -- see getLoadedNodes. */
+    @Nullable
+    public List<WeaviateRole> getLoadedRoles() {
+        return roles;
+    }
+
     public WeaviateClient getClient() {
         return client;
     }
@@ -1089,6 +1235,10 @@ public class WeaviateDataSource extends AbstractDataSource
             metadataFields = null;
             modules = null;
             backupEntries = null;
+            securityEntries = null;
+            roles = null;
+            dbUsers = null;
+            oidcGroups = null;
         }
         return this;
     }
