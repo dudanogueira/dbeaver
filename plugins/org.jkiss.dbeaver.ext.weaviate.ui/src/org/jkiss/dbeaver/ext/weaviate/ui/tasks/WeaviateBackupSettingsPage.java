@@ -144,7 +144,8 @@ public class WeaviateBackupSettingsPage extends WizardPage {
             // backup is the only thing that can be asked for.
             UIUtils.createLabel(scope, wizard.isRestore()
                 ? "This backup does not report which collections it holds, so it can only be restored whole."
-                : "No collections on this connection yet.");
+                : "No collections to back up. If this connection has collections, open the wizard "
+                    + "from the connection or one of its collections.");
         }
 
         Composite patternRow = UIUtils.createComposite(scope, 2);
@@ -201,6 +202,7 @@ public class WeaviateBackupSettingsPage extends WizardPage {
         }
         WeaviateDataSource dataSource = wizard.getWeaviateDataSource();
         if (dataSource == null) {
+            setErrorMessage("Open this from a Weaviate connection, or connect one first");
             return List.of();
         }
         try {

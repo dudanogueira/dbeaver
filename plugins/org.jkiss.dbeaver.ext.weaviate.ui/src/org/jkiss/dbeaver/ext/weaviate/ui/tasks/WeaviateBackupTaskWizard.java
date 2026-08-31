@@ -25,6 +25,7 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateBackupNode;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
 import org.jkiss.dbeaver.ext.weaviate.model.tasks.WeaviateBackupSettings;
+import org.jkiss.dbeaver.model.DBPDataSourceContainer;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
 import org.jkiss.dbeaver.model.navigator.DBNNode;
 import org.jkiss.dbeaver.model.runtime.DBRRunnableContext;
@@ -86,9 +87,56 @@ public class WeaviateBackupTaskWizard extends TaskConfigurationWizard<WeaviateBa
         return selectedBackup;
     }
 
+    /**
+     * The connection this wizard is about.
+     * <p>
+     * Resolved from the selection when there is one, and otherwise looked up -- which matters
+     * because the wizard is not always opened from a navigator node. Reached through the Tools
+     * menu the selection can be whatever the active part happens to hold, and a saved task has no
+     * selection at all; in both cases the collection list came up empty because there was nothing
+     * to read it from.
+     */
     @Nullable
     public WeaviateDataSource getWeaviateDataSource() {
+        if (dataSource == null) {
+            dataSource = resolveDataSource();
+            if (dataSource != null) {
+                settings.setDataSourceId(dataSource.getContainer().getId());
+            }
+        }
         return dataSource;
+    }
+
+    /**
+     * By the id the settings carry, or -- failing that -- the only connected Weaviate connection
+     * in the project. One candidate is not a guess; several are, and then it stays null and the
+     * page says so rather than backing up the wrong server.
+     */
+    @Nullable
+    private WeaviateDataSource resolveDataSource() {
+        DBTTask task = getCurrentTask();
+        if (task == null) {
+            return null;
+        }
+        var registry = task.getProject().getDataSourceRegistry();
+
+        String id = settings.getDataSourceId();
+        if (!id.isEmpty()) {
+            DBPDataSourceContainer container = registry.getDataSource(id);
+            if (container != null && container.getDataSource() instanceof WeaviateDataSource ds) {
+                return ds;
+            }
+        }
+        WeaviateDataSource only = null;
+        for (DBPDataSourceContainer container : registry.getDataSources()) {
+            if (container.getDataSource() instanceof WeaviateDataSource ds) {
+                if (only != null) {
+                    return null;
+                }
+                only = ds;
+            }
+        }
+        return only;
     }
 
     /**
@@ -168,7 +216,7 @@ public class WeaviateBackupTaskWizard extends TaskConfigurationWizard<WeaviateBa
      * is the only one.
      */
     private void chooseDefaultBackend() {
-        if (dataSource == null) {
+        if (getWeaviateDataSource() == null) {
             return;
         }
         try {
