@@ -45,6 +45,7 @@ import org.jkiss.dbeaver.ui.UIUtils;
 
 import java.lang.reflect.InvocationTargetException;
 import java.text.MessageFormat;
+import org.jkiss.utils.CommonUtils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -91,12 +92,30 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
      *
      * @param monitor null to use only what is already loaded, for callers that must not fetch
      */
+    /**
+     * What the action resolved to: the tenants, or why there are none.
+     * <p>
+     * The reason exists because every way this can come back empty used to be a silent
+     * {@code return}, and the handler then did nothing at all -- no error, no message. Selecting
+     * tenants, pressing Activate and watching nothing happen is indistinguishable from a broken
+     * action, and gives nobody anything to report.
+     */
+    private record Resolution(@NotNull List<WeaviateTenantNode> tenants, @Nullable String reason) {
+        static Resolution of(@NotNull List<WeaviateTenantNode> tenants) {
+            return new Resolution(tenants, null);
+        }
+
+        static Resolution refused(@NotNull String reason) {
+            return new Resolution(List.of(), reason);
+        }
+    }
+
     @NotNull
-    private static List<WeaviateTenantNode> subjects(
+    private static Resolution subjects(
         @Nullable ISelection selection, @Nullable DBRProgressMonitor monitor
     ) {
         if (selection == null) {
-            return List.of();
+            return Resolution.refused("Nothing is selected.");
         }
         List<WeaviateTenantNode> tenants = new ArrayList<>();
         WeaviateCollection owner = null;
@@ -104,27 +123,41 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
         for (DBNNode node : NavigatorUtils.getSelectedNodes(selection)) {
             List<WeaviateTenantNode> found = tenantsUnder(node, monitor);
             if (found.isEmpty() && !isTenancyFolder(node)) {
-                // Something that is not about tenants at all.
-                return List.of();
+                return Resolution.refused(
+                    "\"" + node.getNodeDisplayName() + "\" is not a tenant, so the selection "
+                        + "cannot be acted on as one. Select tenants, or the Tenants folder.");
             }
             for (WeaviateTenantNode tenant : found) {
                 if (!(tenant.getParentObject() instanceof WeaviateCollection collection)) {
-                    return List.of();
+                    return Resolution.refused(
+                        "Tenant \"" + tenant.getName() + "\" has no collection behind it. "
+                            + "Refresh the connection and try again.");
                 }
                 if (owner == null) {
                     owner = collection;
-                } else if (owner != collection) {
+                } else if (!owner.getName().equals(collection.getName())) {
                     // One request per collection, so a selection spanning two is not one action.
-                    return List.of();
+                    // Compared by name rather than by identity: a refresh rebuilds the collection
+                    // objects, so a selection made across one would fail an identity check while
+                    // naming a single collection throughout.
+                    return Resolution.refused(
+                        "The selection spans " + owner.getName() + " and " + collection.getName()
+                            + ". Tenants are changed one collection at a time.");
                 }
                 if (!tenant.getTenantStatus().isSettable()) {
                     // Offloading and onloading are the server's business; nothing to ask for.
-                    return List.of();
+                    return Resolution.refused(
+                        "Tenant \"" + tenant.getName() + "\" is "
+                            + tenant.getTenantStatus().getLabel()
+                            + ", which only the server can change.");
                 }
                 tenants.add(tenant);
             }
         }
-        return tenants;
+        if (tenants.isEmpty()) {
+            return Resolution.refused("The selection holds no tenants.");
+        }
+        return Resolution.of(tenants);
     }
 
     /** Whether this node is a Multi-Tenancy or Tenants folder of a multi-tenant collection. */
@@ -190,20 +223,29 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
 
     @Override
     public Object execute(ExecutionEvent event) {
-        List<WeaviateTenantNode>[] holder = new List[1];
+        Resolution[] holder = new Resolution[1];
         try {
             UIUtils.runInProgressService(monitor ->
                 holder[0] = subjects(HandlerUtil.getCurrentSelection(event), monitor));
         } catch (InvocationTargetException e) {
             log.error("Cannot read tenants", e.getTargetException());
+            DBWorkbench.getPlatformUI().showError(
+                WeaviateUIMessages.tenant_manage_title_plain,
+                "Cannot read the tenant list",
+                e.getTargetException());
             return null;
         } catch (InterruptedException e) {
             return null;
         }
-        List<WeaviateTenantNode> nodes = holder[0] == null ? List.of() : holder[0];
-        if (nodes.isEmpty()) {
+        Resolution resolution = holder[0];
+        if (resolution == null || resolution.tenants().isEmpty()) {
+            String reason = resolution == null ? "The tenant list could not be read."
+                : CommonUtils.notEmpty(resolution.reason());
+            DBWorkbench.getPlatformUI().showMessageBox(
+                WeaviateUIMessages.tenant_manage_title_plain, reason, true);
             return null;
         }
+        List<WeaviateTenantNode> nodes = resolution.tenants();
         WeaviateCollection collection = (WeaviateCollection) nodes.get(0).getParentObject();
         boolean activate = wouldActivate(nodes);
         WeaviateTenantStatus target =
@@ -214,10 +256,11 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
             tenants.add(new WeaviateTenant(node.getName(), node.getTenantStatus()));
         }
 
+        int[] changed = {0};
         try {
             UIUtils.runInProgressService(monitor -> {
                 try {
-                    collection.setTenantStatus(monitor, tenants, target);
+                    changed[0] = collection.setTenantStatus(monitor, tenants, target);
                     WeaviateNavigatorRefresh.afterTenantChange(monitor, collection);
                 } catch (DBException e) {
                     throw new InvocationTargetException(e);
@@ -233,6 +276,18 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
         } catch (InterruptedException e) {
             return null;
         }
+        if (changed[0] == 0) {
+            // setTenantStatus sends nothing for a tenant already in the wanted state, which it
+            // judges from what the tree holds. A zero here therefore means the tree and the server
+            // disagreed, and saying so is better than a dialog that closes with nothing changed.
+            DBWorkbench.getPlatformUI().showMessageBox(
+                WeaviateUIMessages.tenant_manage_title_plain,
+                MessageFormat.format(
+                    "No tenant was changed: all {0} already looked {1} to the navigator. "
+                        + "Refresh {2} and try again if the server disagrees.",
+                    tenants.size(), target.getLabel(), collection.getName()),
+                true);
+        }
         return null;
     }
 
@@ -245,7 +300,8 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
         if (window == null || window.getSelectionService() == null) {
             return;
         }
-        List<WeaviateTenantNode> tenants = subjects(window.getSelectionService().getSelection(), null);
+        List<WeaviateTenantNode> tenants =
+            subjects(window.getSelectionService().getSelection(), null).tenants();
         if (tenants.isEmpty()) {
             return;
         }
