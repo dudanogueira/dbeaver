@@ -29,7 +29,9 @@ import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateNode;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateShard;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateShardGroup;
@@ -44,6 +46,7 @@ import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.ui.DBeaverIcons;
 import org.jkiss.dbeaver.ui.UIIcon;
 import org.jkiss.dbeaver.ui.UIUtils;
+import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateInactiveTenantShardsDialog;
 import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
 import org.jkiss.dbeaver.ui.navigator.dialogs.NavigatorNodesDeletionConfirmations;
 import org.jkiss.dbeaver.ui.dialogs.Reply;
@@ -278,6 +281,52 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
     }
 
     @Nullable
+    private static WeaviateDataSource dataSourceOf(@NotNull List<WeaviateShard> shards) {
+        return shards.isEmpty() || !(shards.get(0).getDataSource() instanceof WeaviateDataSource ds)
+            ? null : ds;
+    }
+
+    /**
+     * Inactive tenants of the collections about to be changed, which are exactly the shards the
+     * tree could not show.
+     * <p>
+     * Best effort per collection: one that will not report its tenants is left out rather than
+     * failing the action, since the visible shards can still be changed.
+     */
+    @NotNull
+    private static List<WeaviateInactiveTenantShardsDialog.Entry> findInactiveTenants(
+        @Nullable WeaviateDataSource dataSource, @NotNull Set<String> collectionNames
+    ) {
+        List<WeaviateInactiveTenantShardsDialog.Entry> hidden = new ArrayList<>();
+        if (dataSource == null) {
+            return hidden;
+        }
+        try {
+            UIUtils.runInProgressService(monitor -> {
+                for (String name : collectionNames) {
+                    try {
+                        WeaviateCollection collection = dataSource.getChild(monitor, name);
+                        if (collection == null || !collection.isMultiTenant()) {
+                            continue;
+                        }
+                        for (WeaviateTenant tenant : collection.listTenants(monitor)) {
+                            if (!tenant.isActive()) {
+                                hidden.add(new WeaviateInactiveTenantShardsDialog.Entry(
+                                    name, tenant.name()));
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.debug("Cannot read tenants of " + name, e);
+                    }
+                }
+            });
+        } catch (InvocationTargetException | InterruptedException e) {
+            log.debug("Cannot look for inactive tenants", e);
+        }
+        return hidden;
+    }
+
+    @Nullable
     private static ISelection selectionFrom(Object evaluationContext) {
         if (!(evaluationContext instanceof IEvaluationContext context)) {
             return null;
@@ -374,6 +423,29 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
                 .add(shard.getShardName());
         }
 
+        // A multi-tenant collection hides the shards of its inactive tenants: the cluster API only
+        // lists a tenant's shard while it is active, so "every shard of this collection" quietly
+        // means "every shard of its active tenants". Offer the rest rather than skip them
+        // silently.
+        List<WeaviateInactiveTenantShardsDialog.Entry> hidden =
+            findInactiveTenants(dataSourceOf(toChange), byCollection.keySet());
+        if (!hidden.isEmpty()) {
+            WeaviateInactiveTenantShardsDialog dialog = new WeaviateInactiveTenantShardsDialog(
+                HandlerUtil.getActiveShell(event), hidden, target.name());
+            if (dialog.open() != org.eclipse.jface.dialogs.IDialogConstants.OK_ID) {
+                return null;
+            }
+            for (WeaviateInactiveTenantShardsDialog.Entry entry : dialog.getChosen()) {
+                // On a multi-tenant collection the shard name is the tenant name.
+                byCollection.computeIfAbsent(entry.collection(), c -> new ArrayList<>())
+                    .add(entry.tenant());
+            }
+        }
+        int totalShards = 0;
+        for (List<String> names : byCollection.values()) {
+            totalShards += names.size();
+        }
+
         // The platform's own confirmation, the one Delete uses: it lists the objects with their
         // names, types and descriptions instead of asking the user to trust a number. Passing a
         // null deleter drops the parts that only make sense for a delete -- the script preview
@@ -382,7 +454,7 @@ public class WeaviateShardStatusHandler extends AbstractHandler implements IElem
             HandlerUtil.getActiveShell(event),
             "Set shard status",
             MessageFormat.format("Set {0} shard(s) to {1}, across {2} collection(s)?",
-                toChange.size(), target.name(), byCollection.size()),
+                totalShards, target.name(), byCollection.size()),
             changingNodes,
             null);
         if (reply != Reply.YES) {
