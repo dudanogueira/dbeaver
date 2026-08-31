@@ -27,13 +27,15 @@ public class WeaviateShard implements DBSObject {
     private final WeaviateNode parent;
     private final Shard shard;
     /**
-     * The read/write state, stamped on by the shard group once it has read it.
+     * Set after this plugin changes the status, so the row reflects it without a re-read.
      * <p>
-     * Not available from the cluster API this shard was built from -- that reports how the vector
-     * index is doing, which is a different question and not one any request can answer. It arrives
-     * separately so the row can show the thing that is actually changeable.
+     * Null normally: the status comes from the nodes response this shard was built from. That
+     * field is named {@code vectorIndexingStatus}, which reads as though it were only about the
+     * vector index, but it reports READONLY when a shard has been set read-only -- verified by
+     * setting one and watching the value change. So there is one status, not two, and no extra
+     * request is needed to see it.
      */
-    private volatile WeaviateShardStatus status = WeaviateShardStatus.UNKNOWN;
+    private volatile String statusOverride;
 
     public WeaviateShard(@NotNull WeaviateNode parent, @NotNull Shard shard) {
         this.parent = parent;
@@ -45,22 +47,12 @@ public class WeaviateShard implements DBSObject {
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 1)
     public String getName() {
         StringBuilder sb = new StringBuilder(shard.name());
-        // Both states, named so they cannot be confused: the first is what can be changed, the
-        // second is what the server is doing. They share the value READY and mean different things.
-        boolean hasIndexing = shard.vectorIndexingStatus() != null;
-        if (status != WeaviateShardStatus.UNKNOWN || hasIndexing || shard.objectCount() > 0) {
+        String status = getVectorIndexingStatus();
+        if (status != null || shard.objectCount() > 0) {
             sb.append(" (");
-            boolean first = true;
-            if (status != WeaviateShardStatus.UNKNOWN) {
-                sb.append(status.name());
-                first = false;
+            if (status != null) {
+                sb.append(status).append(", ");
             }
-            if (hasIndexing) {
-                if (!first) sb.append(", ");
-                sb.append("indexing ").append(shard.vectorIndexingStatus().name());
-                first = false;
-            }
-            if (!first) sb.append(", ");
             sb.append(shard.objectCount()).append(" objects");
             sb.append(")");
         }
@@ -73,20 +65,28 @@ public class WeaviateShard implements DBSObject {
         return shard.name();
     }
 
+    /**
+     * The status as one of the two settable values, or UNKNOWN for anything else -- LAZY_LOADING
+     * and INDEXING are real states a shard can be in, but not ones that can be asked for.
+     */
     @NotNull
     public WeaviateShardStatus getShardStatus() {
-        return status;
+        return WeaviateShardStatus.fromName(getVectorIndexingStatus());
     }
 
-    void setShardStatus(@NotNull WeaviateShardStatus status) {
-        this.status = status;
+    /**
+     * Records the state the server has just accepted.
+     * <p>
+     * Public because the action that changes a shard's state lives in the UI bundle, and the row's
+     * label is built from this field: without it the tree keeps showing the old state until
+     * something forces a re-read, which is the same "it did not update" this branch has already
+     * chased through tenants, backups and collections.
+     */
+    public void setShardStatus(@NotNull WeaviateShardStatus status) {
+        this.statusOverride = status.name();
     }
 
-    @NotNull
-    @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 2)
-    public String getStatus() {
-        return status.getLabel();
-    }
+
 
     @Nullable
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 2)
@@ -102,6 +102,9 @@ public class WeaviateShard implements DBSObject {
     @Nullable
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 4)
     public String getVectorIndexingStatus() {
+        if (statusOverride != null) {
+            return statusOverride;
+        }
         return shard.vectorIndexingStatus() == null ? null : shard.vectorIndexingStatus().name();
     }
 

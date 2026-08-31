@@ -84,20 +84,19 @@ public class WeaviateShardGroup implements DBSObject {
     @NotNull
     @Property(viewable = true, order = 2)
     public String getStatusSummary() {
-        // The settable state, not the indexing one. This is the number an action on this node
-        // acts on, so summarising anything else here would put a count in the label that the
-        // action's own count then contradicts.
         java.util.Map<String, Integer> counts = new java.util.TreeMap<>();
         int unknown = 0;
         for (WeaviateShard shard : shards) {
-            WeaviateShardStatus status = shard.getShardStatus();
-            if (status == WeaviateShardStatus.UNKNOWN) {
+            String status = shard.getVectorIndexingStatus();
+            if (status == null) {
                 unknown++;
             } else {
-                counts.merge(status.name(), 1, Integer::sum);
+                counts.merge(status, 1, Integer::sum);
             }
         }
         if (counts.isEmpty()) {
+            // Nothing known yet -- this collection has not been expanded, so the breakdown has
+            // not been paid for. A shard count is honest and free.
             return unknown == 0 ? "" : unknown + (unknown == 1 ? " shard" : " shards");
         }
         List<java.util.Map.Entry<String, Integer>> ordered = new java.util.ArrayList<>(counts.entrySet());
@@ -142,48 +141,23 @@ public class WeaviateShardGroup implements DBSObject {
     }
 
     /**
-     * Shards that are not already in {@code target}, which is what an action would change.
+     * Shards not already in {@code target}, which is what an action would change.
      * <p>
-     * Shards whose state could not be read are left out. Asking the server to set a state we
-     * could not read is a guess, and the count in the confirmation would be a guess with it.
+     * A shard reporting LAZY_LOADING or INDEXING counts as needing the change: those are not
+     * {@code target}, and asking for READY is a legitimate request whatever the shard is currently
+     * doing. Only a shard whose status is unreadable is left out, since there is nothing to
+     * compare.
      */
     @NotNull
     public List<WeaviateShard> getShardsToChange(@NotNull WeaviateShardStatus target) {
         List<WeaviateShard> changing = new java.util.ArrayList<>();
         for (WeaviateShard shard : shards) {
-            WeaviateShardStatus status = shard.getShardStatus();
-            if (status != WeaviateShardStatus.UNKNOWN && status != target) {
+            String status = shard.getVectorIndexingStatus();
+            if (status != null && !status.equalsIgnoreCase(target.name())) {
                 changing.add(shard);
             }
         }
         return changing;
-    }
-
-    /**
-     * Reads the read/write state of these shards and stamps it onto them.
-     * <p>
-     * Done from here rather than per shard because it is one request for the whole collection, and
-     * because the group's own label reports the breakdown -- which has to be right before anything
-     * underneath is expanded.
-     */
-    void loadShardStatuses(@NotNull DBRProgressMonitor monitor) {
-        if (!(parent.getDataSource() instanceof WeaviateDataSource dataSource)) {
-            return;
-        }
-        try {
-            java.util.Map<String, WeaviateShardStatus> statuses =
-                dataSource.listShardStatuses(monitor, collection);
-            for (WeaviateShard shard : shards) {
-                WeaviateShardStatus status = statuses.get(shard.getShardName());
-                if (status != null) {
-                    shard.setShardStatus(status);
-                }
-            }
-        } catch (Exception e) {
-            // Best effort. A collection whose shards will not report leaves them UNKNOWN, which
-            // the label and the actions both already handle.
-            LOG.debug("Cannot read shard status of " + collection, e);
-        }
     }
 
     @Nullable

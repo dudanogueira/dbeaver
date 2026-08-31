@@ -82,8 +82,8 @@ public abstract class WeaviateShardStatusHandler extends AbstractHandler impleme
             ) {
                 return List.of();
             }
-            if (shard.getShardStatus() == WeaviateShardStatus.UNKNOWN) {
-                // Its state could not be read, so there is no change to name.
+            if (shard.getVectorIndexingStatus() == null) {
+                // No status to compare against, so there is no change to name.
                 return List.of();
             }
             if (collection == null) {
@@ -134,8 +134,12 @@ public abstract class WeaviateShardStatusHandler extends AbstractHandler impleme
         if (shards.isEmpty()) {
             return null;
         }
+        // Anything that is not READY -- READONLY, but also LAZY_LOADING or INDEXING -- is offered
+        // READY, the direction that restores service and the same one the collection-level action
+        // takes. Only a set that is already entirely READY is offered the other way.
         for (WeaviateShard shard : shards) {
-            if (shard.getShardStatus() == WeaviateShardStatus.READONLY) {
+            String status = shard.getVectorIndexingStatus();
+            if (status != null && !status.equalsIgnoreCase(WeaviateShardStatus.READY.name())) {
                 return WeaviateShardStatus.READY;
             }
         }
@@ -169,7 +173,8 @@ public abstract class WeaviateShardStatusHandler extends AbstractHandler impleme
         } else {
             shards = new ArrayList<>();
             for (WeaviateShard shard : selectedShards(selection)) {
-                if (shard.getShardStatus() != target) {
+                String status = shard.getVectorIndexingStatus();
+                if (status != null && !status.equalsIgnoreCase(target.name())) {
                     shards.add(shard);
                 }
             }
@@ -215,9 +220,15 @@ public abstract class WeaviateShardStatusHandler extends AbstractHandler impleme
             return null;
         }
 
-        // The rows carry the state in their labels, so they have to be re-read. Refreshing the
-        // cluster node reloads the shards; the objects themselves are rebuilt from the server.
+        // The server accepted it, so record it on the shards themselves: their labels are built
+        // from this, and the group's summary counts it. Re-reading from the server would say the
+        // same thing at the cost of a round trip, and refreshing the node would rebuild the whole
+        // shard list to change one word in it.
+        for (WeaviateShard shard : shards) {
+            shard.setShardStatus(target);
+        }
         if (refreshSubject != null) {
+            DBUtils.fireObjectUpdate(refreshSubject);
             DBUtils.fireObjectUpdate(refreshSubject.getParentObject());
         }
         return null;

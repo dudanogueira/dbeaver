@@ -127,11 +127,6 @@ public class WeaviateNode implements DBSObject, DBSObjectContainer {
             for (Map.Entry<String, List<WeaviateShard>> e : byCollection.entrySet()) {
                 result.add(new WeaviateShardGroup(this, e.getKey(), e.getValue()));
             }
-            // One request per collection on this node, so each group's label can report the
-            // read/write breakdown without waiting to be expanded.
-            for (WeaviateShardGroup group : result) {
-                group.loadShardStatuses(monitor);
-            }
             shardGroups = result;
         }
         return shardGroups;
