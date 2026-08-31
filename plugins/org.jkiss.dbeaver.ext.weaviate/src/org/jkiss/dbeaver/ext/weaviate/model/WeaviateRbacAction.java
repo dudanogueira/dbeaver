@@ -106,6 +106,22 @@ public final class WeaviateRbacAction {
             DOMAIN_REPLICATE, DOMAIN_ROLES, DOMAIN_TENANTS, DOMAIN_USERS);
     }
 
+    /**
+     * The domains the role editor offers a rule for.
+     * <p>
+     * Everything except namespaces, which needs the server started with
+     * {@code NAMESPACES_ENABLED}; a section nobody on an ordinary cluster can use would only
+     * produce writes the server refuses. Permissions of that kind stay visible in the tree and
+     * survive an edit untouched, they simply cannot be composed here.
+     * <p>
+     * Cluster and MCP are included even though they carry no scope: they are real permissions,
+     * and a rule for them is a set of actions with nothing to narrow.
+     */
+    @NotNull
+    public static List<String> editableDomains() {
+        return domains().stream().filter(d -> !DOMAIN_NAMESPACES.equals(d)).toList();
+    }
+
     /** The actions of one domain, or an empty list for a domain this plugin does not know. */
     @NotNull
     public static List<String> actionsOf(@Nullable String domain) {

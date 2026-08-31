@@ -41,6 +41,59 @@
 
     <extension point="org.eclipse.ui.commands">
         <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
+                name="Role"
+                description="Create, edit or delete a Weaviate role"
+                categoryId="org.jkiss.dbeaver.core.navigator">
+            <!-- Which of create, edit and delete an invocation is. The label shown in the menu is
+                 fixed per menu entry below, so the command name above is never displayed. -->
+            <commandParameter id="operation" name="Operation" optional="false"/>
+        </command>
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
+                name="Database user"
+                description="Create, edit or remove a Weaviate database user"
+                categoryId="org.jkiss.dbeaver.core.navigator">
+            <commandParameter id="operation" name="Operation" optional="false"/>
+        </command>
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.manageOidcGroup"
+                name="Group roles"
+                description="Grant or withdraw roles for an OIDC group"
+                categoryId="org.jkiss.dbeaver.core.navigator">
+            <commandParameter id="operation" name="Operation" optional="false"/>
+        </command>
+    </extension>
+
+    <extension point="org.eclipse.ui.commandImages">
+        <!-- Borrowed from the shared UI bundle, which this one already requires, rather than
+             shipping three more assets for actions the platform already has icons for. -->
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/object_add.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/object_add.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageOidcGroup"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/object_add.svg"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.handlers">
+        <!-- No <enabledWhen> on any of these: the condition is a navigator folder's meta id,
+             which no built-in property tester exposes, and a tester contributed from this
+             lazily-activated bundle evaluates as NOT_LOADED before the bundle starts. Each
+             handler's setEnabled() computes it instead. -->
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateRoleHandler"/>
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateDbUserHandler"/>
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageOidcGroup"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateOidcGroupHandler"/>
+    </extension>
+
+    <extension point="org.eclipse.ui.commands">
+        <command
                 id="org.jkiss.dbeaver.ext.weaviate.ui.exportSchema"
                 name="Export Collection Schema..."
                 description="Save this collection's definition as JSON"
@@ -128,6 +181,61 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.previewTokenization">
                 <visibleWhen checkEnabled="true"/>
             </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
+                         id="weaviate.roleCreate" label="Create Role...">
+                    <parameter name="operation" value="create"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
+                         id="weaviate.roleEdit" label="Edit Role...">
+                    <parameter name="operation" value="edit"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
+                         id="weaviate.roleDelete" label="Delete Role">
+                    <parameter name="operation" value="delete"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
+                         id="weaviate.userCreate" label="Create User...">
+                    <parameter name="operation" value="create"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
+                         id="weaviate.userRoles" label="Assign Roles...">
+                    <parameter name="operation" value="roles"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
+                         id="weaviate.userActivate" label="Activate User">
+                    <parameter name="operation" value="activate"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
+                         id="weaviate.userDeactivate" label="Deactivate User">
+                    <parameter name="operation" value="deactivate"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
+                         id="weaviate.userRotate" label="Rotate API Key...">
+                    <parameter name="operation" value="rotate"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
+                         id="weaviate.userDelete" label="Delete User">
+                    <parameter name="operation" value="delete"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageOidcGroup"
+                         id="weaviate.groupRoles" label="Group Roles...">
+                    <parameter name="operation" value="roles"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageOidcGroup"
+                         id="weaviate.groupRevokeAll" label="Withdraw All Roles">
+                    <parameter name="operation" value="revokeAll"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
         </menuContribution>
     </extension>
 
