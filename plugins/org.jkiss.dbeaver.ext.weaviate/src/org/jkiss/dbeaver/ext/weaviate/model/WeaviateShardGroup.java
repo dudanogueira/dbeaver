@@ -18,7 +18,10 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
+import org.jkiss.dbeaver.model.DBIcon;
 import org.jkiss.dbeaver.model.DBPDataSource;
+import org.jkiss.dbeaver.model.DBPStatefulObject;
+import org.jkiss.dbeaver.model.struct.DBSObjectState;
 import org.jkiss.dbeaver.model.meta.Property;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.struct.DBSObject;
@@ -32,7 +35,12 @@ import java.util.List;
  * hundreds of shards whose names are tenant ids. Flat, there is nothing to say which collection
  * any of them belongs to; this groups them so the collection is the thing you navigate by.
  */
-public class WeaviateShardGroup implements DBSObject {
+public class WeaviateShardGroup implements DBSObject, DBPStatefulObject {
+
+    private static final DBSObjectState STATE_READONLY =
+        new DBSObjectState("Read-only", DBIcon.OVER_ERROR);
+    private static final DBSObjectState STATE_LOADING =
+        new DBSObjectState("Loading", DBIcon.OVER_UNKNOWN);
 
     private static final org.jkiss.dbeaver.Log LOG =
         org.jkiss.dbeaver.Log.getLog(WeaviateShardGroup.class);
@@ -133,6 +141,40 @@ public class WeaviateShardGroup implements DBSObject {
             total += shard.getObjectCount();
         }
         return total;
+    }
+
+    /**
+     * The worst state under this collection, so a read-only shard is visible without expanding a
+     * list that can run to thousands. Red beats orange beats green, which is the order in which
+     * they need attention.
+     */
+    @NotNull
+    @Override
+    public DBSObjectState getObjectState() {
+        boolean loading = false;
+        boolean ready = false;
+        for (WeaviateShard shard : shards) {
+            String status = shard.getVectorIndexingStatus();
+            if (status == null) {
+                continue;
+            }
+            switch (WeaviateShardStatus.fromName(status)) {
+                case READONLY -> {
+                    return STATE_READONLY;
+                }
+                case READY -> ready = true;
+                default -> loading = true;
+            }
+        }
+        if (loading) {
+            return STATE_LOADING;
+        }
+        return ready ? DBSObjectState.ACTIVE : DBSObjectState.NORMAL;
+    }
+
+    @Override
+    public void refreshObjectState(@NotNull DBRProgressMonitor monitor) {
+        // Derived from the shards, which the node rebuilds when it re-reads them.
     }
 
     @NotNull
