@@ -102,6 +102,69 @@ public final class WeaviateSchemaRest {
     }
 
     /**
+     * Set one shard's status, over REST.
+     * <p>
+     * Not through the client's {@code updateShards}, which cannot be used here. It PUTs each shard
+     * and then calls {@code getShards()} to return the new list -- and that read fails with a
+     * server-side 500 on any multi-tenant collection holding an inactive tenant:
+     * <pre>
+     * GET /v1/schema/{collection}/shards
+     *   500  shard umbrella-us-east: (local umbrella-us-east shard not found)
+     * </pre>
+     * The writes have already gone through by then, so the operation reports a failure for work
+     * the server has done -- the worst of both. Weaviate takes about 7.5 seconds to produce that
+     * error, which is also why the tree once appeared to hang. Sending the PUT directly avoids
+     * the read entirely.
+     *
+     * @param status READY or READONLY; the server accepts nothing else
+     */
+    public static void updateShardStatus(
+        @NotNull WeaviateDataSource dataSource,
+        @NotNull String collectionName,
+        @NotNull String shardName,
+        @NotNull String status
+    ) throws DBException {
+        URI uri = URI.create(dataSource.getRestBaseUrl() + SCHEMA_PATH
+            + "/" + encodePathSegment(collectionName)
+            + "/shards/" + encodePathSegment(shardName));
+        HttpRequest.Builder request = HttpRequest.newBuilder(uri)
+            .timeout(TIMEOUT)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .PUT(HttpRequest.BodyPublishers.ofString(
+                "{\"status\":\"" + status + "\"}", StandardCharsets.UTF_8));
+
+        String authorization = dataSource.getRestAuthorizationHeader();
+        if (authorization != null) {
+            request.header("Authorization", authorization);
+        }
+
+        HttpResponse<String> response;
+        try (HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build()) {
+            response = client.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            throw new DBException("Cannot reach Weaviate at " + uri + ": " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DBException("Interrupted while setting shard status", e);
+        }
+
+        int status2 = response.statusCode();
+        if (status2 < 200 || status2 >= 300) {
+            throw new DBException(describeFailure(status2, response.body()));
+        }
+    }
+
+    /**
+     * Percent-encodes one path segment. Tenant-named shards can contain characters that are legal
+     * in a name and not in a URL, which is the same trap the tokenize endpoint sprang once before.
+     */
+    @NotNull
+    private static String encodePathSegment(@NotNull String segment) {
+        return java.net.URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    /**
      * Fetch a collection's definition exactly as the server stores it.
      * <p>
      * Read over REST rather than through {@code collections.getConfig} so the result includes every

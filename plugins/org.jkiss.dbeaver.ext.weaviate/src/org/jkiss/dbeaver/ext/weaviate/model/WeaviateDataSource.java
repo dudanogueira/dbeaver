@@ -1011,18 +1011,23 @@ public class WeaviateDataSource extends AbstractDataSource
         if (!target.isSettable()) {
             throw new DBException("Shards cannot be set to " + target.getLabel());
         }
-        if (shardNames.isEmpty()) {
-            return;
-        }
-        monitor.subTask("Set " + shardNames.size() + " shards of " + collectionName
-            + " to " + target.name());
+        // One PUT per shard, over REST rather than through the client's updateShards. That method
+        // finishes by reading the shard list back, and on a multi-tenant collection with an
+        // inactive tenant the read fails with a 500 after about 7.5 seconds -- reporting failure
+        // for writes it had already made. See WeaviateSchemaRest.updateShardStatus.
+        monitor.beginTask("Set " + shardNames.size() + " shard(s) of " + collectionName
+            + " to " + target.name(), shardNames.size());
         try {
-            getClient().collections.use(collectionName).config.updateShards(
-                io.weaviate.client6.v1.api.collections.config.ShardStatus.valueOf(target.name()),
-                shardNames);
-        } catch (Exception e) {
-            throw new DBException(
-                "Cannot set shard status on " + collectionName + ": " + e.getMessage(), e);
+            for (String shardName : shardNames) {
+                if (monitor.isCanceled()) {
+                    break;
+                }
+                monitor.subTask(shardName);
+                WeaviateSchemaRest.updateShardStatus(this, collectionName, shardName, target.name());
+                monitor.worked(1);
+            }
+        } finally {
+            monitor.done();
         }
     }
 
