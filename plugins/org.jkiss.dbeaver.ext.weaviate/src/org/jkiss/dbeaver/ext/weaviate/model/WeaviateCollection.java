@@ -1994,6 +1994,17 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
     }
 
     /**
+     * Tenant nodes already in memory, or null if this collection's tenants have not been read.
+     * <p>
+     * For callers that run while a context menu is being built, where fetching would put a network
+     * round trip on the UI thread.
+     */
+    @Nullable
+    public List<WeaviateTenantNode> getLoadedTenantNodes() {
+        return tenantNodes;
+    }
+
+    /**
      * Forgets the cached tenant nodes. Called after any change of state, and available to the UI
      * so a navigator refresh shows what the server now holds.
      */

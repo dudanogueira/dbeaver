@@ -18,7 +18,9 @@ package org.jkiss.dbeaver.ext.weaviate.ui;
 
 import org.jkiss.code.NotNull;
 import org.jkiss.dbeaver.Log;
+import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
 import org.jkiss.dbeaver.model.navigator.DBNEvent;
 import org.jkiss.dbeaver.model.navigator.DBNUtils;
@@ -75,7 +77,11 @@ public final class WeaviateNavigatorRefresh {
     public static void afterTenantChange(
         @NotNull DBRProgressMonitor monitor, @NotNull Collection<WeaviateCollection> collections
     ) {
+        WeaviateDataSource dataSource = null;
         for (WeaviateCollection collection : collections) {
+            if (collection.getDataSource() instanceof WeaviateDataSource ds) {
+                dataSource = ds;
+            }
             try {
                 DBNDatabaseNode node = DBNUtils.getNodeByObject(collection);
                 if (node == null) {
@@ -86,6 +92,38 @@ public final class WeaviateNavigatorRefresh {
             } catch (Exception e) {
                 log.debug("Cannot refresh " + collection.getName() + " after a tenancy change", e);
             }
+        }
+        refreshClusterNodes(monitor, dataSource);
+    }
+
+    /**
+     * Re-reads the cluster nodes after a tenant changed state.
+     * <p>
+     * A tenant's shard appears in the cluster API only while the tenant is active, so activating
+     * one adds a shard to the Shards tree and deactivating removes it. The node objects carry the
+     * snapshot they were built from, so nothing short of fetching the list again shows it.
+     * <p>
+     * Skipped entirely when nobody has looked at Cluster Nodes: that read returns every shard on
+     * the server -- a megabyte on this lab server -- and there is no reason to pay it to update a
+     * part of the tree that has never been opened.
+     */
+    private static void refreshClusterNodes(
+        @NotNull DBRProgressMonitor monitor, @Nullable WeaviateDataSource dataSource
+    ) {
+        if (dataSource == null || !dataSource.hasLoadedNodes()) {
+            return;
+        }
+        try {
+            dataSource.invalidateNodes();
+            // The connection node rather than the Cluster Nodes folder: a folder is not itself
+            // refreshable and walking up from one arrives here anyway. Safe now that
+            // WeaviateDataSource is a DBPRefreshableObject -- it used to mean a reconnect.
+            DBNDatabaseNode node = DBNUtils.getNodeByObject(dataSource.getContainer());
+            if (node != null) {
+                node.refreshNode(monitor, DBNEvent.FORCE_REFRESH);
+            }
+        } catch (Exception e) {
+            log.debug("Cannot refresh cluster nodes after a tenancy change", e);
         }
     }
 }

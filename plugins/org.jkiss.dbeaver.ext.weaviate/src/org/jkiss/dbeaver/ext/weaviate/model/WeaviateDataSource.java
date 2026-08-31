@@ -1084,6 +1084,29 @@ public class WeaviateDataSource extends AbstractDataSource
         return this;
     }
 
+    /**
+     * Whether the cluster node list has been read.
+     * <p>
+     * Lets a caller skip refreshing the Cluster Nodes side when nobody has looked at it, since
+     * re-reading it means fetching every shard on the server.
+     */
+    public boolean hasLoadedNodes() {
+        return nodes != null;
+    }
+
+    /**
+     * Drops the cluster node list.
+     * <p>
+     * A {@link WeaviateNode} carries the shard snapshot it was built from, so a shard that has
+     * appeared or vanished -- which is what activating or deactivating a tenant does -- is only
+     * visible after the whole list is fetched again.
+     */
+    public void invalidateNodes() {
+        synchronized (this) {
+            nodes = null;
+        }
+    }
+
     public void invalidateCollections() {
         synchronized (this) {
             collections = null;

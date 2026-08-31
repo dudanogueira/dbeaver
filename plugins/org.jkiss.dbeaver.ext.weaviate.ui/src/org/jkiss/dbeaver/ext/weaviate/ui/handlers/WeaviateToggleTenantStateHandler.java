@@ -28,6 +28,11 @@ import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.model.navigator.DBNDatabaseFolder;
+import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
+import org.jkiss.dbeaver.model.navigator.DBNNode;
+import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
+import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantNode;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantStatus;
@@ -59,6 +64,10 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
 
     private static final Log log = Log.getLog(WeaviateToggleTenantStateHandler.class);
 
+    /** Folders that stand for every tenant of their collection. */
+    private static final java.util.Set<String> TENANCY_FOLDERS =
+        java.util.Set.of("multiTenancy", "tenants");
+
     /**
      * What pressing the entry would do to this selection: activate unless everything in it is
      * already active.
@@ -73,42 +82,125 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
     }
 
     /**
-     * Selected tenants, but only when the whole selection is tenants of one multi-tenant
-     * collection. A selection spanning two collections cannot be one request, and mixing a tenant
-     * with something else is not an instruction anyone meant to give.
+     * Tenants the action would act on.
+     * <p>
+     * Either the tenant nodes that are selected, or -- when a Multi-Tenancy or Tenants folder is
+     * selected -- every tenant of that collection. The folders are where someone looks when the
+     * thought is "wake all of these up", and requiring them to expand the folder and select
+     * thousands of rows first would be the wrong answer to that.
+     *
+     * @param monitor null to use only what is already loaded, for callers that must not fetch
      */
     @NotNull
-    private static List<WeaviateTenantNode> subjects(@Nullable ISelection selection) {
-        List<WeaviateTenantNode> tenants = WeaviateTenancyNodes.selectedTenants(selection);
-        if (tenants.isEmpty()) {
+    private static List<WeaviateTenantNode> subjects(
+        @Nullable ISelection selection, @Nullable DBRProgressMonitor monitor
+    ) {
+        if (selection == null) {
             return List.of();
         }
+        List<WeaviateTenantNode> tenants = new ArrayList<>();
         WeaviateCollection owner = null;
-        for (WeaviateTenantNode tenant : tenants) {
-            if (!(tenant.getParentObject() instanceof WeaviateCollection collection)) {
+
+        for (DBNNode node : NavigatorUtils.getSelectedNodes(selection)) {
+            List<WeaviateTenantNode> found = tenantsUnder(node, monitor);
+            if (found.isEmpty() && !isTenancyFolder(node)) {
+                // Something that is not about tenants at all.
                 return List.of();
             }
-            if (owner == null) {
-                owner = collection;
-            } else if (owner != collection) {
-                return List.of();
-            }
-            if (!tenant.getTenantStatus().isSettable()) {
-                // Offloading and onloading are the server's business; there is nothing to ask for.
-                return List.of();
+            for (WeaviateTenantNode tenant : found) {
+                if (!(tenant.getParentObject() instanceof WeaviateCollection collection)) {
+                    return List.of();
+                }
+                if (owner == null) {
+                    owner = collection;
+                } else if (owner != collection) {
+                    // One request per collection, so a selection spanning two is not one action.
+                    return List.of();
+                }
+                if (!tenant.getTenantStatus().isSettable()) {
+                    // Offloading and onloading are the server's business; nothing to ask for.
+                    return List.of();
+                }
+                tenants.add(tenant);
             }
         }
         return tenants;
     }
 
+    /** Whether this node is a Multi-Tenancy or Tenants folder of a multi-tenant collection. */
+    private static boolean isTenancyFolder(@NotNull DBNNode node) {
+        return node instanceof DBNDatabaseFolder folder
+            && TENANCY_FOLDERS.contains(folder.getNodeId())
+            && WeaviateTenancyNodes.multiTenantCollection(node) != null;
+    }
+
+    @NotNull
+    private static List<WeaviateTenantNode> tenantsUnder(
+        @NotNull DBNNode node, @Nullable DBRProgressMonitor monitor
+    ) {
+        if (node instanceof DBNDatabaseNode databaseNode
+            && databaseNode.getObject() instanceof WeaviateTenantNode tenant
+        ) {
+            return List.of(tenant);
+        }
+        if (!isTenancyFolder(node)) {
+            return List.of();
+        }
+        WeaviateCollection collection = WeaviateTenancyNodes.multiTenantCollection(node);
+        if (collection == null) {
+            return List.of();
+        }
+        if (monitor == null) {
+            List<WeaviateTenantNode> loaded = collection.getLoadedTenantNodes();
+            return loaded == null ? List.of() : loaded;
+        }
+        try {
+            return collection.getTenantNodes(monitor);
+        } catch (Exception e) {
+            log.debug("Cannot read tenants of " + collection.getName(), e);
+            return List.of();
+        }
+    }
+
     @Override
     public void setEnabled(Object evaluationContext) {
-        setBaseEnabled(!subjects(WeaviateTenancyNodes.selectionOf(evaluationContext)).isEmpty());
+        ISelection selection = WeaviateTenancyNodes.selectionOf(evaluationContext);
+        if (selection == null) {
+            setBaseEnabled(false);
+            return;
+        }
+        List<DBNNode> nodes = NavigatorUtils.getSelectedNodes(selection);
+        if (nodes.isEmpty()) {
+            setBaseEnabled(false);
+            return;
+        }
+        // Shape only. Whether a folder holds tenants worth changing needs them read, and a folder
+        // that has not been expanded would have to be fetched to find out -- on the UI thread,
+        // while the menu is being built.
+        for (DBNNode node : nodes) {
+            boolean tenantNode = node instanceof DBNDatabaseNode databaseNode
+                && databaseNode.getObject() instanceof WeaviateTenantNode;
+            if (!tenantNode && !isTenancyFolder(node)) {
+                setBaseEnabled(false);
+                return;
+            }
+        }
+        setBaseEnabled(true);
     }
 
     @Override
     public Object execute(ExecutionEvent event) {
-        List<WeaviateTenantNode> nodes = subjects(HandlerUtil.getCurrentSelection(event));
+        List<WeaviateTenantNode>[] holder = new List[1];
+        try {
+            UIUtils.runInProgressService(monitor ->
+                holder[0] = subjects(HandlerUtil.getCurrentSelection(event), monitor));
+        } catch (InvocationTargetException e) {
+            log.error("Cannot read tenants", e.getTargetException());
+            return null;
+        } catch (InterruptedException e) {
+            return null;
+        }
+        List<WeaviateTenantNode> nodes = holder[0] == null ? List.of() : holder[0];
         if (nodes.isEmpty()) {
             return null;
         }
@@ -153,7 +245,7 @@ public class WeaviateToggleTenantStateHandler extends AbstractHandler implements
         if (window == null || window.getSelectionService() == null) {
             return;
         }
-        List<WeaviateTenantNode> tenants = subjects(window.getSelectionService().getSelection());
+        List<WeaviateTenantNode> tenants = subjects(window.getSelectionService().getSelection(), null);
         if (tenants.isEmpty()) {
             return;
         }
