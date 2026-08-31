@@ -33,6 +33,7 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRbacAction;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRbacRest;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRole;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRoleRule;
+import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateChangeConfirmDialog;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRbacRefresh;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRoleDialog;
 import org.jkiss.dbeaver.model.navigator.DBNNode;
@@ -245,38 +246,36 @@ public class WeaviateRoleHandler extends AbstractHandler implements IElementUpda
             DBWorkbench.getPlatformUI().showMessageBox(TITLE, "Select a role to delete.", true);
             return;
         }
+        // Built-in roles stay in the list rather than being filtered out of it: somebody who
+        // selected admin alongside three of their own should see admin there, marked, not simply
+        // find that three went.
+        List<WeaviateChangeConfirmDialog.Row> rows = new ArrayList<>();
         List<WeaviateRole> targets = new ArrayList<>();
-        List<String> builtIn = new ArrayList<>();
         for (WeaviateRole role : roles) {
-            if (role.isBuiltIn()) {
-                builtIn.add(role.getName());
-            } else {
+            boolean included = !role.isBuiltIn();
+            rows.add(WeaviateChangeConfirmDialog.Row.of(role, "Role",
+                included ? "will be deleted" : "left alone: built-in, Weaviate refuses to delete it",
+                included));
+            if (included) {
                 targets.add(role);
             }
         }
         if (targets.isEmpty()) {
-            DBWorkbench.getPlatformUI().showMessageBox(TITLE,
-                (builtIn.size() == 1 ? builtIn.get(0) + " is a built-in role" : "These are "
-                    + "built-in roles: " + String.join(", ", builtIn))
-                    + ". Weaviate does not allow them to be deleted.", true);
+            StringBuilder message = new StringBuilder("Nothing to delete.\n\n");
+            for (WeaviateChangeConfirmDialog.Row row : rows) {
+                message.append(row.name()).append(" - ").append(row.outcome()).append('\n');
+            }
+            DBWorkbench.getPlatformUI().showMessageBox(TITLE, message.toString(), false);
             return;
         }
 
-        List<String> names = new ArrayList<>();
-        for (WeaviateRole role : targets) {
-            names.add(role.getName());
-        }
-        StringBuilder message = new StringBuilder(MessageFormat.format(
-            "Delete {0} role(s)?\n\n{1}\n\nAnyone holding them loses what they granted. "
-                + "This cannot be undone.",
-            targets.size(), String.join(", ", names)));
-        if (!builtIn.isEmpty()) {
-            message.append("\n\n").append(builtIn.size())
-                .append(" built-in role(s) will be left alone: ")
-                .append(String.join(", ", builtIn));
-        }
-        if (!DBWorkbench.getPlatformUI().confirmAction(
-            TITLE, message.toString(), "Delete", true)) {
+        WeaviateChangeConfirmDialog dialog = new WeaviateChangeConfirmDialog(
+            HandlerUtil.getActiveShell(event), TITLE,
+            MessageFormat.format(
+                "Delete {0} role(s)?\n\nAnyone holding them loses what they granted. "
+                    + "This cannot be undone.", targets.size()),
+            rows, "Delete");
+        if (dialog.open() != IDialogConstants.OK_ID) {
             return;
         }
 

@@ -30,7 +30,9 @@ import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateOidcGroup;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRole;
+import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateChangeConfirmDialog;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRoleAssignmentDialog;
+import org.jkiss.dbeaver.model.DBIcon;
 import org.jkiss.dbeaver.model.navigator.DBNNode;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import java.util.Map;
@@ -198,10 +200,17 @@ public class WeaviateOidcGroupHandler extends AbstractHandler implements IElemen
                 group.getName() + " holds no roles.", false);
             return;
         }
-        if (!DBWorkbench.getPlatformUI().confirmAction(TITLE,
-            "Withdraw all " + held.size() + " role(s) from " + group.getName()
+        List<WeaviateChangeConfirmDialog.Row> rows = new ArrayList<>();
+        for (String role : held) {
+            rows.add(new WeaviateChangeConfirmDialog.Row(
+                DBIcon.TREE_PERMISSIONS, role, "Role", "will be withdrawn", true));
+        }
+        WeaviateChangeConfirmDialog dialog = new WeaviateChangeConfirmDialog(
+            HandlerUtil.getActiveShell(event), TITLE,
+            "Withdraw " + held.size() + " role(s) from " + group.getName()
                 + "?\n\nThe group itself belongs to your identity provider and is not affected.",
-            "Withdraw", true)) {
+            rows, "Withdraw");
+        if (dialog.open() != IDialogConstants.OK_ID) {
             return;
         }
         group.resetRoleCache();

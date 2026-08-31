@@ -22,6 +22,7 @@ import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDbUser;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRbacRest;
+import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateChangeConfirmDialog;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRbacRefresh;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
@@ -90,54 +91,49 @@ final class WeaviateUserActions {
             return;
         }
 
+        // Every user asked about becomes a row, including the ones that will be left alone --
+        // the reason belongs beside the name, not in a sentence underneath a list.
+        List<WeaviateChangeConfirmDialog.Row> rows = new ArrayList<>();
         List<WeaviateDbUser> targets = new ArrayList<>();
-        List<String> envUsers = new ArrayList<>();
-        int alreadyThere = 0;
         for (WeaviateDbUser user : users) {
+            String outcome;
+            boolean included;
             if (user.isEnvUser()) {
-                envUsers.add(user.getName());
-                continue;
+                outcome = "left alone: declared in the server's environment";
+                included = false;
+            } else if (operation.skippableWhenAlreadyThere
+                && user.isActive() == (operation == Operation.ACTIVATE)) {
+                outcome = "left alone: already " + operation.past;
+                included = false;
+            } else {
+                outcome = "will be " + operation.past;
+                included = true;
+                targets.add(user);
             }
-            if (operation.skippableWhenAlreadyThere
-                && user.isActive() == (operation == Operation.ACTIVATE)
-            ) {
-                alreadyThere++;
-                continue;
-            }
-            targets.add(user);
+            rows.add(WeaviateChangeConfirmDialog.Row.of(user, "User", outcome, included));
         }
 
         if (targets.isEmpty()) {
-            StringBuilder message = new StringBuilder("Nothing to " + operation.verb + ".");
-            if (alreadyThere > 0) {
-                message.append("\n\n").append(alreadyThere)
-                    .append(" user(s) are already ").append(operation.past).append('.');
-            }
-            if (!envUsers.isEmpty()) {
-                message.append("\n\n").append(describeEnvUsers(envUsers));
+            // Nothing to do, so no confirmation to press: say why and stop.
+            StringBuilder message = new StringBuilder("Nothing to " + operation.verb + ".\n\n");
+            for (WeaviateChangeConfirmDialog.Row row : rows) {
+                message.append(row.name()).append(" - ").append(row.outcome()).append('\n');
             }
             DBWorkbench.getPlatformUI().showMessageBox(TITLE, message.toString(), false);
             return;
         }
 
-        StringBuilder confirmation = new StringBuilder(MessageFormat.format(
-            "{0} {1} user(s)?\n\n{2}",
-            operation.button, targets.size(), names(targets)));
-        if (operation == Operation.DELETE) {
-            confirmation.append("\n\nTheir API keys stop working immediately. "
-                + "This cannot be undone.");
-        } else if (operation == Operation.DEACTIVATE) {
-            confirmation.append("\n\nTheir API keys stop working until they are activated again.");
-        }
-        if (alreadyThere > 0) {
-            confirmation.append("\n\n").append(alreadyThere)
-                .append(" already ").append(operation.past).append(" and will be left alone.");
-        }
-        if (!envUsers.isEmpty()) {
-            confirmation.append("\n\n").append(describeEnvUsers(envUsers));
-        }
-        if (!DBWorkbench.getPlatformUI().confirmAction(
-            TITLE, confirmation.toString(), operation.button, true)) {
+        String warning = switch (operation) {
+            case DELETE -> "Their API keys stop working immediately. This cannot be undone.";
+            case DEACTIVATE -> "Their API keys stop working until they are activated again.";
+            case ACTIVATE -> "Their API keys start working again.";
+        };
+        WeaviateChangeConfirmDialog dialog = new WeaviateChangeConfirmDialog(
+            shell, TITLE,
+            MessageFormat.format("{0} {1} user(s)?\n\n{2}",
+                operation.button, targets.size(), warning),
+            rows, operation.button);
+        if (dialog.open() != org.eclipse.jface.dialogs.IDialogConstants.OK_ID) {
             return;
         }
 
@@ -198,24 +194,7 @@ final class WeaviateUserActions {
         }
     }
 
-    @NotNull
-    private static String describeEnvUsers(@NotNull List<String> envUsers) {
-        return envUsers.size() + " user(s) come from the server's environment and cannot be "
-            + "changed through the API: " + String.join(", ", envUsers);
-    }
 
-    /** Up to ten names, so a confirmation for four thousand users is still a dialog. */
-    @NotNull
-    private static String names(@NotNull List<WeaviateDbUser> users) {
-        List<String> shown = new ArrayList<>();
-        for (int i = 0; i < users.size() && i < 10; i++) {
-            shown.add(users.get(i).getName());
-        }
-        String joined = String.join(", ", shown);
-        return users.size() > shown.size()
-            ? joined + ", and " + (users.size() - shown.size()) + " more"
-            : joined;
-    }
 
     /** Every user under the connection, for the folder-level actions. */
     @NotNull
