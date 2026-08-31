@@ -27,7 +27,7 @@ import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateShardStatus;
 import org.jkiss.dbeaver.model.DBIcon;
-import org.jkiss.dbeaver.model.DBPImage;
+import org.jkiss.dbeaver.model.navigator.DBNModel;
 import org.jkiss.dbeaver.ui.DBeaverIcons;
 import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ui.dialogs.BaseDialog;
@@ -119,11 +119,12 @@ public class WeaviateShardChangeDialog extends BaseDialog {
         table.addListener(SWT.SetData, event -> {
             TableItem item = (TableItem) event.item;
             Row row = rows.get(table.indexOf(item));
-            DBPImage overlay =
-                WeaviateShardStatus.fromName(row.currentStatus()).getObjectState().getOverlayImage();
-            if (overlay != null) {
-                item.setImage(DBeaverIcons.getImage(overlay));
-            }
+            // Composited the way the navigator does it, so a row here carries the same icon the
+            // same shard has in the tree. The overlay alone is a corner badge and reads as
+            // nothing on its own.
+            item.setImage(DBeaverIcons.getImage(DBNModel.getStateOverlayImage(
+                DBIcon.TREE_PARTITION,
+                WeaviateShardStatus.fromName(row.currentStatus()).getObjectState())));
             item.setText(0, row.shard());
             item.setText(1, row.collection());
             String from = row.currentStatus() == null ? "not reported" : row.currentStatus();

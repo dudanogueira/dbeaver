@@ -85,8 +85,11 @@
                                 description="Node shards, grouped by collection">
                             <items label="Collection" itemLabel="Collection"
                                    path="shardCollection" property="shardGroups" icon="#folder_table">
+                                <!-- An explicit icon so the per-status colour has something to
+                                     sit on: the state overlay is composited onto the node icon,
+                                     and a row with no icon of its own has nothing to overlay. -->
                                 <items label="Shards" itemLabel="Shard"
-                                       path="shard" property="shards"/>
+                                       path="shard" property="shards" icon="#partition"/>
                             </items>
                         </folder>
                     </items>
