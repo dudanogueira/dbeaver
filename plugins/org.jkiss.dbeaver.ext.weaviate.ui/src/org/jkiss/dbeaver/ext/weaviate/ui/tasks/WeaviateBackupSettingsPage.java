@@ -24,6 +24,7 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Group;
+import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Spinner;
 import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.TableItem;
@@ -37,15 +38,20 @@ import org.jkiss.dbeaver.model.runtime.VoidProgressMonitor;
 import org.jkiss.dbeaver.ui.UIUtils;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * What to back up, or what to bring back.
  * <p>
- * The two directions share this page because they take the same decisions. Only the source of the
- * collection list differs: creating offers what the server currently holds, restoring offers what
- * the chosen backup holds -- which is why a backup reached through the list endpoint is the only
- * one that can be restored selectively.
+ * The two directions share this page because they take the same decisions, and the server takes
+ * the same request shape for both. Only the source of the collection list differs: creating offers
+ * what the server currently holds, restoring offers what the chosen backup holds.
+ * <p>
+ * Include and exclude are both offered, as one choice rather than two fields. The server refuses a
+ * request carrying values for both -- "'include' and 'exclude' cannot both contain values" -- so
+ * making them a mode is the only shape that cannot produce an invalid request.
  */
 public class WeaviateBackupSettingsPage extends WizardPage {
 
@@ -58,14 +64,17 @@ public class WeaviateBackupSettingsPage extends WizardPage {
 
     private Text idText;
     private Button allCollections;
-    private Button someCollections;
+    private Button includeCollections;
+    private Button excludeCollections;
     private Table collectionTable;
+    private Text patternText;
+    private Label patternHint;
     private Spinner cpuSpinner;
 
     protected WeaviateBackupSettingsPage(@NotNull WeaviateBackupTaskWizard wizard) {
         super("weaviate.backup.settings");
         this.wizard = wizard;
-        setTitle(wizard.isRestore() ? "Restore backup" : "Backup collections");
+        setTitle(wizard.isRestore() ? "Restore backup" : "Create new backup");
         setDescription(wizard.isRestore()
             ? "Choose what to bring back from this backup"
             : "Choose what to back up");
@@ -111,19 +120,51 @@ public class WeaviateBackupSettingsPage extends WizardPage {
         scope.setLayoutData(new GridData(GridData.FILL_BOTH));
 
         SelectionListener onScope = SelectionListener.widgetSelectedAdapter(e -> updateState());
-        allCollections = UIUtils.createRadioButton(scope, "All collections", Boolean.TRUE, onScope);
-        someCollections = UIUtils.createRadioButton(scope, "Only these", Boolean.FALSE, onScope);
+        allCollections = UIUtils.createRadioButton(scope,
+            wizard.isRestore() ? "Everything in the backup" : "All collections", Boolean.TRUE, onScope);
+        includeCollections = UIUtils.createRadioButton(scope, "Only these", Boolean.FALSE, onScope);
+        excludeCollections = UIUtils.createRadioButton(scope, "All except these", Boolean.FALSE, onScope);
 
         collectionTable = new Table(scope, SWT.CHECK | SWT.BORDER | SWT.V_SCROLL);
         GridData tableGd = new GridData(GridData.FILL_BOTH);
-        tableGd.heightHint = 180;
+        tableGd.heightHint = 160;
         collectionTable.setLayoutData(tableGd);
-        for (String name : availableCollections()) {
+        List<String> known = availableCollections();
+        for (String name : known) {
             new TableItem(collectionTable, SWT.NONE).setText(name);
         }
-        restoreChecked(settings.getIncludeCollections());
-        allCollections.setSelection(settings.getIncludeCollections().isEmpty());
-        someCollections.setSelection(!settings.getIncludeCollections().isEmpty());
+        if (known.isEmpty()) {
+            // Restoring a backup reached by a status poll rather than a listing: the status
+            // endpoint does not report collections, so there is nothing to tick and the whole
+            // backup is the only thing that can be asked for.
+            UIUtils.createLabel(scope, wizard.isRestore()
+                ? "This backup does not report which collections it holds, so it can only be restored whole."
+                : "No collections on this connection yet.");
+        }
+
+        Composite patternRow = UIUtils.createComposite(scope, 2);
+        patternRow.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+        UIUtils.createLabel(patternRow, "Also match");
+        patternText = new Text(patternRow, SWT.BORDER);
+        patternText.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+        patternText.setMessage("Company1*, Docs_?");
+        patternText.setToolTipText(
+            "Comma-separated names or patterns. Weaviate expands * and ? server-side, "
+                + "against the collections on the server when backing up and against the "
+                + "backup's own collections when restoring.");
+        patternText.addModifyListener(e -> updateState());
+
+        patternHint = UIUtils.createLabel(scope, "");
+        patternHint.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+
+        // Restore the previous choice. Exclude wins the tie because it is the one that cannot be
+        // confused with the default: a non-empty include with "all" selected would be ambiguous.
+        List<String> savedInclude = settings.getIncludeCollections();
+        List<String> savedExclude = settings.getExcludeCollections();
+        allCollections.setSelection(savedInclude.isEmpty() && savedExclude.isEmpty());
+        includeCollections.setSelection(!savedInclude.isEmpty());
+        excludeCollections.setSelection(!savedExclude.isEmpty());
+        restoreChoice(savedExclude.isEmpty() ? savedInclude : savedExclude, known);
 
         Composite advanced = UIUtils.createComposite(area, 2);
         advanced.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
@@ -143,9 +184,9 @@ public class WeaviateBackupSettingsPage extends WizardPage {
     /**
      * Creating offers the collections on the server; restoring offers the ones in the backup.
      * <p>
-     * A backup reached by polling reports no collections at all -- the status endpoint omits them
-     * -- in which case the choice collapses to all-or-nothing, which is what the server would
-     * enforce anyway.
+     * Restoring against the backup's list rather than the server's is not a detail: the two differ
+     * exactly when a restore is worth doing, and offering a collection the backup does not contain
+     * would produce "class X doesn't exist in the backup".
      */
     @NotNull
     private List<String> availableCollections() {
@@ -169,15 +210,37 @@ public class WeaviateBackupSettingsPage extends WizardPage {
         }
     }
 
-    private void restoreChecked(@NotNull List<String> selected) {
-        for (TableItem item : collectionTable.getItems()) {
-            item.setChecked(selected.contains(item.getText()));
+    /**
+     * Puts a saved choice back, splitting it into ticks for names that are on the list and pattern
+     * text for everything else -- which is how a pattern survives a round trip through a saved task.
+     */
+    private void restoreChoice(@NotNull List<String> saved, @NotNull List<String> known) {
+        List<String> patterns = new ArrayList<>();
+        for (String entry : saved) {
+            if (!known.contains(entry)) {
+                patterns.add(entry);
+            }
         }
+        for (TableItem item : collectionTable.getItems()) {
+            item.setChecked(saved.contains(item.getText()));
+        }
+        patternText.setText(String.join(", ", patterns));
+    }
+
+    private boolean isAll() {
+        return allCollections.getSelection();
     }
 
     private void updateState() {
-        boolean some = someCollections.getSelection();
-        collectionTable.setEnabled(some);
+        boolean choosing = !isAll();
+        collectionTable.setEnabled(choosing);
+        patternText.setEnabled(choosing);
+
+        List<String> chosen = chosenEntries();
+        patternHint.setText(choosing && !chosen.isEmpty()
+            ? chosen.size() + " entr" + (chosen.size() == 1 ? "y" : "ies") + ": "
+                + String.join(", ", chosen)
+            : "");
 
         String id = idText.getText().trim();
         if (id.isEmpty()) {
@@ -190,8 +253,8 @@ public class WeaviateBackupSettingsPage extends WizardPage {
             setPageComplete(false);
             return;
         }
-        if (some && checkedCollections().isEmpty()) {
-            setErrorMessage("Choose at least one collection, or back up all of them");
+        if (choosing && chosen.isEmpty()) {
+            setErrorMessage("Tick a collection or type a pattern, or choose everything");
             setPageComplete(false);
             return;
         }
@@ -199,25 +262,39 @@ public class WeaviateBackupSettingsPage extends WizardPage {
         setPageComplete(true);
     }
 
+    /**
+     * The ticked names plus anything typed, in one list. The server takes names and patterns in
+     * the same field and expands the patterns itself, so there is nothing to keep apart here.
+     */
     @NotNull
-    private List<String> checkedCollections() {
-        List<String> checked = new ArrayList<>();
-        for (TableItem item : collectionTable.getItems()) {
-            if (item.getChecked()) {
-                checked.add(item.getText());
+    private List<String> chosenEntries() {
+        Set<String> entries = new LinkedHashSet<>();
+        if (collectionTable != null) {
+            for (TableItem item : collectionTable.getItems()) {
+                if (item.getChecked()) {
+                    entries.add(item.getText());
+                }
             }
         }
-        return checked;
+        if (patternText != null) {
+            for (String part : patternText.getText().split(",")) {
+                String trimmed = part.trim();
+                if (!trimmed.isEmpty()) {
+                    entries.add(trimmed);
+                }
+            }
+        }
+        return new ArrayList<>(entries);
     }
 
     void saveSettings() {
         WeaviateBackupSettings settings = wizard.getSettings();
         settings.setBackupId(idText.getText().trim());
-        // Include only. The server refuses a request carrying both include and exclude, and one
-        // checklist cannot express both, so exclude stays empty rather than being half-supported.
-        settings.setIncludeCollections(
-            someCollections.getSelection() ? checkedCollections() : List.of());
-        settings.setExcludeCollections(List.of());
+
+        List<String> chosen = isAll() ? List.of() : chosenEntries();
+        boolean excluding = excludeCollections.getSelection();
+        settings.setIncludeCollections(excluding ? List.of() : chosen);
+        settings.setExcludeCollections(excluding ? chosen : List.of());
         settings.setCpuPercentage(cpuSpinner.getSelection());
     }
 }

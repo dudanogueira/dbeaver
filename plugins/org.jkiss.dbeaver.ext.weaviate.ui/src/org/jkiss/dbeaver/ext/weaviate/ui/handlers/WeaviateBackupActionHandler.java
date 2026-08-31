@@ -61,6 +61,9 @@ public abstract class WeaviateBackupActionHandler extends AbstractHandler {
      */
     private static final String COLLECTIONS_FOLDER = "collection";
 
+    /** The Backups folder, which declares its own {@code id="backups"}. */
+    private static final String BACKUPS_FOLDER = "backups";
+
     public static final String TASK_CREATE = "weaviateBackupCreate";
     public static final String TASK_RESTORE = "weaviateBackupRestore";
 
@@ -115,13 +118,20 @@ public abstract class WeaviateBackupActionHandler extends AbstractHandler {
 
     /**
      * The connection behind a node that stands for the whole server: the connection node itself,
-     * or its Collections folder. Null for anything narrower, which the caller has already handled.
+     * or its Collections or Backups folder. Null for anything narrower, which the caller has
+     * already handled.
      */
     @Nullable
     private static WeaviateDataSource weaviateOf(@NotNull DBNNode node) {
         if (node instanceof DBNDatabaseFolder folder) {
-            return COLLECTIONS_FOLDER.equals(folder.getNodeId())
-                && folder.getParentObject() instanceof DBSObject parent
+            // Collections and Backups both stand for the whole server here: one is what would be
+            // backed up, the other is where backups live, and starting from either means "all".
+            if (!COLLECTIONS_FOLDER.equals(folder.getNodeId())
+                && !BACKUPS_FOLDER.equals(folder.getNodeId())
+            ) {
+                return null;
+            }
+            return folder.getParentObject() instanceof DBSObject parent
                 && parent.getDataSource() instanceof WeaviateDataSource ds ? ds : null;
         }
         if (node instanceof DBNDataSource dataSourceNode) {

@@ -14,7 +14,7 @@
              data: Weaviate refuses to restore a collection that already exists, and it refuses
              during the schema apply, after the data has already been staged. -->
         <task id="weaviateBackupCreate" type="weaviate"
-              name="Backup collections"
+              name="Create New Backup"
               description="Back up some or all collections to a backup backend"
               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/file/export.svg"
               handler="org.jkiss.dbeaver.ext.weaviate.model.tasks.WeaviateBackupCreateHandler"
