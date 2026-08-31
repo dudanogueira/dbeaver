@@ -20,7 +20,10 @@ import org.eclipse.core.commands.AbstractHandler;
 import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.jface.dialogs.IDialogConstants;
 import org.eclipse.jface.viewers.ISelection;
+import org.eclipse.ui.IWorkbenchWindow;
+import org.eclipse.ui.commands.IElementUpdater;
 import org.eclipse.ui.handlers.HandlerUtil;
+import org.eclipse.ui.menus.UIElement;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
@@ -34,6 +37,8 @@ import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRbacRefresh;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRoleAssignmentDialog;
 import org.jkiss.dbeaver.model.navigator.DBNNode;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
+import org.jkiss.dbeaver.ui.UIIcon;
+import org.jkiss.dbeaver.ui.DBeaverIcons;
 import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ui.dialogs.EnterNameDialog;
 import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
@@ -43,16 +48,27 @@ import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
- * Everything that can be done to a database user, told apart by the {@code operation} parameter.
+ * Actions on database users picked in the tree.
+ * <p>
+ * Only on users. The folder-level actions live in {@link WeaviateUsersFolderHandler}, and the
+ * split is not tidiness: {@code AbstractHandler#setEnabled} is handed an evaluation context and
+ * nothing else, with no way to see which {@code operation} the invocation carries. One handler
+ * covering both scopes therefore has to enable every operation wherever any of them applies, and
+ * "Deactivate User" duly appeared on the Users folder, where it could only reach a dialog saying
+ * to select a user. Two handlers, each with a condition it can actually express.
+ * <p>
+ * Delete, activate and deactivate take a multi-selection; assigning roles and rotating a key are
+ * about one user by their nature.
  * <p>
  * Users declared in {@code AUTHENTICATION_APIKEY_USERS} arrive as {@code db_env_user}, and the
  * server refuses to change them through the API. Every operation that would try says so by name
  * rather than letting the request fail with a status code.
  */
-public class WeaviateDbUserHandler extends AbstractHandler {
+public class WeaviateDbUserHandler extends AbstractHandler implements IElementUpdater {
 
     private static final Log log = Log.getLog(WeaviateDbUserHandler.class);
 
@@ -73,16 +89,7 @@ public class WeaviateDbUserHandler extends AbstractHandler {
         ISelection selection = WeaviateSecurityNodes.selectionOf(evaluationContext);
         setBaseEnabled(selection != null
             && WeaviateSecurityNodes.dataSourceOf(selection) != null
-            && (isUsersFolder(selection) || !WeaviateSecurityNodes.selectedUsers(selection).isEmpty()));
-    }
-
-    private static boolean isUsersFolder(@Nullable ISelection selection) {
-        if (selection == null) {
-            return false;
-        }
-        List<DBNNode> nodes = NavigatorUtils.getSelectedNodes(selection);
-        return nodes.size() == 1
-            && "dbUsers".equals(WeaviateSecurityNodes.folderId(nodes.get(0)));
+            && !WeaviateSecurityNodes.selectedUsers(selection).isEmpty());
     }
 
     @Override
@@ -97,15 +104,62 @@ public class WeaviateDbUserHandler extends AbstractHandler {
         WeaviateDbUser user = users.size() == 1 ? users.get(0) : null;
 
         switch (operation == null ? "" : operation) {
-            case "create" -> createUser(event, dataSource);
             case "roles" -> editRoles(event, dataSource, user);
-            case "delete" -> deleteUser(event, dataSource, user);
-            case "activate" -> setActive(event, dataSource, user, true);
-            case "deactivate" -> setActive(event, dataSource, user, false);
             case "rotate" -> rotateKey(event, dataSource, user);
+            case "delete" -> WeaviateUserActions.run(HandlerUtil.getActiveShell(event),
+                dataSource, users, WeaviateUserActions.Operation.DELETE);
+            case "activate" -> WeaviateUserActions.run(HandlerUtil.getActiveShell(event),
+                dataSource, users, WeaviateUserActions.Operation.ACTIVATE);
+            case "deactivate" -> WeaviateUserActions.run(HandlerUtil.getActiveShell(event),
+                dataSource, users, WeaviateUserActions.Operation.DEACTIVATE);
             default -> log.debug("Unknown user operation: " + operation);
         }
         return null;
+    }
+
+    /**
+     * Names how many users the entry would touch.
+     * <p>
+     * {@code updateElement} is handed the command parameters, which is what makes this possible
+     * at all -- {@code setEnabled} is not, which is why the folder-level actions had to move to
+     * their own handler. Read from what the tree already holds, with no fetching: this runs while
+     * the menu is being built.
+     */
+    @Override
+    public void updateElement(UIElement element, @SuppressWarnings("rawtypes") Map parameters) {
+        Object operation = parameters == null ? null : parameters.get(PARAM_OPERATION);
+        if (!(operation instanceof String op)) {
+            return;
+        }
+        IWorkbenchWindow window = element.getServiceLocator().getService(IWorkbenchWindow.class);
+        if (window == null || window.getSelectionService() == null) {
+            return;
+        }
+        int count = WeaviateSecurityNodes
+            .selectedUsers(window.getSelectionService().getSelection()).size();
+        String noun = count == 1 ? "User" : count + " Users";
+        switch (op) {
+            case "delete" -> {
+                element.setText("Delete " + noun);
+                element.setIcon(DBeaverIcons.getImageDescriptor(UIIcon.DELETE));
+            }
+            case "activate" -> {
+                element.setText("Activate " + noun);
+                element.setIcon(DBeaverIcons.getImageDescriptor(UIIcon.ACCEPT));
+            }
+            case "deactivate" -> {
+                element.setText("Deactivate " + noun);
+                element.setIcon(DBeaverIcons.getImageDescriptor(UIIcon.REJECT));
+            }
+            // roles and rotate are single-user by nature; their fixed labels already say so, and
+            // only the icon needs setting. One command serves every entry here, so the icon from
+            // <commandImages> would otherwise be the same on all five.
+            case "roles" -> element.setIcon(DBeaverIcons.getImageDescriptor(UIIcon.EDIT));
+            case "rotate" -> element.setIcon(DBeaverIcons.getImageDescriptor(UIIcon.REFRESH));
+            default -> {
+                // An operation added to plugin.xml without a case here keeps the command icon.
+            }
+        }
     }
 
     /** Refuses an operation on an environment user, naming the reason. */
@@ -129,37 +183,6 @@ public class WeaviateDbUserHandler extends AbstractHandler {
         return true;
     }
 
-    private void createUser(@NotNull ExecutionEvent event, @NotNull WeaviateDataSource dataSource) {
-        String userId = EnterNameDialog.chooseName(
-            HandlerUtil.getActiveShell(event), "New database user", "");
-        if (userId == null || userId.isBlank()) {
-            return;
-        }
-        String trimmed = userId.trim();
-        String[] key = new String[1];
-        try {
-            UIUtils.runInProgressService(monitor -> {
-                try {
-                    key[0] = WeaviateRbacRest.createDbUser(dataSource, trimmed);
-                    WeaviateRbacRefresh.after(monitor, dataSource);
-                } catch (DBException e) {
-                    throw new InvocationTargetException(e);
-                }
-            });
-        } catch (InvocationTargetException e) {
-            log.error("Cannot create user " + trimmed, e.getTargetException());
-            DBWorkbench.getPlatformUI().showError(TITLE,
-                "Cannot create the user " + trimmed, e.getTargetException());
-            return;
-        } catch (InterruptedException e) {
-            return;
-        }
-        if (key[0] != null) {
-            // Shown once, because the server will not show it again.
-            new WeaviateApiKeyDialog(
-                HandlerUtil.getActiveShell(event), trimmed, key[0], false).open();
-        }
-    }
 
     private void editRoles(
         @NotNull ExecutionEvent event,
@@ -239,48 +262,7 @@ public class WeaviateDbUserHandler extends AbstractHandler {
         }
     }
 
-    private void deleteUser(
-        @NotNull ExecutionEvent event,
-        @NotNull WeaviateDataSource dataSource,
-        @Nullable WeaviateDbUser user
-    ) {
-        if (!requireOne(user, "delete") || refuseEnvUser(user, "delete")) {
-            return;
-        }
-        if (!DBWorkbench.getPlatformUI().confirmAction(TITLE, MessageFormat.format(
-            "Delete the user {0}? Its API key stops working immediately. This cannot be undone.",
-            user.getName()), "Delete", true)) {
-            return;
-        }
-        run(event, dataSource, "delete the user " + user.getName(),
-            monitor -> WeaviateRbacRest.deleteDbUser(dataSource, user.getName()));
-    }
 
-    private void setActive(
-        @NotNull ExecutionEvent event,
-        @NotNull WeaviateDataSource dataSource,
-        @Nullable WeaviateDbUser user,
-        boolean activate
-    ) {
-        String what = activate ? "activate" : "deactivate";
-        if (!requireOne(user, what) || refuseEnvUser(user, what)) {
-            return;
-        }
-        if (!activate && !DBWorkbench.getPlatformUI().confirmAction(TITLE, MessageFormat.format(
-            "Deactivate {0}? Its API key stops working until it is activated again.",
-            user.getName()), "Deactivate", true)) {
-            return;
-        }
-        run(event, dataSource, what + " the user " + user.getName(), monitor -> {
-            if (activate) {
-                WeaviateRbacRest.activateDbUser(dataSource, user.getName());
-            } else {
-                // revokeKey=false: deactivating is reversible and revoking the key is not, so the
-                // destructive half is not bundled into the reversible one.
-                WeaviateRbacRest.deactivateDbUser(dataSource, user.getName(), false);
-            }
-        });
-    }
 
     private void rotateKey(
         @NotNull ExecutionEvent event,

@@ -20,7 +20,10 @@ import org.eclipse.core.commands.AbstractHandler;
 import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.jface.dialogs.IDialogConstants;
 import org.eclipse.jface.viewers.ISelection;
+import org.eclipse.ui.IWorkbenchWindow;
+import org.eclipse.ui.commands.IElementUpdater;
 import org.eclipse.ui.handlers.HandlerUtil;
+import org.eclipse.ui.menus.UIElement;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
@@ -34,6 +37,8 @@ import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRbacRefresh;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRoleDialog;
 import org.jkiss.dbeaver.model.navigator.DBNNode;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
+import org.jkiss.dbeaver.ui.UIIcon;
+import org.jkiss.dbeaver.ui.DBeaverIcons;
 import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
 
@@ -41,24 +46,33 @@ import java.lang.reflect.InvocationTargetException;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
- * Create, edit and delete a role. One handler, told apart by the {@code operation} parameter.
+ * Editing and deleting roles picked in the tree.
+ * <p>
+ * Creating one lives in {@link WeaviateRolesFolderHandler}, because
+ * {@code AbstractHandler#setEnabled} is handed an evaluation context with no way to see which
+ * {@code operation} an invocation carries. A single handler spanning both scopes has to enable
+ * every operation wherever any of them applies, which put "Delete Role" on the Roles folder where
+ * it could only ask for a role.
+ * <p>
+ * Delete takes a multi-selection; editing is about one role by its nature.
  * <p>
  * Editing saves a <em>diff</em>, never a replace. See {@link #save}.
  */
-public class WeaviateRoleHandler extends AbstractHandler {
+public class WeaviateRoleHandler extends AbstractHandler implements IElementUpdater {
 
     private static final Log log = Log.getLog(WeaviateRoleHandler.class);
 
     private static final String PARAM_OPERATION = "operation";
-    private static final String OP_CREATE = "create";
     private static final String OP_EDIT = "edit";
     private static final String OP_DELETE = "delete";
 
-    private static final String TITLE = "Weaviate role";
+    static final String TITLE = "Weaviate roles";
 
     @Override
     public void setEnabled(Object evaluationContext) {
@@ -69,16 +83,8 @@ public class WeaviateRoleHandler extends AbstractHandler {
         ISelection selection = WeaviateSecurityNodes.selectionOf(evaluationContext);
         setBaseEnabled(selection != null
             && WeaviateSecurityNodes.dataSourceOf(selection) != null
-            && (isRolesFolder(selection) || WeaviateSecurityNodes.singleRole(selection) != null));
-    }
-
-    private static boolean isRolesFolder(@Nullable ISelection selection) {
-        if (selection == null) {
-            return false;
-        }
-        List<DBNNode> nodes = NavigatorUtils.getSelectedNodes(selection);
-        return nodes.size() == 1
-            && "roles".equals(WeaviateSecurityNodes.folderId(nodes.get(0)));
+            && (!WeaviateSecurityNodes.selectedRoles(selection).isEmpty()
+                || WeaviateSecurityNodes.singleRole(selection) != null));
     }
 
     @Override
@@ -89,19 +95,47 @@ public class WeaviateRoleHandler extends AbstractHandler {
         if (dataSource == null) {
             return null;
         }
-        WeaviateRole role = WeaviateSecurityNodes.singleRole(selection);
-
         if (OP_DELETE.equals(operation)) {
-            deleteRole(event, dataSource, role);
+            deleteRoles(event, dataSource, WeaviateSecurityNodes.selectedRoles(selection));
             return null;
         }
+        WeaviateRole role = WeaviateSecurityNodes.singleRole(selection);
         if (OP_EDIT.equals(operation) && role == null) {
             DBWorkbench.getPlatformUI().showMessageBox(TITLE,
                 "Select a single role to edit.", true);
             return null;
         }
-        editRole(event, dataSource, OP_CREATE.equals(operation) ? null : role);
+        editRole(event, dataSource, role);
         return null;
+    }
+
+    /**
+     * One command serves both entries, so without this they would share the icon from
+     * {@code <commandImages>} and read as the same action twice. Delete also names how many roles
+     * it would remove, from what the tree already holds -- no fetching, this runs while the menu
+     * is being built.
+     */
+    @Override
+    public void updateElement(UIElement element, @SuppressWarnings("rawtypes") Map parameters) {
+        Object operation = parameters == null ? null : parameters.get(PARAM_OPERATION);
+        if (!(operation instanceof String op)) {
+            return;
+        }
+        if (OP_EDIT.equals(op)) {
+            element.setIcon(DBeaverIcons.getImageDescriptor(UIIcon.EDIT));
+            return;
+        }
+        if (!OP_DELETE.equals(op)) {
+            return;
+        }
+        element.setIcon(DBeaverIcons.getImageDescriptor(UIIcon.DELETE));
+        IWorkbenchWindow window = element.getServiceLocator().getService(IWorkbenchWindow.class);
+        if (window == null || window.getSelectionService() == null) {
+            return;
+        }
+        int count = WeaviateSecurityNodes
+            .selectedRoles(window.getSelectionService().getSelection()).size();
+        element.setText(count > 1 ? "Delete " + count + " Roles" : "Delete Role");
     }
 
     private void editRole(
@@ -195,42 +229,94 @@ public class WeaviateRoleHandler extends AbstractHandler {
         WeaviateRbacRest.removePermissions(dataSource, name, toRemove);
     }
 
-    private void deleteRole(
+    /**
+     * Deletes the selected roles, leaving the built-in ones alone.
+     * <p>
+     * A built-in role is named rather than silently skipped: somebody who selected admin along
+     * with three of their own deserves to know why only three went. The server refuses it with a
+     * 400 in any case, so sending it would only trade a clear sentence for a status code.
+     */
+    private void deleteRoles(
         @NotNull ExecutionEvent event,
         @NotNull WeaviateDataSource dataSource,
-        @Nullable WeaviateRole role
+        @NotNull List<WeaviateRole> roles
     ) {
-        if (role == null) {
+        if (roles.isEmpty()) {
+            DBWorkbench.getPlatformUI().showMessageBox(TITLE, "Select a role to delete.", true);
+            return;
+        }
+        List<WeaviateRole> targets = new ArrayList<>();
+        List<String> builtIn = new ArrayList<>();
+        for (WeaviateRole role : roles) {
+            if (role.isBuiltIn()) {
+                builtIn.add(role.getName());
+            } else {
+                targets.add(role);
+            }
+        }
+        if (targets.isEmpty()) {
             DBWorkbench.getPlatformUI().showMessageBox(TITLE,
-                "Select a single role to delete.", true);
+                (builtIn.size() == 1 ? builtIn.get(0) + " is a built-in role" : "These are "
+                    + "built-in roles: " + String.join(", ", builtIn))
+                    + ". Weaviate does not allow them to be deleted.", true);
             return;
         }
-        if (role.isBuiltIn()) {
-            DBWorkbench.getPlatformUI().showMessageBox(TITLE, MessageFormat.format(
-                "{0} is a built-in role. Weaviate does not allow it to be deleted.",
-                role.getName()), true);
+
+        List<String> names = new ArrayList<>();
+        for (WeaviateRole role : targets) {
+            names.add(role.getName());
+        }
+        StringBuilder message = new StringBuilder(MessageFormat.format(
+            "Delete {0} role(s)?\n\n{1}\n\nAnyone holding them loses what they granted. "
+                + "This cannot be undone.",
+            targets.size(), String.join(", ", names)));
+        if (!builtIn.isEmpty()) {
+            message.append("\n\n").append(builtIn.size())
+                .append(" built-in role(s) will be left alone: ")
+                .append(String.join(", ", builtIn));
+        }
+        if (!DBWorkbench.getPlatformUI().confirmAction(
+            TITLE, message.toString(), "Delete", true)) {
             return;
         }
-        if (!DBWorkbench.getPlatformUI().confirmAction(TITLE, MessageFormat.format(
-            "Delete the role {0}? Anyone holding it loses what it granted. This cannot be undone.",
-            role.getName()), "Delete", true)) {
-            return;
-        }
+
+        Map<String, String> failed = new LinkedHashMap<>();
         try {
             UIUtils.runInProgressService(monitor -> {
+                monitor.beginTask("Delete " + targets.size() + " role(s)", targets.size());
                 try {
-                    WeaviateRbacRest.deleteRole(dataSource, role.getName());
-                    WeaviateRbacRefresh.after(monitor, dataSource);
-                } catch (DBException e) {
-                    throw new InvocationTargetException(e);
+                    for (WeaviateRole role : targets) {
+                        if (monitor.isCanceled()) {
+                            break;
+                        }
+                        monitor.subTask(role.getName());
+                        try {
+                            WeaviateRbacRest.deleteRole(dataSource, role.getName());
+                        } catch (DBException e) {
+                            // One refusal should not abandon the rest.
+                            log.error("Cannot delete role " + role.getName(), e);
+                            failed.put(role.getName(), e.getMessage() == null
+                                ? e.getClass().getSimpleName() : e.getMessage());
+                        }
+                        monitor.worked(1);
+                    }
+                } finally {
+                    monitor.done();
                 }
+                WeaviateRbacRefresh.after(monitor, dataSource);
             });
         } catch (InvocationTargetException e) {
-            log.error("Cannot delete role " + role.getName(), e.getTargetException());
             DBWorkbench.getPlatformUI().showError(TITLE,
-                "Cannot delete the role " + role.getName(), e.getTargetException());
+                "Cannot delete the selected roles", e.getTargetException());
+            return;
         } catch (InterruptedException e) {
-            // Cancelled.
+            // Cancelled partway; what was deleted stays deleted and the refresh shows it.
+        }
+        if (!failed.isEmpty()) {
+            StringBuilder report = new StringBuilder("These roles were not deleted:\n\n");
+            failed.forEach((name, reason) ->
+                report.append(name).append(" - ").append(reason).append('\n'));
+            DBWorkbench.getPlatformUI().showMessageBox(TITLE, report.toString(), true);
         }
     }
 }

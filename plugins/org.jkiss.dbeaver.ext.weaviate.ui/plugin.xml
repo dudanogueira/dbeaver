@@ -43,16 +43,29 @@
         <command
                 id="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
                 name="Role"
-                description="Create, edit or delete a Weaviate role"
+                description="Edit or delete a Weaviate role"
                 categoryId="org.jkiss.dbeaver.core.navigator">
-            <!-- Which of create, edit and delete an invocation is. The label shown in the menu is
-                 fixed per menu entry below, so the command name above is never displayed. -->
+            <!-- Which of edit and delete an invocation is. Labels and icons are set per entry by
+                 the handler's updateElement, so the name above is never displayed: one command
+                 serving several entries would otherwise give them all the same icon. -->
+            <commandParameter id="operation" name="Operation" optional="false"/>
+        </command>
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.manageRolesFolder"
+                name="Create Role"
+                description="Create a Weaviate role"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.manageUsersFolder"
+                name="Users"
+                description="Create a database user, or act on all of them"
+                categoryId="org.jkiss.dbeaver.core.navigator">
             <commandParameter id="operation" name="Operation" optional="false"/>
         </command>
         <command
                 id="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
                 name="Database user"
-                description="Create, edit or remove a Weaviate database user"
+                description="Act on the selected Weaviate database users"
                 categoryId="org.jkiss.dbeaver.core.navigator">
             <commandParameter id="operation" name="Operation" optional="false"/>
         </command>
@@ -67,13 +80,19 @@
 
     <extension point="org.eclipse.ui.commandImages">
         <!-- Borrowed from the shared UI bundle, which this one already requires, rather than
-             shipping three more assets for actions the platform already has icons for. -->
+             shipping assets for actions the platform already has icons for. These are only the
+             fallback: each handler's updateElement sets a per-entry icon, because one command
+             serves several menu entries and they would otherwise all look alike. -->
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
-               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/object_add.svg"/>
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/edit.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRolesFolder"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/add.png"/>
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
-               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/object_add.svg"/>
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/edit.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageUsersFolder"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/add.png"/>
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageOidcGroup"
-               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/object_add.svg"/>
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/edit.svg"/>
     </extension>
 
     <extension point="org.eclipse.ui.handlers">
@@ -85,8 +104,14 @@
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateRoleHandler"/>
         <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRolesFolder"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateRolesFolderHandler"/>
+        <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateDbUserHandler"/>
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageUsersFolder"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateUsersFolderHandler"/>
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageOidcGroup"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateOidcGroupHandler"/>
@@ -181,9 +206,8 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.previewTokenization">
                 <visibleWhen checkEnabled="true"/>
             </command>
-                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRolesFolder"
                          id="weaviate.roleCreate" label="Create Role...">
-                    <parameter name="operation" value="create"/>
                     <visibleWhen checkEnabled="true"/>
                 </command>
                 <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageRole"
@@ -196,9 +220,19 @@
                     <parameter name="operation" value="delete"/>
                     <visibleWhen checkEnabled="true"/>
                 </command>
-                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageUsersFolder"
                          id="weaviate.userCreate" label="Create User...">
                     <parameter name="operation" value="create"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageUsersFolder"
+                         id="weaviate.userActivateAll" label="Activate All Users">
+                    <parameter name="operation" value="activateAll"/>
+                    <visibleWhen checkEnabled="true"/>
+                </command>
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageUsersFolder"
+                         id="weaviate.userDeactivateAll" label="Deactivate All Users">
+                    <parameter name="operation" value="deactivateAll"/>
                     <visibleWhen checkEnabled="true"/>
                 </command>
                 <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageDbUser"

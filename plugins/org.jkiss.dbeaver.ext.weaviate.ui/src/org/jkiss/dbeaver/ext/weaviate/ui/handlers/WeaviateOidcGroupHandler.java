@@ -20,7 +20,9 @@ import org.eclipse.core.commands.AbstractHandler;
 import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.jface.dialogs.IDialogConstants;
 import org.eclipse.jface.viewers.ISelection;
+import org.eclipse.ui.commands.IElementUpdater;
 import org.eclipse.ui.handlers.HandlerUtil;
+import org.eclipse.ui.menus.UIElement;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
@@ -31,6 +33,9 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRole;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRoleAssignmentDialog;
 import org.jkiss.dbeaver.model.navigator.DBNNode;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
+import java.util.Map;
+import org.jkiss.dbeaver.ui.UIIcon;
+import org.jkiss.dbeaver.ui.DBeaverIcons;
 import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.ui.dialogs.EnterNameDialog;
 import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
@@ -48,7 +53,7 @@ import java.util.Set;
  * roles a group id has been granted. So there is no create and no delete here, only assignments;
  * "adding a group" means naming one the provider already has and giving it roles.
  */
-public class WeaviateOidcGroupHandler extends AbstractHandler {
+public class WeaviateOidcGroupHandler extends AbstractHandler implements IElementUpdater {
 
     private static final Log log = Log.getLog(WeaviateOidcGroupHandler.class);
 
@@ -93,6 +98,16 @@ public class WeaviateOidcGroupHandler extends AbstractHandler {
         }
         editRoles(event, dataSource, group);
         return null;
+    }
+
+    @Override
+    public void updateElement(UIElement element, @SuppressWarnings("rawtypes") Map parameters) {
+        Object operation = parameters == null ? null : parameters.get(PARAM_OPERATION);
+        if (!(operation instanceof String op)) {
+            return;
+        }
+        element.setIcon(DBeaverIcons.getImageDescriptor(
+            "revokeAll".equals(op) ? UIIcon.REJECT : UIIcon.EDIT));
     }
 
     private void editRoles(
