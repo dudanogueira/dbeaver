@@ -158,9 +158,13 @@ public final class WeaviateSchemaRest {
     /**
      * Percent-encodes one path segment. Tenant-named shards can contain characters that are legal
      * in a name and not in a URL, which is the same trap the tokenize endpoint sprang once before.
+     * <p>
+     * Package-private rather than private because {@link WeaviateRbacRest} puts role, user and
+     * group names in a path and needs exactly this, and two copies of an encoding rule is how one
+     * of them ends up subtly different.
      */
     @NotNull
-    private static String encodePathSegment(@NotNull String segment) {
+    static String encodePathSegment(@NotNull String segment) {
         return java.net.URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
@@ -228,8 +232,14 @@ public final class WeaviateSchemaRest {
         return "Weaviate rejected the collection (HTTP " + status + "): " + body.strip();
     }
 
+    /**
+     * The message out of Weaviate's {@code {"error":[{"message":"..."}]}} envelope, or null.
+     * <p>
+     * Package-private so every REST helper in this package reports refusals in the server's own
+     * words. The wrapper sentence differs per caller; the unwrapping does not.
+     */
     @Nullable
-    private static String extractErrorMessage(@Nullable String body) {
+    static String extractErrorMessage(@Nullable String body) {
         if (CommonUtils.isEmptyTrimmed(body)) {
             return null;
         }
