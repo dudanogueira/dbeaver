@@ -23,6 +23,8 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateBackup;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateBackupStatus;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
 import org.jkiss.dbeaver.model.DBPDataSourceContainer;
+import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
+import org.jkiss.dbeaver.model.navigator.DBNUtils;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.runtime.DBRRunnableContext;
 import org.jkiss.dbeaver.model.task.DBTTask;
@@ -155,9 +157,32 @@ public abstract class WeaviateBackupHandler implements DBTTaskHandler {
                     + (current.error() == null ? "" : ": " + current.error()));
             }
             dataSource.resetBackupCache();
+            if (isRestore()) {
+                // A restore puts collections back, so the tree is now wrong. Refreshing the
+                // connection re-reads them in place -- WeaviateDataSource is a DBPRefreshableObject,
+                // so this no longer means a reconnect.
+                refreshConnection(monitor, dataSource);
+            }
             return verb + " " + id + ": " + current.status().getLabel();
         } finally {
             monitor.done();
+        }
+    }
+
+    /**
+     * Puts the tree back in step after a restore. Best-effort: the restore has already succeeded,
+     * and a tree that failed to repaint is not a reason to report it as failed.
+     */
+    private static void refreshConnection(
+        @NotNull DBRProgressMonitor monitor, @NotNull WeaviateDataSource dataSource
+    ) {
+        try {
+            DBNDatabaseNode node = DBNUtils.getNodeByObject(dataSource.getContainer());
+            if (node != null) {
+                node.refreshNode(monitor, WeaviateBackupHandler.class);
+            }
+        } catch (Exception e) {
+            log.debug("Cannot refresh the connection after a restore", e);
         }
     }
 

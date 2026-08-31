@@ -149,8 +149,9 @@ public class WeaviateDeleteCollectionsHandler extends AbstractHandler implements
 
         List<WeaviateCollection> collections = target.collections();
         if (target.all()) {
-            // Read for two reasons: to put a number in the confirmation, and to know which nodes
-            // to take out of the tree afterwards. The delete itself does not depend on this list.
+            // Read for three reasons: to put a number in the confirmation, to know which nodes to
+            // take out of the tree afterwards, and because the delete itself now works through
+            // this list rather than a single server-side "delete everything".
             collections = listCollections(dataSource);
             if (collections == null) {
                 return null;
@@ -183,20 +184,15 @@ public class WeaviateDeleteCollectionsHandler extends AbstractHandler implements
         Map<String, String>[] failures = new Map[1];
         try {
             UIUtils.runInProgressService(monitor -> {
-                try {
-                    List<String> targetNames = new ArrayList<>(toDelete.size());
-                    for (WeaviateCollection collection : toDelete) {
-                        targetNames.add(collection.getName());
-                    }
-                    if (target.all()) {
-                        dataSource.deleteAllCollections(monitor);
-                        failures[0] = Map.of();
-                    } else {
-                        failures[0] = dataSource.deleteCollections(monitor, targetNames);
-                    }
-                } catch (DBException e) {
-                    throw new InvocationTargetException(e);
+                List<String> targetNames = new ArrayList<>(toDelete.size());
+                for (WeaviateCollection collection : toDelete) {
+                    targetNames.add(collection.getName());
                 }
+                // The same call for both. "Delete everything" used to go through the client's
+                // deleteAll, which is one request and therefore one thing that can outlive the
+                // read timeout -- and when it did, the delete succeeded on the server while the
+                // client reported a failure and the tree kept the nodes.
+                failures[0] = dataSource.deleteCollections(monitor, targetNames);
             });
         } catch (InvocationTargetException e) {
             log.error("Cannot delete collections", e.getTargetException());

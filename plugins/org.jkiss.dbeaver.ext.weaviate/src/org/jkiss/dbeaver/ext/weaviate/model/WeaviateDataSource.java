@@ -30,6 +30,7 @@ import org.jkiss.dbeaver.model.DBPAdaptable;
 import org.jkiss.dbeaver.model.DBPDataSourceContainer;
 import org.jkiss.dbeaver.model.DBPDataSourceInfo;
 import org.jkiss.dbeaver.model.DBPExclusiveResource;
+import org.jkiss.dbeaver.model.DBPRefreshableObject;
 import org.jkiss.dbeaver.model.DBUtils;
 import org.jkiss.dbeaver.model.connection.DBPConnectionConfiguration;
 import org.jkiss.dbeaver.model.exec.DBCExecutionContext;
@@ -59,7 +60,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class WeaviateDataSource extends AbstractDataSource
-    implements DBSInstance, DBCExecutionContext, DBSObjectContainer, DBPAdaptable {
+    implements DBSInstance, DBCExecutionContext, DBSObjectContainer, DBPAdaptable, DBPRefreshableObject {
 
     private WeaviateClient client;
     private volatile List<WeaviateCollection> collections;
@@ -998,9 +999,16 @@ public class WeaviateDataSource extends AbstractDataSource
     /**
      * Deletes several collections as one operation.
      * <p>
-     * Weaviate has no endpoint that takes a list, so this is still a request per collection -- but
-     * one command, one confirmation and one progress bar, rather than the platform's per-object
-     * delete which stages a separate command for each and reports them one at a time.
+     * A request per collection, deliberately, even for "delete everything". The client has a
+     * {@code deleteAll} that does it in one call, and using it was a mistake: on a server with a
+     * few dozen collections that single request outlives the HTTP read timeout, and the client
+     * then throws while the server carries on and finishes. A timeout is not a failure, but there
+     * is no way to tell them apart from here -- so the operation reports one, the tree is left
+     * showing collections that no longer exist, and the user is told something untrue.
+     * <p>
+     * One request each cannot time out, reports progress as it goes, and can be cancelled. It is
+     * still one command, one confirmation and one progress bar, which is what the platform's
+     * per-object delete does not give.
      * <p>
      * Failures are collected rather than thrown at the first one. Stopping halfway through a bulk
      * delete leaves the user to work out which half, and the ones that did go are already gone.
@@ -1033,24 +1041,6 @@ public class WeaviateDataSource extends AbstractDataSource
         return failed;
     }
 
-    /**
-     * Deletes every collection, in one request.
-     * <p>
-     * The client has a {@code deleteAll} for exactly this, so "delete everything" is one call
-     * rather than a loop that could half-succeed. It also means a collection created between the
-     * listing and the delete goes too, which is what "all" was asked to mean.
-     */
-    public void deleteAllCollections(@NotNull DBRProgressMonitor monitor) throws DBException {
-        monitor.subTask("Delete all collections");
-        try {
-            getClient().collections.deleteAll();
-        } catch (Exception e) {
-            throw new DBException("Cannot delete all collections: " + e.getMessage(), e);
-        } finally {
-            invalidateCollections();
-        }
-    }
-
     /** Forgets cached backup listings, so a refresh shows what the server now holds. */
     public void resetBackupCache() {
         List<WeaviateBackupEntry> entries = backupEntries;
@@ -1065,6 +1055,43 @@ public class WeaviateDataSource extends AbstractDataSource
 
     public WeaviateClient getClient() {
         return client;
+    }
+
+    /**
+     * Re-reads everything this connection has cached, without reconnecting.
+     * <p>
+     * Without this interface, refreshing the connection node <em>disconnects and reconnects</em>.
+     * {@code DataSourceDescriptor#refreshObject} branches on exactly this:
+     * <pre>
+     * if (dataSource instanceof DBPRefreshableObject refreshable) {
+     *     dataSource = (DBPDataSource) refreshable.refreshObject(monitor);
+     * } else {
+     *     this.reconnect(monitor, false);
+     * }
+     * </pre>
+     * The consequences were not subtle. A refresh after deleting collections tore down the HTTP
+     * pool underneath operations that were still using it -- "Connection pool shut down" -- and
+     * plain F5 on a Weaviate connection has silently been a reconnect since the plugin was
+     * written, which looked like nothing worse than a slow refresh only because nothing tried to
+     * use the old client immediately afterwards.
+     * <p>
+     * Everything derived from the server is dropped, including the metadata behind the version
+     * gates: a refresh is exactly when someone expects an upgraded server to be noticed.
+     *
+     * @return this connection; there is nothing to replace it with
+     */
+    @Nullable
+    @Override
+    public DBSObject refreshObject(@NotNull DBRProgressMonitor monitor) {
+        synchronized (this) {
+            collections = null;
+            nodes = null;
+            cachedMetadata = null;
+            metadataFields = null;
+            modules = null;
+            backupEntries = null;
+        }
+        return this;
     }
 
     public void invalidateCollections() {

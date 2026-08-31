@@ -129,6 +129,11 @@ public class WeaviateBackupSettingsPage extends WizardPage {
         GridData tableGd = new GridData(GridData.FILL_BOTH);
         tableGd.heightHint = 160;
         collectionTable.setLayoutData(tableGd);
+        // Ticking a box has to re-validate. Without this the page stays incomplete after the
+        // first collection is ticked and only catches up when some other control is touched,
+        // which reads as the Next button being broken.
+        collectionTable.addSelectionListener(
+            SelectionListener.widgetSelectedAdapter(e -> updateState()));
         List<String> known = availableCollections();
         for (String name : known) {
             new TableItem(collectionTable, SWT.NONE).setText(name);
