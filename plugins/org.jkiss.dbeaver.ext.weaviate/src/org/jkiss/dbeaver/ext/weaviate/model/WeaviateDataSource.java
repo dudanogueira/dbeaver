@@ -998,8 +998,18 @@ public class WeaviateDataSource extends AbstractDataSource
     /**
      * Sets the read/write state of some of a collection's shards.
      * <p>
-     * One request for the whole set -- the endpoint takes a list, unlike tenants -- so there is no
-     * chunking to get wrong here.
+     * One request per shard, because that is the whole write API. {@code openapi-specs/schema.json}
+     * has exactly two shard routes: {@code GET /schema/{className}/shards} and
+     * {@code PUT /schema/{className}/shards/{shardName}}. There is no endpoint that takes a list,
+     * so there is no bulk form to prefer and nothing to chunk. Both official clients loop the same
+     * way -- Python's {@code update_shards} calls {@code __update_shard} per name, and the Java
+     * client's does the same before its trailing read.
+     * <p>
+     * Sent serially rather than concurrently, on purpose. Weaviate serialises schema work behind a
+     * node-wide lock, and enough in-flight requests queue past any client timeout -- measured on
+     * 1.39.0, where eighteen concurrent shard calls left writes to an unrelated single-tenant
+     * collection timing out while reads were still served in milliseconds. A status change is rare
+     * and a few milliseconds per shard, so there is nothing here worth risking that for.
      */
     public void setShardStatus(
         @NotNull DBRProgressMonitor monitor,
