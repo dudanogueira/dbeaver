@@ -44,11 +44,10 @@ import org.eclipse.ui.forms.events.ExpansionAdapter;
 import org.eclipse.ui.forms.events.ExpansionEvent;
 import org.eclipse.ui.forms.widgets.ExpandableComposite;
 import org.jkiss.dbeaver.ui.controls.ExpandableCompositeEx;
-import java.lang.reflect.InvocationTargetException;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryBanner;
-import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant;
-import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantStatus;
+import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryPanelContext;
+import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateTenantRow;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateColumns;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterOperator;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterRow;
@@ -80,7 +79,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-public class WeaviateQueryPanel extends ResultSetPanelBase {
+public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQueryPanelContext {
 
     public static final String PANEL_ID = "weaviate-query";
 
@@ -96,16 +95,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private final Map<WeaviateQueryMode, Spinner> autoCutSpinners = new EnumMap<>(WeaviateQueryMode.class);
     /** One explain-score toggle per mode that can produce an explanation. */
     private final Map<WeaviateQueryMode, Button> explainScoreChecks = new EnumMap<>(WeaviateQueryMode.class);
-    private Composite tenantRow;
-    private Label tenantLabel;
-    private Combo tenantCombo;
-    private Button tenantActivateButton;
+    private final WeaviateTenantRow tenantRow = new WeaviateTenantRow(this);
     /**
      * Backs the combo, whose items carry the state in their text and so cannot be used as tenant
      * names. Index-aligned with the combo's items.
      */
-    private java.util.List<org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant> tenantItems =
-        java.util.List.of();
     /** One include-vectors toggle per mode, beside that mode's other result options. */
     private final Map<WeaviateQueryMode, Button> includeVectorChecks = new EnumMap<>(WeaviateQueryMode.class);
     /** Rerank section per near_* mode: property picker, optional query, module hint. */
@@ -208,43 +202,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         topRow.setLayout(topLayout);
         topRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
-        tenantRow = new Composite(root, SWT.NONE);
-        GridLayout tenantLayout = new GridLayout(3, false);
-        tenantLayout.marginWidth = 0;
-        tenantLayout.marginHeight = 0;
-        tenantRow.setLayout(tenantLayout);
-        tenantRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        tenantLabel = new Label(tenantRow, SWT.NONE);
-        tenantLabel.setText(WeaviateUIMessages.query_tenant);
-        tenantCombo = new Combo(tenantRow, SWT.READ_ONLY);
-        tenantCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        tenantCombo.setToolTipText(WeaviateUIMessages.query_tenant_tip);
-        tenantCombo.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                dismissBanner();
-                WeaviateCollection collection = currentCollection();
-                if (collection != null) {
-                    collection.setQuerySpec(collection.getQuerySpec().withTenant(currentTenant()));
-                }
-                syncActivateButton();
-                // Switching tenant changes the whole result set, so reload rather than making
-                // the user press Run to see a different tenant's data.
-                runQuery();
-            }
-        });
-        // Only ever shown for the case it solves: the chosen tenant is asleep and the server
-        // will not wake it on its own, so the query is guaranteed to fail until someone acts.
-        tenantActivateButton = new Button(tenantRow, SWT.PUSH);
-        tenantActivateButton.setText(WeaviateUIMessages.tenant_activate_now);
-        tenantActivateButton.setToolTipText(WeaviateUIMessages.tenant_activate_now_tip);
-        tenantActivateButton.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                activateCurrentTenant();
-            }
-        });
-        setTenantRowVisible(false);
+        tenantRow.createControls(root);
 
         new Label(topRow, SWT.NONE).setText(WeaviateUIMessages.query_mode);
         modeCombo = new Combo(topRow, SWT.READ_ONLY);
@@ -329,7 +287,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         // Must run here as well as in activatePanel(): the row starts hidden, and on first
         // display of the panel activatePanel() has not necessarily fired yet, so without this
         // the tenant picker never appears for a multi-tenant collection.
-        refreshTenants();
+        tenantRow.refresh();
         refreshTargetSections();
         refreshRerankSections();
         refreshGenerativeSections();
@@ -712,173 +670,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         } catch (IllegalArgumentException e) {
             return false;
         }
-    }
-
-    private void setTenantRowVisible(boolean visible) {
-        if (tenantRow == null || tenantRow.isDisposed()) {
-            return;
-        }
-        tenantRow.setVisible(visible);
-        ((GridData) tenantRow.getLayoutData()).exclude = !visible;
-        tenantRow.getParent().layout(true, true);
-    }
-
-    /**
-     * Show the tenant picker only for multi-tenant collections, and preselect nothing so the
-     * choice is deliberate -- a query against the wrong tenant returns plausible but wrong rows.
-     */
-    private void refreshTenants() {
-        WeaviateCollection collection = currentCollection();
-        if (collection == null) {
-            log.debug("Tenant picker hidden: no Weaviate collection resolved for this result set");
-            setTenantRowVisible(false);
-            return;
-        }
-        if (!collection.isMultiTenant()) {
-            log.debug("Tenant picker hidden: " + collection.getName() + " is not multi-tenant");
-            setTenantRowVisible(false);
-            return;
-        }
-        log.debug("Tenant picker shown for multi-tenant collection " + collection.getName());
-        setTenantRowVisible(true);
-        // Follow the spec, not whatever the combo happened to show: the tenant is usually set
-        // from the read-path dialog or the "Select Tenant..." command, and the combo has no way
-        // to know about either.
-        String current = collection.getQuerySpec().getTenant();
-        tenantCombo.removeAll();
-        try {
-            tenantItems = collection.listTenants(new VoidProgressMonitor());
-        } catch (DBException e) {
-            log.debug("Cannot list tenants", e);
-            banner.showError(e.getMessage());
-            return;
-        }
-        for (org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant tenant : tenantItems) {
-            // An inactive tenant refuses every read, so picking one out of a list that looks
-            // uniform ends in the server's own "tenant not active" with no hint of why.
-            tenantCombo.add(tenant.isActive()
-                ? tenant.name()
-                : tenant.name() + "  (" + tenant.status().getLabel() + ")");
-        }
-        if (tenantCombo.getItemCount() == 0) {
-            banner.showError(WeaviateUIMessages.query_tenant_none);
-            return;
-        }
-        int idx = indexOfTenant(current);
-        if (idx >= 0) {
-            tenantCombo.select(idx);
-        } else {
-            // Nothing chosen yet, or the stored tenant no longer exists -- leave it unselected
-            // rather than silently pointing at a different tenant's data.
-            tenantCombo.deselectAll();
-        }
-        syncActivateButton();
-    }
-
-    /**
-     * Shows the Activate button only when it is the answer.
-     * <p>
-     * An inactive tenant on a collection with auto-activation on is not a problem: the read wakes
-     * it. With auto-activation off it is a dead end, and the button is the shortest way out of
-     * it -- shorter than finding Manage Tenants, which is where the user would otherwise have to
-     * go to make the query they already asked for work.
-     */
-    private void syncActivateButton() {
-        if (tenantActivateButton == null || tenantActivateButton.isDisposed()) {
-            return;
-        }
-        WeaviateCollection collection = currentCollection();
-        int idx = tenantCombo.getSelectionIndex();
-        boolean asleep = collection != null
-            && idx >= 0 && idx < tenantItems.size()
-            && !tenantItems.get(idx).isActive()
-            && !Boolean.TRUE.equals(collection.getAutoTenantActivation());
-        tenantActivateButton.setVisible(asleep);
-        tenantActivateButton.setLayoutData(exclusion(!asleep));
-        tenantRow.layout();
-    }
-
-    /** Layout data that removes the button from the row entirely when it is not needed. */
-    private static GridData exclusion(boolean excluded) {
-        GridData gd = new GridData(SWT.LEFT, SWT.CENTER, false, false);
-        gd.exclude = excluded;
-        return gd;
-    }
-
-    /**
-     * Activates the selected tenant and re-runs, since the query the user already asked for is
-     * the reason they pressed it.
-     */
-    private void activateCurrentTenant() {
-        WeaviateCollection collection = currentCollection();
-        int idx = tenantCombo.getSelectionIndex();
-        if (collection == null || idx < 0 || idx >= tenantItems.size()) {
-            return;
-        }
-        WeaviateTenant tenant = tenantItems.get(idx);
-        try {
-            UIUtils.runInProgressService(monitor -> {
-                try {
-                    collection.setTenantStatus(monitor, java.util.List.of(tenant),
-                        WeaviateTenantStatus.ACTIVE);
-                    WeaviateNavigatorRefresh.afterTenantChange(monitor, collection);
-                } catch (DBException e) {
-                    throw new InvocationTargetException(e);
-                }
-            });
-        } catch (InvocationTargetException e) {
-            log.error("Cannot activate tenant", e.getTargetException());
-            banner.showError(e.getTargetException().getMessage());
-            return;
-        } catch (InterruptedException e) {
-            return;
-        }
-        dismissBanner();
-        refreshTenants();
-        runQuery();
-    }
-
-    /**
-     * Point the combo at the tenant the spec actually holds, without refetching the list.
-     */
-    private void syncTenantSelection() {
-        WeaviateCollection collection = currentCollection();
-        if (collection == null || tenantCombo == null || tenantCombo.isDisposed()) {
-            return;
-        }
-        String current = collection.getQuerySpec().getTenant();
-        if (current == null) {
-            return;
-        }
-        int idx = indexOfTenant(current);
-        if (idx >= 0 && idx != tenantCombo.getSelectionIndex()) {
-            tenantCombo.select(idx);
-        }
-    }
-
-    /**
-     * Position of a tenant by name. Combo#indexOf cannot be used: an inactive tenant's item text
-     * carries its state, so it never equals the bare name held in the spec.
-     */
-    private int indexOfTenant(@Nullable String name) {
-        if (name == null) {
-            return -1;
-        }
-        for (int i = 0; i < tenantItems.size(); i++) {
-            if (tenantItems.get(i).name().equals(name)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    @Nullable
-    private String currentTenant() {
-        if (tenantCombo == null || tenantCombo.isDisposed() || !tenantRow.isVisible()) {
-            return null;
-        }
-        int idx = tenantCombo.getSelectionIndex();
-        return idx < 0 || idx >= tenantItems.size() ? null : tenantItems.get(idx).name();
     }
 
     private void updateAlphaLabel() {
@@ -2283,7 +2074,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         }
     }
 
-    private void runQuery() {
+    @Override
+    public void runQuery() {
         WeaviateCollection collection = currentCollection();
         if (collection == null) {
             banner.showError(WeaviateUIMessages.query_not_weaviate);
@@ -2394,7 +2186,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 builder = WeaviateQuerySpec.builder(WeaviateQueryMode.FETCH);
         }
         return builder.filterRows(rows).anyFilter(any)
-            .tenant(currentTenant())
+            .tenant(tenantRow.currentTenant())
             .autoCut(currentAutoCut())
             .explainScore(currentExplainScore())
             .includeVector(currentIncludeVector())
@@ -2441,15 +2233,25 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         return value.strip();
     }
 
-    private WeaviateCollection currentCollection() {
+    @Override
+    @Nullable
+    public WeaviateCollection currentCollection() {
         if (presentation == null || presentation.getController() == null) return null;
         Object source = presentation.getController().getModel().getSingleSource();
         if (source instanceof WeaviateCollection wc) return wc;
         return null;
     }
 
+    @Override
+    public void showError(@Nullable String message) {
+        if (message != null) {
+            banner.showError(message);
+        }
+    }
+
     /** Closes the banner and forgets the error behind it. */
-    private void dismissBanner() {
+    @Override
+    public void dismissBanner() {
         clearRememberedError();
         banner.hide();
     }
@@ -2497,7 +2299,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
 
     @Override
     public void activatePanel() {
-        refreshTenants();
+        tenantRow.refresh();
         refreshTargetSections();
         refreshRerankSections();
         refreshGenerativeSections();
@@ -2519,12 +2321,12 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
 
     @Override
     public void refresh(boolean force) {
-        refreshTenants();
+        tenantRow.refresh();
         refreshTargetSections();
         refreshRerankSections();
         refreshGenerativeSections();
         // refreshTenants ran before the read completed the first time round, so re-sync after.
-        syncTenantSelection();
+        tenantRow.syncSelection();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();
