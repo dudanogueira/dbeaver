@@ -180,10 +180,16 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
     /**
      * How long it took, or has been going.
      * <p>
-     * The span between the first and last recorded states. Both ends are approximate -- the server
-     * stamps neither the initial state nor the current one -- so a finished movement reads a
-     * little short and a running one is measured to whenever it last changed state. Still the
-     * number that answers "is this progressing or wedged", which no other column does.
+     * Computed here, not reported. Nothing in the response carries a duration; the only raw
+     * material is {@code whenStartedUnixMs} on each history entry, so this is a subtraction.
+     * <p>
+     * A finished movement is server stamps at both ends -- last recorded state minus first -- and
+     * reads slightly short, because the server stamps neither the initial state nor the one it
+     * ends in. A running movement has no end stamp at all, so it is measured against this
+     * machine's clock, and is therefore only as good as the two machines agreeing.
+     * <p>
+     * Approximate either way, and still the number that answers "is this progressing or wedged",
+     * which no other column does.
      */
     @Nullable
     @Property(viewable = true, order = 9)
@@ -192,11 +198,23 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
         if (started <= 0) {
             return null;
         }
-        long end = getReplicationState().isTerminal() ? op.lastRecordedMs() : System.currentTimeMillis();
-        if (end <= started) {
-            return null;
+        // A finished movement is measured entirely from the server's own stamps: last recorded
+        // state minus first. Nothing local is involved and the answer is stable.
+        if (getReplicationState().isTerminal()) {
+            long span = op.lastRecordedMs() - started;
+            return span > 0 ? describeDuration(span) : null;
         }
-        return describeDuration(end - started);
+        // A running one has no end stamp to subtract -- the server does not stamp the state an
+        // operation is currently in -- so this is the local clock against a server timestamp, and
+        // it is only as good as the two machines agreeing. A client running behind the server
+        // would otherwise produce a negative span and a blank column, so fall back to the part
+        // that needs no local clock: how long the recorded states took between them.
+        long running = System.currentTimeMillis() - started;
+        if (running > 0) {
+            return describeDuration(running);
+        }
+        long recorded = op.lastRecordedMs() - started;
+        return recorded > 0 ? describeDuration(recorded) : null;
     }
 
     @NotNull
