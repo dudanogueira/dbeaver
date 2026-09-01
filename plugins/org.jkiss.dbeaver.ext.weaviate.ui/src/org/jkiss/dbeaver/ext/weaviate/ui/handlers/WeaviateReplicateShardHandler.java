@@ -141,11 +141,19 @@ public class WeaviateReplicateShardHandler extends AbstractHandler implements IE
                     // means staying on the same progress window until it stops.
                     String id = WeaviateReplicationRest.start(dataSource, target.collection(),
                         target.shard(), source, destination, type);
+                    // Refresh before following, not only after. The tree is where the operation
+                    // becomes visible, and following can take minutes -- leaving the single
+                    // refresh until the end meant the movement did not appear anywhere until it
+                    // had already finished, which is the one moment watching it is no longer
+                    // useful.
+                    WeaviateReplicationRefresh.after(monitor, dataSource);
                     if (follow) {
                         WeaviateReplicationWatch.followWith(monitor, dataSource, id,
                             type + " " + target.collection() + "/" + target.shard());
+                        // And again at the end, so the row settles on its final state and the
+                        // shard shows up under its new node.
+                        WeaviateReplicationRefresh.after(monitor, dataSource);
                     }
-                    WeaviateReplicationRefresh.after(monitor, dataSource);
                 } catch (DBException e) {
                     throw new InvocationTargetException(e);
                 }
