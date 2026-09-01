@@ -123,7 +123,7 @@ public class WeaviateReplicateShardHandler extends AbstractHandler implements IE
 
         WeaviateReplicateShardDialog dialog = new WeaviateReplicateShardDialog(
             HandlerUtil.getActiveShell(event), target.collection(), target.shard(),
-            holders, candidates);
+            holders, candidates, target.preferredSource());
         if (dialog.open() != IDialogConstants.OK_ID || dialog.getTargetNode() == null) {
             return null;
         }

@@ -135,8 +135,13 @@ final class WeaviateReplicationNodes {
      * node it sits on, while a Shard Replicas row knows every node holding it. Both reduce to a
      * collection, a shard name and the set of nodes that already have it.
      */
+    /**
+     * @param preferredSource the node the action was invoked from, or null when it was invoked
+     *                        somewhere that does not name one. This is the node the user pointed
+     *                        at, so it is the one the dialog should start on.
+     */
     record ShardTarget(@NotNull String collection, @NotNull String shard,
-                       @NotNull List<String> holders) {
+                       @NotNull List<String> holders, @Nullable String preferredSource) {
     }
 
     @Nullable
@@ -144,8 +149,10 @@ final class WeaviateReplicationNodes {
         List<WeaviateShardReplicas> replicas = selectedShardReplicas(selection);
         if (replicas.size() == 1) {
             WeaviateShardReplicas row = replicas.get(0);
+            // A Shard Replicas row names every holder and singles out none, so there is no
+            // node the user can be said to have pointed at.
             return new ShardTarget(row.getCollection().getName(), row.getShardName(),
-                row.getReplicas());
+                row.getReplicas(), null);
         }
         List<WeaviateShard> shards = selectedShards(selection);
         if (shards.size() == 1) {
@@ -154,9 +161,11 @@ final class WeaviateReplicationNodes {
             if (collection == null) {
                 return null;
             }
-            // Only the node this row sits on is known here; the full holder list is read from the
-            // sharding state when the action runs, which is also the only place it can be trusted.
-            return new ShardTarget(collection, shard.getShardName(), List.of());
+            // This row sits under one node, and that is the node the user pointed at -- so it
+            // is carried through as the source to start on. The full holder list still comes from
+            // the sharding state when the action runs, which is the only place it can be trusted.
+            String node = shard.getParentObject() == null ? null : shard.getParentObject().getName();
+            return new ShardTarget(collection, shard.getShardName(), List.of(), node);
         }
         return null;
     }

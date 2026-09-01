@@ -68,19 +68,6 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
     }
 
     /**
-     * What is moving and where to: {@code Orders/abc123 \u2192 weaviate-1}.
-     * <p>
-     * Deliberately not the whole operation. Collection, shard, source, target, type and state are
-     * each a viewable property, so the navigator already gives them their own columns; repeating
-     * all six in the label produced a row long enough to need scrolling and still told nobody
-     * anything the grid was not already showing.
-     * <p>
-     * What stays is what identifies the row and what a reader is actually looking for: which shard,
-     * and where it is going. The state is carried by the overlay -- green when ready, red when
-     * cancelled, orange while in flight -- and spelled out in its own column. Only a pending
-     * cancel or delete is called out in words, because that is transient and has no column.
-     */
-    /**
      * A name that stays put while the label changes.
      * <p>
      * The navigator reuses a tree node only when the object's class and <em>unique</em>
@@ -97,19 +84,44 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
         return op.id();
     }
 
+    /**
+     * What the movement does: {@code MOVE from:weaviate-0 to:weaviate-1}.
+     * <p>
+     * Deliberately not the whole operation. Collection, shard, source, target, type and state are
+     * each a viewable property, so the navigator already gives them their own columns; naming all
+     * six in the label made a row too wide to read while telling nobody anything the grid was not
+     * already showing.
+     * <p>
+     * What is left is the part that is about this operation rather than about the shard it
+     * touches: which way the replica is going, and whether the source keeps its copy. The state is
+     * carried by the overlay -- green when ready, red when cancelled, orange while in flight --
+     * and spelled out in its own column. Only a pending cancel or delete is put in words, because
+     * it is transient and has no column of its own.
+     * <p>
+     * The shard is not here, so two movements of different shards between the same pair of nodes
+     * read alike. Anything acting on a selection therefore names the shard instead -- see the
+     * confirmation in {@code WeaviateReplicationOpHandler}.
+     */
     @NotNull
     @Override
     @Property(viewable = true, order = 1)
     public String getName() {
         StringBuilder sb = new StringBuilder()
-            .append(op.collection()).append('/').append(op.shard())
-            .append(" \u2192 ").append(op.targetNode());
+            .append(op.type().isEmpty() ? "?" : op.type())
+            .append(" from:").append(op.sourceNode())
+            .append(" to:").append(op.targetNode());
         if (op.scheduledForCancel()) {
             sb.append("  (cancelling)");
         } else if (op.scheduledForDelete()) {
             sb.append("  (deleting)");
         }
         return sb.toString();
+    }
+
+    /** Collection and shard, for anywhere a row has to be told apart from a sibling. */
+    @NotNull
+    public String getShardPath() {
+        return op.collection() + "/" + op.shard();
     }
 
     @NotNull
@@ -210,8 +222,7 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
     @Nullable
     @Override
     public String getDescription() {
-        StringBuilder sb = new StringBuilder(op.type())
-            .append(" from ").append(op.sourceNode())
+        StringBuilder sb = new StringBuilder(getShardPath())
             .append(", ").append(getReplicationState().getLabel().toLowerCase(
                 java.util.Locale.ROOT));
         List<WeaviateReplicationRest.ErrorInfo> errors = op.allErrors();

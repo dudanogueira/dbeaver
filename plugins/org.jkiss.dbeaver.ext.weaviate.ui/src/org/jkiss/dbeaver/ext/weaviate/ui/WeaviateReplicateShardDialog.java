@@ -60,18 +60,23 @@ public class WeaviateReplicateShardDialog extends BaseDialog {
     private Label consequence;
 
     private String targetNode;
-    private WeaviateReplicationType type = WeaviateReplicationType.COPY;
+    private WeaviateReplicationType type = WeaviateReplicationType.MOVE;
 
     /**
-     * @param sources    nodes that currently hold this shard; the movement comes from one of them
-     * @param candidates nodes that do not, and so are legal targets
+     * @param sources         nodes that currently hold this shard; the movement comes from one
+     * @param candidates      nodes that do not, and so are legal targets
+     * @param preferredSource the node the action was invoked from, or null. A shard picked out
+     *                        from under one node in Cluster Nodes means that node, and starting
+     *                        anywhere else would quietly move a replica the user was not looking
+     *                        at.
      */
     public WeaviateReplicateShardDialog(
         @NotNull Shell shell,
         @NotNull String collection,
         @NotNull String shard,
         @NotNull List<String> sources,
-        @NotNull List<String> candidates
+        @NotNull List<String> candidates,
+        @Nullable String preferredSource
     ) {
         super(shell, "Move or copy a replica", DBIcon.TREE_PARTITION);
         this.collection = collection;
@@ -79,7 +84,9 @@ public class WeaviateReplicateShardDialog extends BaseDialog {
         this.sources = sources;
         this.candidates = candidates;
         this.currentReplicas = sources.size();
-        this.sourceNode = sources.isEmpty() ? "" : sources.get(0);
+        this.sourceNode = preferredSource != null && sources.contains(preferredSource)
+            ? preferredSource
+            : (sources.isEmpty() ? "" : sources.get(0));
     }
 
     @NotNull
@@ -121,7 +128,8 @@ public class WeaviateReplicateShardDialog extends BaseDialog {
             sourceCombo = new Combo(what, SWT.READ_ONLY | SWT.BORDER);
             sourceCombo.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             sources.forEach(sourceCombo::add);
-            sourceCombo.select(0);
+            int preferred = sources.indexOf(sourceNode);
+            sourceCombo.select(preferred < 0 ? 0 : preferred);
             sourceCombo.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> {
                 sourceNode = sources.get(Math.max(0, sourceCombo.getSelectionIndex()));
                 select(type);
@@ -138,13 +146,16 @@ public class WeaviateReplicateShardDialog extends BaseDialog {
         }
 
         UIUtils.createLabel(group, "");
-        copyButton = UIUtils.createRadioButton(group, "Copy — "
-            + WeaviateReplicationType.COPY.getExplanation(), WeaviateReplicationType.COPY,
-            SelectionListener.widgetSelectedAdapter(e -> select(WeaviateReplicationType.COPY)));
+        // Move first, and selected. A copy adds a replica and nothing here can take one away
+        // again -- Weaviate exposes no "drop this replica" call, so the only way back down is
+        // another move. Defaulting to the reversible one keeps the irreversible one deliberate.
         moveButton = UIUtils.createRadioButton(group, "Move — "
             + WeaviateReplicationType.MOVE.getExplanation(), WeaviateReplicationType.MOVE,
             SelectionListener.widgetSelectedAdapter(e -> select(WeaviateReplicationType.MOVE)));
-        copyButton.setSelection(true);
+        copyButton = UIUtils.createRadioButton(group, "Copy — "
+            + WeaviateReplicationType.COPY.getExplanation(), WeaviateReplicationType.COPY,
+            SelectionListener.widgetSelectedAdapter(e -> select(WeaviateReplicationType.COPY)));
+        moveButton.setSelection(true);
 
         consequence = new Label(group, SWT.WRAP);
         GridData consequenceGd = new GridData(GridData.FILL_HORIZONTAL);
@@ -159,7 +170,7 @@ public class WeaviateReplicateShardDialog extends BaseDialog {
                     + "another. A replica can only move to a node that does not have one.");
             none.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
         }
-        select(WeaviateReplicationType.COPY);
+        select(WeaviateReplicationType.MOVE);
         return area;
     }
 
@@ -178,7 +189,9 @@ public class WeaviateReplicateShardDialog extends BaseDialog {
                 currentReplicas, sourceNode));
         } else {
             consequence.setText(MessageFormat.format(
-                "This shard goes from {0} to {1} replica(s).",
+                "This shard goes from {0} to {1} replica(s). Nothing here can take a replica away "
+                    + "again -- Weaviate has no call for it -- so the only way back down is to "
+                    + "move one somewhere else.",
                 currentReplicas, currentReplicas + 1));
         }
         consequence.getParent().layout(true, true);
