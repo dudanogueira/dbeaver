@@ -33,6 +33,7 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRbacAction;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRbacRest;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRole;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateRoleRule;
+import org.jkiss.dbeaver.model.DBIcon;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateChangeConfirmDialog;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRbacRefresh;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateRoleDialog;
@@ -183,6 +184,72 @@ public class WeaviateRoleHandler extends AbstractHandler implements IElementUpda
     }
 
     /**
+     * Who holds the roles about to be deleted, as rows of the same grid.
+     * <p>
+     * This is the question the confirmation cannot otherwise answer. A role's name says nothing
+     * about how much is riding on it, and "anyone holding them loses what they granted" is a
+     * warning about an unknown -- deleting a role nobody holds and deleting the one the whole
+     * ingest pipeline authenticates with look identical until someone lists the holders.
+     * <p>
+     * Aggregated per holder rather than per assignment, so a user with three of the doomed roles
+     * is one row naming all three instead of three rows of the same name.
+     * <p>
+     * Best effort. A server that will not report assignments -- an older one, or a caller without
+     * {@code read_users} -- must not block a delete the user is entitled to make, so a failure
+     * leaves the grid without these rows rather than stopping. Groups are included because a group
+     * holding the role loses it exactly as a user does.
+     */
+    @NotNull
+    private static List<WeaviateChangeConfirmDialog.Row> holdersOf(
+        @NotNull WeaviateDataSource dataSource, @NotNull List<WeaviateRole> roles
+    ) {
+        Map<String, List<String>> byUser = new LinkedHashMap<>();
+        Map<String, List<String>> byGroup = new LinkedHashMap<>();
+        try {
+            UIUtils.runInProgressService(monitor -> {
+                monitor.beginTask("Find who holds these roles", roles.size());
+                try {
+                    for (WeaviateRole role : roles) {
+                        if (monitor.isCanceled()) {
+                            break;
+                        }
+                        monitor.subTask(role.getName());
+                        try {
+                            for (WeaviateRbacRest.UserAssignment assignment
+                                : WeaviateRbacRest.roleUserAssignments(dataSource, role.getName())) {
+                                byUser.computeIfAbsent(assignment.userId(), u -> new ArrayList<>())
+                                    .add(role.getName());
+                            }
+                            for (WeaviateRbacRest.GroupAssignment assignment
+                                : WeaviateRbacRest.roleGroupAssignments(dataSource, role.getName())) {
+                                byGroup.computeIfAbsent(assignment.groupId(), g -> new ArrayList<>())
+                                    .add(role.getName());
+                            }
+                        } catch (DBException e) {
+                            // One role that will not report its holders should not cost the
+                            // listing for the others.
+                            log.debug("Cannot read the holders of " + role.getName(), e);
+                        }
+                        monitor.worked(1);
+                    }
+                } finally {
+                    monitor.done();
+                }
+            });
+        } catch (InvocationTargetException | InterruptedException e) {
+            log.debug("Cannot read role assignments", e);
+            return List.of();
+        }
+
+        List<WeaviateChangeConfirmDialog.Row> rows = new ArrayList<>();
+        byUser.forEach((userId, held) -> rows.add(WeaviateChangeConfirmDialog.Row.affected(
+            DBIcon.TREE_USER, userId, "User", "loses " + String.join(", ", held))));
+        byGroup.forEach((groupId, held) -> rows.add(WeaviateChangeConfirmDialog.Row.affected(
+            DBIcon.TREE_USER_GROUP, groupId, "Group", "loses " + String.join(", ", held))));
+        return rows;
+    }
+
+    /**
      * Applies the wanted permissions as a difference against what the role holds now.
      * <p>
      * Three reasons this is not a remove-everything-then-add:
@@ -268,6 +335,8 @@ public class WeaviateRoleHandler extends AbstractHandler implements IElementUpda
             DBWorkbench.getPlatformUI().showMessageBox(TITLE, message.toString(), false);
             return;
         }
+
+        rows.addAll(holdersOf(dataSource, targets));
 
         WeaviateChangeConfirmDialog dialog = new WeaviateChangeConfirmDialog(
             HandlerUtil.getActiveShell(event), TITLE,

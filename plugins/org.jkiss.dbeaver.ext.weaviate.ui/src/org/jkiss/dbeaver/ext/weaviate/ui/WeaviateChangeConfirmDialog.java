@@ -59,18 +59,38 @@ import java.util.List;
 public class WeaviateChangeConfirmDialog extends BaseDialog {
 
     /**
-     * One object the action was asked about.
+     * One row of the grid: an object the action was asked about, or something it will affect.
      *
-     * @param outcome  what will happen to it, in words: "will be deleted", "built-in role"
-     * @param included whether it is actually being changed; excluded rows are greyed
+     * @param outcome       what will happen to it, in words: "will be deleted", "built-in role"
+     * @param included      whether it is actually being changed; excluded rows are greyed
+     * @param informational whether it is context rather than a target -- something the change
+     *                      reaches without being applied to it, like a user who holds a role
+     *                      about to be deleted. Counted separately, since "3 of 9 will be
+     *                      changed" is a false statement when six of the nine were never
+     *                      candidates.
      */
     public record Row(
         @Nullable DBPImage icon,
         @NotNull String name,
         @NotNull String type,
         @NotNull String outcome,
-        boolean included
+        boolean included,
+        boolean informational
     ) {
+        public Row(@Nullable DBPImage icon, @NotNull String name, @NotNull String type,
+                   @NotNull String outcome, boolean included) {
+            this(icon, name, type, outcome, included, false);
+        }
+
+        /** A row for something the change reaches rather than something it changes. */
+        @NotNull
+        public static Row affected(
+            @Nullable DBPImage icon, @NotNull String name, @NotNull String type,
+            @NotNull String outcome
+        ) {
+            return new Row(icon, name, type, outcome, false, true);
+        }
+
         /**
          * A row for a navigator object, taking its icon and state overlay so it looks the way the
          * same object looks in the tree.
@@ -165,12 +185,26 @@ public class WeaviateChangeConfirmDialog extends BaseDialog {
             + table.getItemHeight() * Math.min(12, Math.max(3, rows.size()));
         table.setLayoutData(tableGd);
 
+        long candidates = rows.stream().filter(r -> !r.informational()).count();
         long included = rows.stream().filter(Row::included).count();
-        if (included < rows.size()) {
-            Label note = UIUtils.createLabel(group, MessageFormat.format(
+        long affected = rows.stream().filter(Row::informational).count();
+        StringBuilder note = new StringBuilder();
+        if (included < candidates) {
+            note.append(MessageFormat.format(
                 "{0} of {1} will be changed; the rest are listed above with the reason.",
-                included, rows.size()));
-            note.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+                included, candidates));
+        }
+        if (affected > 0) {
+            if (note.length() > 0) {
+                note.append('\n');
+            }
+            note.append(MessageFormat.format(
+                "{0} user(s) and group(s) hold what is being removed and are listed too. "
+                    + "They are not changed themselves.", affected));
+        }
+        if (note.length() > 0) {
+            Label label = UIUtils.createLabel(group, note.toString());
+            label.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
         }
         return area;
     }

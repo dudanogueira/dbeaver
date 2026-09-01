@@ -211,6 +211,29 @@ public class WeaviateRbacLiveTest extends DBeaverUnitTest {
     }
 
     @Test
+    public void aRoleReportsWhoHoldsIt() {
+        // What the delete confirmation lists, so that "anyone holding this loses what it granted"
+        // stops being a warning about an unknown. Reads /user-assignments rather than the older
+        // /authz/roles/{id}/users, which answers 410 on a namespace-enabled cluster.
+        List<String> names = roles().stream().map(WeaviateRbacRest.RoleInfo::name).toList();
+        Assumptions.assumeTrue(names.contains("dbeaver-data-reader"),
+            "run testdata/seed_rbac_fixture.py to seed the RBAC fixture");
+        JsonArray assignments = JsonParser.parseString(
+            get("/v1/authz/roles/dbeaver-data-reader/user-assignments")).getAsJsonArray();
+        Assertions.assertFalse(assignments.isEmpty(),
+            "the fixture assigns dbeaver-data-reader to a user, and the server reports nobody");
+        List<String> holders = new ArrayList<>();
+        for (JsonElement e : assignments) {
+            JsonObject o = e.getAsJsonObject();
+            Assertions.assertTrue(o.has("userId"),
+                () -> "an assignment with no userId: " + o);
+            holders.add(o.get("userId").getAsString());
+        }
+        Assertions.assertTrue(holders.contains("dbeaver-active-user"),
+            () -> "expected dbeaver-active-user among the holders, got " + holders);
+    }
+
+    @Test
     public void theSeededFixtureIsPresent() {
         List<String> names = roles().stream().map(WeaviateRbacRest.RoleInfo::name).toList();
         Assumptions.assumeTrue(names.contains("dbeaver-multi-rule"),
