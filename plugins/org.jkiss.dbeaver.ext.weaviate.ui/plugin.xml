@@ -45,15 +45,25 @@
                 name="Move or Copy Replica..."
                 description="Move or copy a shard replica to another node"
                 categoryId="org.jkiss.dbeaver.core.navigator"/>
+        <!-- One command per action rather than one with an "operation" parameter. setEnabled is
+             given an evaluation context and no way to see which parameter an invocation carries,
+             so a single handler has to enable every action wherever any of them applies, and
+             Cancel appeared on movements the server would refuse to cancel. -->
         <command
-                id="org.jkiss.dbeaver.ext.weaviate.ui.replicationOp"
-                name="Replica movement"
-                description="Cancel, delete or follow a replica movement"
-                categoryId="org.jkiss.dbeaver.core.navigator">
-            <!-- Labels and icons are set per entry by the handler's updateElement; one command
-                 serving several entries would otherwise give them all the same picture. -->
-            <commandParameter id="operation" name="Operation" optional="false"/>
-        </command>
+                id="org.jkiss.dbeaver.ext.weaviate.ui.replicationCancel"
+                name="Cancel Movement"
+                description="Stop a replica movement that has not passed the point of no return"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.replicationDelete"
+                name="Delete Movement"
+                description="Remove a replica movement record"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.replicationWatch"
+                name="Follow Movement"
+                description="Watch a running replica movement until it finishes"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
         <command
                 id="org.jkiss.dbeaver.ext.weaviate.ui.replicationFolder"
                 name="Replication records"
@@ -66,8 +76,12 @@
     <extension point="org.eclipse.ui.commandImages">
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicateShard"
                icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/arrow_right.svg"/>
-        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationOp"
-               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/edit.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationCancel"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/cancel.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationDelete"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/delete.svg"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationWatch"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/refresh.svg"/>
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationFolder"
                icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/delete.svg"/>
     </extension>
@@ -80,8 +94,14 @@
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicateShard"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateReplicateShardHandler"/>
         <handler
-                commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationOp"
-                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateReplicationOpHandler"/>
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationCancel"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateReplicationCancelHandler"/>
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationDelete"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateReplicationDeleteHandler"/>
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationWatch"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateReplicationWatchHandler"/>
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationFolder"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateReplicationFolderHandler"/>
@@ -322,19 +342,16 @@
                          id="weaviate.replicateShard" label="Move or Copy Replica...">
                     <visibleWhen checkEnabled="true"/>
                 </command>
-                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationOp"
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationWatch"
                          id="weaviate.replicationWatch" label="Follow Movement...">
-                    <parameter name="operation" value="watch"/>
                     <visibleWhen checkEnabled="true"/>
                 </command>
-                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationOp"
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationCancel"
                          id="weaviate.replicationCancel" label="Cancel Movement">
-                    <parameter name="operation" value="cancel"/>
                     <visibleWhen checkEnabled="true"/>
                 </command>
-                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationOp"
+                <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationDelete"
                          id="weaviate.replicationDelete" label="Delete Movement">
-                    <parameter name="operation" value="delete"/>
                     <visibleWhen checkEnabled="true"/>
                 </command>
                 <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.replicationFolder"

@@ -86,23 +86,30 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
 
     /**
      * The whole movement in one line:
-     * {@code MOVE DBeaverReplicaFixture/KochhPllas51: weaviate-0 \u2192 weaviate-1}.
+     * {@code READY: MOVE DBeaverReplicaFixture/KochhPllas51: weaviate-0 \u2192 weaviate-1}.
      * <p>
-     * Type first, because it is what decides whether the source keeps its copy and is the thing
-     * worth checking twice. Then what is being moved, then where from and to.
+     * State first, because it is what a list of these is scanned for -- which of them is still
+     * going, and which is stuck. Then the type, which decides whether the source keeps its copy;
+     * then what is moving, and from where to where.
      * <p>
-     * The state is not here. It is carried by the overlay -- green when ready, red when
-     * cancelled, orange while in flight -- and spelled out in its own column, and putting it in
-     * the label as well made the row change width every time the operation advanced. A pending
-     * cancel or delete is the exception: it is transient and has no column, so it is said in
-     * words.
+     * The state also has a column and an overlay, so this repeats it. That is deliberate: the
+     * overlay separates finished from in-flight from cancelled but cannot say which of the five
+     * in-flight phases a movement is in, and the column is only visible if the properties are.
+     * Repeating it here is what makes the row readable on its own.
+     * <p>
+     * Safe to put changing text in the label only because identity is {@link #getUniqueName()},
+     * the operation's id. It was not always: while the name was the identity, a state change
+     * replaced the tree node and collapsed whatever was expanded under it.
      */
     @NotNull
     @Override
     @Property(viewable = true, order = 1)
     public String getName() {
-        StringBuilder sb = new StringBuilder()
-            .append(op.type().isEmpty() ? "?" : op.type()).append(' ')
+        StringBuilder sb = new StringBuilder();
+        if (!op.state().isEmpty()) {
+            sb.append(op.state()).append(": ");
+        }
+        sb.append(op.type().isEmpty() ? "?" : op.type()).append(' ')
             .append(op.collection()).append('/').append(op.shard())
             .append(": ").append(op.sourceNode())
             .append(" \u2192 ").append(op.targetNode());

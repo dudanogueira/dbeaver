@@ -25,6 +25,7 @@ import org.eclipse.ui.commands.IElementUpdater;
 import org.eclipse.ui.handlers.HandlerUtil;
 import org.eclipse.ui.menus.UIElement;
 import org.jkiss.code.NotNull;
+import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
@@ -46,47 +47,60 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Cancel, delete and watch, on replication operations picked in the tree.
+ * Shared behaviour for the actions on a replication operation.
  * <p>
- * What is offered is decided by the server's own flags rather than guessed. An operation past the
- * point where the replica joined the sharding state is {@code uncancelable}: a cancel then answers
- * 409, and a delete does too unless the operation is READY. Rows that cannot take the action are
- * shown in the confirmation and explained, not silently dropped.
+ * One subclass per action rather than one handler with an {@code operation} parameter, because
+ * {@code AbstractHandler#setEnabled} is handed an evaluation context and no way to see which
+ * parameter an invocation carries. A single handler therefore has to enable every action whenever
+ * any of them applies -- which is how Cancel came to be offered on a movement that had passed the
+ * point of being cancellable, where pressing it could only reach a dialog explaining that it could
+ * not.
+ * <p>
+ * With a subclass each, the condition is the server's own: an operation past the point where the
+ * replica joined the sharding state is {@code uncancelable}, and a cancel then answers 409. A
+ * delete carries the same restriction unless the operation is READY. Rows in a mixed selection
+ * that cannot take the action are still shown in the confirmation and explained rather than
+ * silently dropped.
  */
-public class WeaviateReplicationOpHandler extends AbstractHandler implements IElementUpdater {
+public abstract class WeaviateReplicationOpHandler extends AbstractHandler implements IElementUpdater {
 
     private static final Log log = Log.getLog(WeaviateReplicationOpHandler.class);
 
-    private static final String PARAM_OPERATION = "operation";
-    private static final String TITLE = "Replica movement";
+    protected static final String TITLE = "Replica movement";
 
     /** How often a watched operation is polled, matching the backup handler's cadence. */
     private static final int POLL_INTERVAL_MS = 1000;
 
-    @Override
-    public void setEnabled(Object evaluationContext) {
-        ISelection selection = WeaviateReplicationNodes.selectionOf(evaluationContext);
-        setBaseEnabled(selection != null
-            && WeaviateReplicationNodes.dataSourceOf(selection) != null
-            && !WeaviateReplicationNodes.selectedOps(selection).isEmpty());
+
+
+    /** The connection behind the selection, or null. */
+    @Nullable
+    protected static WeaviateDataSource dataSourceOf(@Nullable ISelection selection) {
+        return WeaviateReplicationNodes.dataSourceOf(selection);
     }
 
-    @Override
-    public Object execute(ExecutionEvent event) {
-        String operation = event.getParameter(PARAM_OPERATION);
-        ISelection selection = HandlerUtil.getCurrentSelection(event);
-        WeaviateDataSource dataSource = WeaviateReplicationNodes.dataSourceOf(selection);
-        List<WeaviateReplicationOp> ops = WeaviateReplicationNodes.selectedOps(selection);
-        if (dataSource == null || ops.isEmpty()) {
-            return null;
+    /** Whether any selected movement satisfies the action's own precondition. */
+    protected static boolean anySelected(
+        @Nullable Object evaluationContext,
+        @NotNull java.util.function.Predicate<WeaviateReplicationOp> allowed
+    ) {
+        ISelection selection = WeaviateReplicationNodes.selectionOf(evaluationContext);
+        if (selection == null || WeaviateReplicationNodes.dataSourceOf(selection) == null) {
+            return false;
         }
-        switch (operation == null ? "" : operation) {
-            case "cancel" -> act(event, dataSource, ops, true);
-            case "delete" -> act(event, dataSource, ops, false);
-            case "watch" -> watch(event, dataSource, ops.get(0));
-            default -> log.debug("Unknown replication operation: " + operation);
+        return WeaviateReplicationNodes.selectedOps(selection).stream().anyMatch(allowed);
+    }
+
+    /** How many selected movements the action would actually touch, for the label. */
+    protected static int countIn(
+        @Nullable org.eclipse.ui.IWorkbenchWindow window,
+        @NotNull java.util.function.Predicate<WeaviateReplicationOp> allowed
+    ) {
+        if (window == null || window.getSelectionService() == null) {
+            return 0;
         }
-        return null;
+        return (int) WeaviateReplicationNodes.selectedOps(window.getSelectionService().getSelection())
+            .stream().filter(allowed).count();
     }
 
     /**
@@ -94,7 +108,7 @@ public class WeaviateReplicationOpHandler extends AbstractHandler implements IEl
      *
      * @param cancel true to cancel, false to delete
      */
-    private void act(
+    protected void act(
         @NotNull ExecutionEvent event,
         @NotNull WeaviateDataSource dataSource,
         @NotNull List<WeaviateReplicationOp> ops,
@@ -205,7 +219,7 @@ public class WeaviateReplicationOpHandler extends AbstractHandler implements IEl
      * or not anyone is looking, so cancelling the progress dialog only stops the watching --
      * stopping the movement is a separate, deliberate action.
      */
-    private void watch(
+    protected void watch(
         @NotNull ExecutionEvent event,
         @NotNull WeaviateDataSource dataSource,
         @NotNull WeaviateReplicationOp op
@@ -258,30 +272,4 @@ public class WeaviateReplicationOpHandler extends AbstractHandler implements IEl
             : op.state() + " -- " + errors.get(errors.size() - 1).message();
     }
 
-    @Override
-    public void updateElement(UIElement element, @SuppressWarnings("rawtypes") Map parameters) {
-        Object operation = parameters == null ? null : parameters.get(PARAM_OPERATION);
-        if (!(operation instanceof String op)) {
-            return;
-        }
-        IWorkbenchWindow window = element.getServiceLocator().getService(IWorkbenchWindow.class);
-        int count = window == null || window.getSelectionService() == null
-            ? 0
-            : WeaviateReplicationNodes.selectedOps(window.getSelectionService().getSelection()).size();
-        String noun = count == 1 ? "Movement" : count + " Movements";
-        switch (op) {
-            case "cancel" -> {
-                element.setText("Cancel " + noun);
-                element.setIcon(DBeaverIcons.getImageDescriptor(UIIcon.REJECT));
-            }
-            case "delete" -> {
-                element.setText("Delete " + noun);
-                element.setIcon(DBeaverIcons.getImageDescriptor(UIIcon.DELETE));
-            }
-            case "watch" -> element.setIcon(DBeaverIcons.getImageDescriptor(UIIcon.REFRESH));
-            default -> {
-                // Keeps the command icon.
-            }
-        }
-    }
 }
