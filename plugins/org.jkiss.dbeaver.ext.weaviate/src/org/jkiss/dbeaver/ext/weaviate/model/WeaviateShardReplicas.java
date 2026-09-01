@@ -48,13 +48,26 @@ public class WeaviateShardReplicas implements DBSObject, DBPImageProvider, DBPTo
         this.shard = shard;
     }
 
+    /**
+     * The shard and where its copies are: {@code abc123 \u2192 weaviate-0, weaviate-1}.
+     * <p>
+     * Capped at three node names. A shard replicated across a large cluster would otherwise put
+     * every node in the label and push the shard name -- the part that identifies the row -- off
+     * the visible width. The full list is in the Nodes column and the tooltip.
+     */
     @NotNull
     @Override
     @Property(viewable = true, order = 1)
     public String getName() {
-        return shard.replicas().isEmpty()
-            ? shard.shard()
-            : shard.shard() + "  → " + String.join(", ", shard.replicas());
+        List<String> replicas = shard.replicas();
+        if (replicas.isEmpty()) {
+            return shard.shard();
+        }
+        if (replicas.size() <= 3) {
+            return shard.shard() + " \u2192 " + String.join(", ", replicas);
+        }
+        return shard.shard() + " \u2192 " + String.join(", ", replicas.subList(0, 3))
+            + " and " + (replicas.size() - 3) + " more";
     }
 
     /** The shard name on its own, which is what the replicate endpoint expects. */

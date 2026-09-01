@@ -61,6 +61,14 @@ public class WeaviateReplicationStep implements DBSObject, DBPImageProvider, DBP
         this.current = current;
     }
 
+    /**
+     * The state and when it started: {@code INTEGRATING  12:34:56}.
+     * <p>
+     * The error count is left to the overlay and the Errors column -- a row that had errors wears
+     * the red marker either way, and saying so twice crowded the one thing this row is for. The
+     * current state is marked because "where is it now" is the question the history is read to
+     * answer, and it is the only row whose position is not obvious from the order.
+     */
     @NotNull
     @Override
     @Property(viewable = true, order = 1)
@@ -68,9 +76,6 @@ public class WeaviateReplicationStep implements DBSObject, DBPImageProvider, DBP
         StringBuilder sb = new StringBuilder(status.state());
         if (status.whenStartedUnixMs() > 0) {
             sb.append("  ").append(WHEN.format(Instant.ofEpochMilli(status.whenStartedUnixMs())));
-        }
-        if (status.hasErrors()) {
-            sb.append("  (").append(status.errors().size()).append(" error(s))");
         }
         if (current) {
             sb.append("  \u2190 now");

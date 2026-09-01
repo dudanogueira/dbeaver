@@ -66,21 +66,30 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
         return op.id();
     }
 
+    /**
+     * What is moving and where to: {@code Orders/abc123 \u2192 weaviate-1}.
+     * <p>
+     * Deliberately not the whole operation. Collection, shard, source, target, type and state are
+     * each a viewable property, so the navigator already gives them their own columns; repeating
+     * all six in the label produced a row long enough to need scrolling and still told nobody
+     * anything the grid was not already showing.
+     * <p>
+     * What stays is what identifies the row and what a reader is actually looking for: which shard,
+     * and where it is going. The state is carried by the overlay -- green when ready, red when
+     * cancelled, orange while in flight -- and spelled out in its own column. Only a pending
+     * cancel or delete is called out in words, because that is transient and has no column.
+     */
     @NotNull
     @Override
     @Property(viewable = true, order = 1)
     public String getName() {
         StringBuilder sb = new StringBuilder()
             .append(op.collection()).append('/').append(op.shard())
-            .append("  ").append(op.sourceNode()).append(" \u2192 ").append(op.targetNode())
-            .append("  ").append(op.type());
-        if (!op.state().isEmpty()) {
-            sb.append(", ").append(op.state());
-        }
+            .append(" \u2192 ").append(op.targetNode());
         if (op.scheduledForCancel()) {
-            sb.append(" (cancelling)");
+            sb.append("  (cancelling)");
         } else if (op.scheduledForDelete()) {
-            sb.append(" (deleting)");
+            sb.append("  (deleting)");
         }
         return sb.toString();
     }
@@ -183,12 +192,16 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
     @Nullable
     @Override
     public String getDescription() {
+        StringBuilder sb = new StringBuilder(op.type())
+            .append(" from ").append(op.sourceNode())
+            .append(", ").append(getReplicationState().getLabel().toLowerCase(
+                java.util.Locale.ROOT));
         List<WeaviateReplicationRest.ErrorInfo> errors = op.allErrors();
         if (!errors.isEmpty()) {
-            return errors.size() + " error(s), most recently: "
-                + errors.get(errors.size() - 1).message();
+            sb.append(" -- ").append(errors.size()).append(" error(s), most recently: ")
+                .append(errors.get(errors.size() - 1).message());
         }
-        return getReplicationState().getLabel();
+        return sb.toString();
     }
 
     @Nullable
