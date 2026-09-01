@@ -19,14 +19,9 @@ package org.jkiss.dbeaver.ext.weaviate.ui;
 import org.eclipse.jface.action.IContributionManager;
 import org.eclipse.osgi.util.NLS;
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.events.DisposeEvent;
-import org.eclipse.swt.events.DisposeListener;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.events.SelectionEvent;
-import org.eclipse.swt.graphics.Color;
-import org.eclipse.swt.graphics.Font;
-import org.eclipse.swt.graphics.FontData;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
@@ -51,6 +46,7 @@ import org.eclipse.ui.forms.widgets.ExpandableComposite;
 import org.jkiss.dbeaver.ui.controls.ExpandableCompositeEx;
 import java.lang.reflect.InvocationTargetException;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryBanner;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantStatus;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateColumns;
@@ -167,11 +163,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private Scale hybridAlphaScale;
     private Label hybridAlphaValue;
     private Combo hybridFusionCombo;
-    private Composite banner;
-    private Label bannerLabel;
-    private Color errorBg;
-    private Color infoBg;
-    private Font bannerFont;
+    private final WeaviateQueryBanner banner = new WeaviateQueryBanner(this::clearRememberedError);
     private Composite filtersGroup;
     private Composite filterRowsHolder;
     private Button filterAndRadio;
@@ -289,7 +281,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             }
         });
 
-        banner = createBanner(root);
+        banner.createControls(root);
 
         // Everything below the mode row scrolls. The sections stack rather than share the space --
         // mode inputs, then target vectors, then filters, with reranker and generative to follow --
@@ -758,7 +750,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             tenantItems = collection.listTenants(new VoidProgressMonitor());
         } catch (DBException e) {
             log.debug("Cannot list tenants", e);
-            showError(e.getMessage());
+            banner.showError(e.getMessage());
             return;
         }
         for (org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant tenant : tenantItems) {
@@ -769,7 +761,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 : tenant.name() + "  (" + tenant.status().getLabel() + ")");
         }
         if (tenantCombo.getItemCount() == 0) {
-            showError(WeaviateUIMessages.query_tenant_none);
+            banner.showError(WeaviateUIMessages.query_tenant_none);
             return;
         }
         int idx = indexOfTenant(current);
@@ -836,7 +828,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
             });
         } catch (InvocationTargetException e) {
             log.error("Cannot activate tenant", e.getTargetException());
-            showError(e.getTargetException().getMessage());
+            banner.showError(e.getTargetException().getMessage());
             return;
         } catch (InterruptedException e) {
             return;
@@ -2294,27 +2286,27 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
     private void runQuery() {
         WeaviateCollection collection = currentCollection();
         if (collection == null) {
-            showError(WeaviateUIMessages.query_not_weaviate);
+            banner.showError(WeaviateUIMessages.query_not_weaviate);
             return;
         }
         WeaviateQuerySpec spec;
         try {
             spec = buildSpec();
         } catch (IllegalArgumentException e) {
-            showError(e.getMessage());
+            banner.showError(e.getMessage());
             return;
         }
         collection.setQuerySpec(spec);
         collection.armRun();
         collection.clearLastQueryError();
-        showInfo(WeaviateUIMessages.query_running);
+        banner.showInfo(WeaviateUIMessages.query_running);
         presentation.getController().refreshData(() -> Display.getDefault().asyncExec(this::refreshStatusFromCollection));
     }
 
     private void resetToFetch() {
         WeaviateCollection collection = currentCollection();
         if (collection == null) {
-            showError(WeaviateUIMessages.query_not_weaviate);
+            banner.showError(WeaviateUIMessages.query_not_weaviate);
             return;
         }
         collection.setQuerySpec(WeaviateQuerySpec.fetch());
@@ -2322,7 +2314,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         collection.clearLastQueryError();
         modeCombo.select(WeaviateQueryMode.FETCH.ordinal());
         updateFieldVisibility();
-        showInfo(WeaviateUIMessages.query_running);
+        banner.showInfo(WeaviateUIMessages.query_running);
         presentation.getController().refreshData(() -> Display.getDefault().asyncExec(this::refreshStatusFromCollection));
     }
 
@@ -2456,102 +2448,33 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
         return null;
     }
 
-    private Composite createBanner(Composite parent) {
-        Composite c = new Composite(parent, SWT.NONE);
-        GridLayout l = new GridLayout(2, false);
-        l.marginWidth = 8;
-        l.marginHeight = 6;
-        c.setLayout(l);
-        GridData gd = new GridData(SWT.FILL, SWT.CENTER, true, false);
-        gd.exclude = true;
-        c.setLayoutData(gd);
-
-        Display display = parent.getDisplay();
-        errorBg = new Color(display, 255, 224, 224);
-        infoBg = new Color(display, 224, 240, 255);
-
-        bannerLabel = new Label(c, SWT.WRAP);
-        bannerLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        FontData fd = bannerLabel.getFont().getFontData()[0];
-        bannerFont = new Font(display, fd.getName(), Math.max(fd.getHeight(), 11), SWT.BOLD);
-        bannerLabel.setFont(bannerFont);
-
-        Button dismiss = new Button(c, SWT.PUSH | SWT.FLAT);
-        dismiss.setText("✕");
-        dismiss.setToolTipText(WeaviateUIMessages.query_dismiss);
-        dismiss.setLayoutData(new GridData(SWT.RIGHT, SWT.CENTER, false, false));
-        dismiss.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                dismissBanner();
-            }
-        });
-
-        c.setVisible(false);
-        c.addDisposeListener(new DisposeListener() {
-            @Override
-            public void widgetDisposed(DisposeEvent e) {
-                if (errorBg != null && !errorBg.isDisposed()) errorBg.dispose();
-                if (infoBg != null && !infoBg.isDisposed()) infoBg.dispose();
-                if (bannerFont != null && !bannerFont.isDisposed()) bannerFont.dispose();
-            }
-        });
-        return c;
+    /** Closes the banner and forgets the error behind it. */
+    private void dismissBanner() {
+        clearRememberedError();
+        banner.hide();
     }
 
-    private void dismissBanner() {
+    /**
+     * Forgets the error the collection is holding, so dismissing the banner sticks rather than
+     * having it reappear on the next refresh.
+     */
+    private void clearRememberedError() {
         WeaviateCollection collection = currentCollection();
         if (collection != null) {
             collection.clearLastQueryError();
         }
-        hideBanner();
-    }
-
-    private void showError(String msg) {
-        showBanner("⚠ " + msg, true);
-    }
-
-    private void showInfo(String msg) {
-        showBanner(msg, false);
-    }
-
-    private void hideBanner() {
-        if (banner == null || banner.isDisposed()) return;
-        ((GridData) banner.getLayoutData()).exclude = true;
-        banner.setVisible(false);
-        if (bannerLabel != null && !bannerLabel.isDisposed()) {
-            bannerLabel.setText("");
-            bannerLabel.setToolTipText("");
-        }
-        banner.getParent().layout(true, true);
-    }
-
-    private void showBanner(String msg, boolean error) {
-        if (banner == null || banner.isDisposed()) return;
-        Color bg = error ? errorBg : infoBg;
-        Color fg = error
-            ? Display.getCurrent().getSystemColor(SWT.COLOR_DARK_RED)
-            : Display.getCurrent().getSystemColor(SWT.COLOR_DARK_BLUE);
-        banner.setBackground(bg);
-        bannerLabel.setBackground(bg);
-        bannerLabel.setForeground(fg);
-        bannerLabel.setText(msg);
-        bannerLabel.setToolTipText(msg);
-        ((GridData) banner.getLayoutData()).exclude = false;
-        banner.setVisible(true);
-        banner.getParent().layout(true, true);
     }
 
     private void refreshStatusFromCollection() {
         refreshGenerativeResult();
         WeaviateCollection collection = currentCollection();
         if (collection == null) {
-            hideBanner();
+            banner.hide();
             return;
         }
         String err = collection.getLastQueryError();
         if (err != null) {
-            showError(err);
+            banner.showError(err);
             // Also surface as a native DBeaver warning toast — visible even if the user
             // is looking elsewhere.
             try {
@@ -2563,7 +2486,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase {
                 log.debug("Failed to surface DBeaver notification", t);
             }
         } else {
-            hideBanner();
+            banner.hide();
         }
     }
 
