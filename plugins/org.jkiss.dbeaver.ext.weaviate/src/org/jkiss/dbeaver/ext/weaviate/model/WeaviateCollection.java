@@ -59,6 +59,7 @@ import io.weaviate.client6.v1.internal.json.JSON;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
+import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.DBPDataKind;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBPRefreshableObject;
@@ -100,6 +101,8 @@ import java.util.function.Function;
 import java.util.TreeMap;
 
 public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRefreshableObject {
+
+    private static final Log log = Log.getLog(WeaviateCollection.class);
 
     private static final String[] SUPPORTED_FEATURES = new String[]{
         FEATURE_DATA_SELECT,
@@ -350,6 +353,35 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
 
     // ---- Config sub-folders ----------------------------------------------------------------
     // Each method uses reflection on the underlying record so future-added fields show up.
+
+    /**
+     * Which nodes hold a replica of each of this collection's shards.
+     * <p>
+     * Read fresh rather than cached: it is the answer to "where can this move to", and a stale
+     * answer there would offer a target that already holds the shard -- which the server refuses.
+     * The list is one row per shard, so the cost is small.
+     * <p>
+     * Empty when replica movement is switched off, rather than an error: the folder is a
+     * description of where things are, and that is still worth nothing rather than a stack trace.
+     */
+    @NotNull
+    @Association
+    public List<WeaviateShardReplicas> getShardReplicas(@NotNull DBRProgressMonitor monitor) {
+        List<WeaviateShardReplicas> result = new ArrayList<>();
+        if (!(dataSource instanceof WeaviateDataSource ds) || !ds.isRestApiAvailable()) {
+            return result;
+        }
+        try {
+            for (WeaviateReplicationRest.ShardReplicas shard
+                : WeaviateReplicationRest.shardingState(ds, getName()).shards()) {
+                result.add(new WeaviateShardReplicas(this, shard));
+            }
+            result.sort((a, b) -> a.getShardName().compareToIgnoreCase(b.getShardName()));
+        } catch (DBException e) {
+            log.debug("Cannot read the sharding state of " + getName(), e);
+        }
+        return result;
+    }
 
     @Association
     public List<WeaviateMetadataField> getReplicationFields(@NotNull DBRProgressMonitor monitor) {

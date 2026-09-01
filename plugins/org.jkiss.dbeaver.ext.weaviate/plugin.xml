@@ -156,6 +156,15 @@
                                 id="replication" label="Replication" icon="#folder_info" description="Replication settings">
                             <items label="Field" itemLabel="Field"
                                    path="replicationField" property="replicationFields"/>
+                            <!-- Where the copies actually are, as opposed to how many the config
+                                 asks for. This is what a move is planned from: a shard can only
+                                 go to a node that does not already hold it. -->
+                            <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateShardReplicas"
+                                    id="shardReplicas" label="Shard Replicas" icon="#folder_partitions"
+                                    description="Which nodes hold a replica of each shard">
+                                <items label="Shard" itemLabel="Shard"
+                                       path="shardReplica" property="shardReplicas" icon="#partition"/>
+                            </folder>
                         </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField"
                                 id="sharding" label="Sharding" icon="#folder_info" description="Sharding settings">
@@ -213,6 +222,21 @@
                      therefore cannot tell "switched off" from "nobody has defined one", and a
                      folder that vanished would say neither. getSecurityEntries adds a row that
                      names the case instead. -->
+                <!-- No visibleIf. Unlike RBAC and backups, the server says plainly which
+                     case this is: every replication endpoint answers 501 when the feature is off,
+                     so an empty list really does mean nothing is in flight and the advisory row
+                     really does mean switched off. Both are worth showing. -->
+                <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateReplicationEntry"
+                        id="replicationOps"
+                        label="Replication"
+                        icon="#folder_partitions"
+                        description="Replica movements this cluster is tracking">
+                    <items label="Operation" itemLabel="Operation"
+                           path="replicationOp" property="replicationEntries" icon="#partition">
+                        <items label="State" itemLabel="State"
+                               path="replicationStep" property="steps" icon="#attribute"/>
+                    </items>
+                </folder>
                 <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateSecurityEntry"
                         id="security"
                         label="Security"

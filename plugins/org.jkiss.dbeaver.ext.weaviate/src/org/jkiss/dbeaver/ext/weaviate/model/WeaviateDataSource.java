@@ -74,6 +74,7 @@ public class WeaviateDataSource extends AbstractDataSource
     private volatile List<WeaviateRole> roles;
     private volatile List<WeaviateDbUser> dbUsers;
     private volatile List<WeaviateOidcGroup> oidcGroups;
+    private volatile List<WeaviateReplicationEntry> replicationEntries;
     private final long id;
     private final DBPExclusiveResource exclusiveLock = new SimpleExclusiveLock();
     /**
@@ -1198,6 +1199,77 @@ public class WeaviateDataSource extends AbstractDataSource
         return roles;
     }
 
+    // -- Replica movement -------------------------------------------------------------------
+
+    /**
+     * The rows under Replication: the operations the server is tracking, or why there are none.
+     * <p>
+     * Never throws. The folder's job is to explain a situation, and a folder that errors instead
+     * of explaining is the situation it exists to prevent.
+     */
+    @NotNull
+    @Association
+    public List<WeaviateReplicationEntry> getReplicationEntries(@NotNull DBRProgressMonitor monitor) {
+        List<WeaviateReplicationEntry> known = replicationEntries;
+        if (known == null) {
+            synchronized (this) {
+                known = replicationEntries;
+                if (known == null) {
+                    known = loadReplicationEntries(monitor);
+                    replicationEntries = known;
+                }
+            }
+        }
+        return known;
+    }
+
+    @NotNull
+    private List<WeaviateReplicationEntry> loadReplicationEntries(
+        @NotNull DBRProgressMonitor monitor
+    ) {
+        List<WeaviateReplicationEntry> result = new ArrayList<>();
+        if (!isRestApiAvailable()) {
+            result.add(WeaviateReplicationAdvice.needsApiKey(this));
+            return result;
+        }
+        try {
+            for (WeaviateReplicationRest.OperationInfo op : WeaviateReplicationRest.list(this)) {
+                result.add(new WeaviateReplicationOp(this, op));
+            }
+            if (result.isEmpty()) {
+                // Nothing in flight is the normal state, so say something useful instead: whether
+                // a move is even possible here. One node has nowhere to move a replica to.
+                try {
+                    if (getNodes(monitor).size() < 2) {
+                        result.add(WeaviateReplicationAdvice.singleNode(this));
+                    }
+                } catch (DBException e) {
+                    log.debug("Cannot count cluster nodes", e);
+                }
+            }
+        } catch (WeaviateReplicationRest.DisabledException e) {
+            result.add(WeaviateReplicationAdvice.disabled(this));
+        } catch (DBException e) {
+            log.debug("Cannot list replication operations", e);
+            result.add(WeaviateReplicationAdvice.refused(this,
+                e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+        return result;
+    }
+
+    /** Forgets the replication listing, so the next expansion asks the server again. */
+    public void resetReplicationCache() {
+        synchronized (this) {
+            replicationEntries = null;
+        }
+    }
+
+    /** Operations already in memory, or null. For callers that must not fetch. */
+    @Nullable
+    public List<WeaviateReplicationEntry> getLoadedReplicationEntries() {
+        return replicationEntries;
+    }
+
     public WeaviateClient getClient() {
         return client;
     }
@@ -1239,6 +1311,7 @@ public class WeaviateDataSource extends AbstractDataSource
             roles = null;
             dbUsers = null;
             oidcGroups = null;
+            replicationEntries = null;
         }
         return this;
     }
