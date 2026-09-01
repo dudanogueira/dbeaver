@@ -156,14 +156,59 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
         return op.state();
     }
 
+    /**
+     * When the movement started.
+     * <p>
+     * Read from the history rather than the operation's own {@code whenStartedUnixMs}, which a
+     * 1.39.0 server never sends -- this column was empty on every row until it stopped asking for
+     * that field. See {@code OperationInfo#startedAtMs}.
+     */
     @Nullable
     @Property(viewable = true, order = 8)
     public String getStarted() {
-        return op.whenStartedUnixMs() > 0
-            ? WHEN.format(Instant.ofEpochMilli(op.whenStartedUnixMs())) : null;
+        long started = op.startedAtMs();
+        return started > 0 ? WHEN.format(Instant.ofEpochMilli(started)) : null;
     }
 
+    /**
+     * How long it took, or has been going.
+     * <p>
+     * The span between the first and last recorded states. Both ends are approximate -- the server
+     * stamps neither the initial state nor the current one -- so a finished movement reads a
+     * little short and a running one is measured to whenever it last changed state. Still the
+     * number that answers "is this progressing or wedged", which no other column does.
+     */
+    @Nullable
     @Property(viewable = true, order = 9)
+    public String getElapsed() {
+        long started = op.startedAtMs();
+        if (started <= 0) {
+            return null;
+        }
+        long end = getReplicationState().isTerminal() ? op.lastRecordedMs() : System.currentTimeMillis();
+        if (end <= started) {
+            return null;
+        }
+        return describeDuration(end - started);
+    }
+
+    @NotNull
+    private static String describeDuration(long millis) {
+        if (millis < 1000) {
+            return millis + " ms";
+        }
+        long seconds = millis / 1000;
+        if (seconds < 60) {
+            return seconds + "s";
+        }
+        long minutes = seconds / 60;
+        if (minutes < 60) {
+            return minutes + "m " + (seconds % 60) + "s";
+        }
+        return (minutes / 60) + "h " + (minutes % 60) + "m";
+    }
+
+    @Property(viewable = true, order = 10)
     public int getErrorCount() {
         return op.allErrors().size();
     }

@@ -130,6 +130,33 @@ public class WeaviateReplicationParseTest extends DBeaverUnitTest {
     }
 
     @Test
+    public void theStartTimeComesFromTheHistory() {
+        // The operation's own whenStartedUnixMs is documented by the API and never sent: on a
+        // 1.39.0 cluster every operation arrives without it, and the current status carries only
+        // state and errors. The earliest stamped history entry is the only answer available, and
+        // it is HYDRATING -- REGISTERED has no stamp either, because the initial state is recorded
+        // without the transition that would set one.
+        OperationInfo op = parse(REAL_MOVE);
+        Assertions.assertEquals(0L, op.whenStartedUnixMs(), "the field the API documents");
+        Assertions.assertEquals(1788223348031L, op.startedAtMs(), "the one that is actually there");
+    }
+
+    @Test
+    public void theLastRecordedTimeIsTheLatestState() {
+        // DEHYDRATING, not READY: the current state's start time is exactly the one not sent.
+        Assertions.assertEquals(1788223348163L, parse(REAL_MOVE).lastRecordedMs());
+    }
+
+    @Test
+    public void anOperationWithNoTimestampsAnywhereReportsNone() {
+        OperationInfo op = parse("""
+            {"id":"x","collection":"C","shard":"s","sourceNode":"a","targetNode":"b",
+             "type":"COPY","status":{"state":"REGISTERED","errors":[]}}""");
+        Assertions.assertEquals(0L, op.startedAtMs());
+        Assertions.assertEquals(0L, op.lastRecordedMs());
+    }
+
+    @Test
     public void errorsReadAsObjectsNotStrings() {
         // The regression that justifies not using the client. It throws on this payload.
         OperationInfo op = parse(WITH_ERRORS);

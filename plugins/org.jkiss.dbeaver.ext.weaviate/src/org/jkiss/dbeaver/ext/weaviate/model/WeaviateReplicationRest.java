@@ -139,6 +139,47 @@ public final class WeaviateReplicationRest {
             return status == null ? "" : status.state();
         }
 
+        /**
+         * When this movement started, in epoch millis, or 0 if the server said nothing useful.
+         * <p>
+         * Not simply {@code whenStartedUnixMs}. The API documents that field on the operation and
+         * on each status, and a 1.39.0 cluster sends neither -- every operation arrives with the
+         * top-level field absent and the current status carrying only {@code state} and
+         * {@code errors}. The only timestamps that actually turn up are on the history entries,
+         * and not even on the first: REGISTERED has none, because the initial state is recorded
+         * without the transition that stamps one.
+         * <p>
+         * So the earliest stamped history entry is the best answer available, which in practice is
+         * when HYDRATING began -- when the copying actually started.
+         */
+        public long startedAtMs() {
+            if (whenStartedUnixMs > 0) {
+                return whenStartedUnixMs;
+            }
+            for (StatusInfo step : statusHistory) {
+                if (step.whenStartedUnixMs() > 0) {
+                    return step.whenStartedUnixMs();
+                }
+            }
+            return status != null ? status.whenStartedUnixMs() : 0L;
+        }
+
+        /**
+         * When the most recently recorded state began, or 0.
+         * <p>
+         * Deliberately not "when it last changed": the current state's own start time is the one
+         * the server does not send, so this is when the <em>previous</em> state began. For a
+         * finished movement that is close enough to when it finished; for a running one it is when
+         * it entered the state before the one it is in.
+         */
+        public long lastRecordedMs() {
+            long latest = status != null ? status.whenStartedUnixMs() : 0L;
+            for (StatusInfo step : statusHistory) {
+                latest = Math.max(latest, step.whenStartedUnixMs());
+            }
+            return latest;
+        }
+
         /** Every error across the current state and the history, oldest first. */
         @NotNull
         public List<ErrorInfo> allErrors() {
