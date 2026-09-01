@@ -75,6 +75,7 @@ public class WeaviateDataSource extends AbstractDataSource
     private volatile List<WeaviateDbUser> dbUsers;
     private volatile List<WeaviateOidcGroup> oidcGroups;
     private volatile List<WeaviateReplicationEntry> replicationEntries;
+    private final WeaviatePlacementTracker placementTracker = new WeaviatePlacementTracker();
     private final long id;
     private final DBPExclusiveResource exclusiveLock = new SimpleExclusiveLock();
     /**
@@ -1255,6 +1256,17 @@ public class WeaviateDataSource extends AbstractDataSource
                 e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
         }
         return result;
+    }
+
+    /**
+     * Where replicas were last seen, so a re-read can point at what moved.
+     * <p>
+     * Lives on the connection rather than on a node because the nodes are rebuilt on every read --
+     * they are exactly what is being compared.
+     */
+    @NotNull
+    public WeaviatePlacementTracker getPlacementTracker() {
+        return placementTracker;
     }
 
     /** Forgets the replication listing, so the next expansion asks the server again. */

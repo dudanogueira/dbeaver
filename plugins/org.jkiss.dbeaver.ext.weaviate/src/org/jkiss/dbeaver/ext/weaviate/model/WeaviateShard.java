@@ -20,14 +20,17 @@ import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBPStatefulObject;
+import org.jkiss.dbeaver.model.DBPUniqueObject;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.struct.DBSObjectState;
 import org.jkiss.dbeaver.model.struct.DBSObject;
 
-public class WeaviateShard implements DBSObject, DBPStatefulObject {
+public class WeaviateShard implements DBSObject, DBPStatefulObject, DBPUniqueObject {
 
     private final WeaviateNode parent;
     private final WeaviateNodesRest.ShardInfo shard;
+    /** Whether this shard was not on this node the last time the cluster was read. */
+    private final boolean arrived;
     /**
      * Set after this plugin changes the status, so the row reflects it without a re-read.
      * <p>
@@ -40,8 +43,37 @@ public class WeaviateShard implements DBSObject, DBPStatefulObject {
     private volatile String statusOverride;
 
     public WeaviateShard(@NotNull WeaviateNode parent, @NotNull WeaviateNodesRest.ShardInfo shard) {
+        this(parent, shard, false);
+    }
+
+    public WeaviateShard(
+        @NotNull WeaviateNode parent, @NotNull WeaviateNodesRest.ShardInfo shard, boolean arrived
+    ) {
         this.parent = parent;
         this.shard = shard;
+        this.arrived = arrived;
+    }
+
+    /** Whether this shard has appeared on this node since the previous read. */
+    public boolean hasArrived() {
+        return arrived;
+    }
+
+    /**
+     * A name that stays put while the label changes.
+     * <p>
+     * The navigator reuses a tree node only when the object's class and <em>unique</em>
+     * name both match ({@code DBNDatabaseNode#equalObjects}), and without this interface the
+     * unique name is {@code getName()}. This label carries the shard's status and object count, so
+     * every change made the platform treat the row as a different object: the old node was
+     * dropped, a new one took its place, and whatever was expanded underneath collapsed.
+     * <p>
+     * Identity and label are different things. This is the identity.
+     */
+    @NotNull
+    @Override
+    public String getUniqueName() {
+        return shard.name();
     }
 
     @NotNull
@@ -57,6 +89,11 @@ public class WeaviateShard implements DBSObject, DBPStatefulObject {
             }
             sb.append(shard.objectCount()).append(" objects");
             sb.append(")");
+        }
+        if (arrived) {
+            // A replica that has just landed here, which is what a completed movement looks like
+            // from the node's side. Says so until the next read, when it is no longer news.
+            sb.append("   (new here)");
         }
         return sb.toString();
     }

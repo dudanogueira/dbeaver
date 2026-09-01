@@ -145,10 +145,18 @@ public class WeaviateNode implements DBSObject, DBSObjectContainer {
     public List<WeaviateShard> getShards(@NotNull DBRProgressMonitor monitor) {
         if (shards == null) {
             List<WeaviateShard> result = new ArrayList<>();
-            {
-                for (WeaviateNodesRest.ShardInfo shard : node.shardsOrEmpty()) {
-                    result.add(new WeaviateShard(this, shard));
-                }
+            // What this node is holding now, so a re-read can point at what arrived. A completed
+            // movement shows up here as one more shard on one node and one fewer on another,
+            // which is otherwise indistinguishable from the rest of the redraw.
+            List<String> present = new ArrayList<>();
+            for (WeaviateNodesRest.ShardInfo shard : node.shardsOrEmpty()) {
+                present.add(shard.collection() + "/" + shard.name());
+            }
+            java.util.Set<String> arrived = dataSource.getPlacementTracker()
+                .note("node:" + node.name(), present);
+            for (WeaviateNodesRest.ShardInfo shard : node.shardsOrEmpty()) {
+                result.add(new WeaviateShard(this, shard,
+                    arrived.contains(shard.collection() + "/" + shard.name())));
             }
             shards = result;
         }

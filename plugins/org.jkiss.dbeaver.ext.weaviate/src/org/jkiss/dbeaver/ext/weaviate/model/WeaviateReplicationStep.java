@@ -23,6 +23,7 @@ import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBPImage;
 import org.jkiss.dbeaver.model.DBPImageProvider;
 import org.jkiss.dbeaver.model.DBPStatefulObject;
+import org.jkiss.dbeaver.model.DBPUniqueObject;
 import org.jkiss.dbeaver.model.DBPToolTipObject;
 import org.jkiss.dbeaver.model.meta.Property;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
@@ -42,7 +43,7 @@ import java.time.format.DateTimeFormatter;
  * reach the target node for ten minutes, and here is what it says".
  */
 public class WeaviateReplicationStep implements DBSObject, DBPImageProvider, DBPToolTipObject,
-    DBPStatefulObject {
+    DBPStatefulObject, DBPUniqueObject {
 
     private static final DateTimeFormatter WHEN =
         DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -69,6 +70,23 @@ public class WeaviateReplicationStep implements DBSObject, DBPImageProvider, DBP
      * current state is marked because "where is it now" is the question the history is read to
      * answer, and it is the only row whose position is not obvious from the order.
      */
+    /**
+     * A name that stays put while the label changes.
+     * <p>
+     * The navigator reuses a tree node only when the object's class and <em>unique</em>
+     * name both match ({@code DBNDatabaseNode#equalObjects}), and without this interface the
+     * unique name is {@code getName()}. This label carries a marker for whichever state is current, so
+     * every change made the platform treat the row as a different object: the old node was
+     * dropped, a new one took its place, and whatever was expanded underneath collapsed.
+     * <p>
+     * Identity and label are different things. This is the identity.
+     */
+    @NotNull
+    @Override
+    public String getUniqueName() {
+        return status.state();
+    }
+
     @NotNull
     @Override
     @Property(viewable = true, order = 1)

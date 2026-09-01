@@ -374,7 +374,9 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         try {
             for (WeaviateReplicationRest.ShardReplicas shard
                 : WeaviateReplicationRest.shardingState(ds, getName()).shards()) {
-                result.add(new WeaviateShardReplicas(this, shard));
+                result.add(new WeaviateShardReplicas(this, shard,
+                    ds.getPlacementTracker().note(
+                        getName() + "/" + shard.shard(), shard.replicas())));
             }
             result.sort((a, b) -> a.getShardName().compareToIgnoreCase(b.getShardName()));
         } catch (DBException e) {

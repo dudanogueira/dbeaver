@@ -22,6 +22,7 @@ import org.jkiss.dbeaver.model.DBIcon;
 import org.jkiss.dbeaver.model.DBPImage;
 import org.jkiss.dbeaver.model.DBPImageProvider;
 import org.jkiss.dbeaver.model.DBPStatefulObject;
+import org.jkiss.dbeaver.model.DBPUniqueObject;
 import org.jkiss.dbeaver.model.DBPToolTipObject;
 import org.jkiss.dbeaver.model.meta.Association;
 import org.jkiss.dbeaver.model.meta.Property;
@@ -42,7 +43,7 @@ import java.util.List;
  * opening a properties panel.
  */
 public class WeaviateReplicationOp extends WeaviateReplicationEntry
-    implements DBPImageProvider, DBPToolTipObject, DBPStatefulObject {
+    implements DBPImageProvider, DBPToolTipObject, DBPStatefulObject, DBPUniqueObject {
 
     private static final DateTimeFormatter WHEN =
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -79,6 +80,23 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
      * cancelled, orange while in flight -- and spelled out in its own column. Only a pending
      * cancel or delete is called out in words, because that is transient and has no column.
      */
+    /**
+     * A name that stays put while the label changes.
+     * <p>
+     * The navigator reuses a tree node only when the object's class and <em>unique</em>
+     * name both match ({@code DBNDatabaseNode#equalObjects}), and without this interface the
+     * unique name is {@code getName()}. This label carries a marker for a pending cancel or delete, so
+     * every change made the platform treat the row as a different object: the old node was
+     * dropped, a new one took its place, and whatever was expanded underneath collapsed.
+     * <p>
+     * Identity and label are different things. This is the identity.
+     */
+    @NotNull
+    @Override
+    public String getUniqueName() {
+        return op.id();
+    }
+
     @NotNull
     @Override
     @Property(viewable = true, order = 1)

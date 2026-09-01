@@ -22,11 +22,13 @@ import org.jkiss.dbeaver.model.DBIcon;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBPImage;
 import org.jkiss.dbeaver.model.DBPImageProvider;
+import org.jkiss.dbeaver.model.DBPUniqueObject;
 import org.jkiss.dbeaver.model.DBPToolTipObject;
 import org.jkiss.dbeaver.model.meta.Property;
 import org.jkiss.dbeaver.model.struct.DBSObject;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * One shard and the nodes holding a replica of it.
@@ -35,17 +37,21 @@ import java.util.List;
  * are still legal targets. The server refuses a move to a node already in this list, so the
  * dialog subtracts it from what it offers.
  */
-public class WeaviateShardReplicas implements DBSObject, DBPImageProvider, DBPToolTipObject {
+public class WeaviateShardReplicas implements DBSObject, DBPImageProvider, DBPToolTipObject, DBPUniqueObject {
 
     private final WeaviateCollection collection;
     private final WeaviateReplicationRest.ShardReplicas shard;
+    /** Nodes that were not holding this shard the last time it was read. */
+    private final Set<String> arrived;
 
     public WeaviateShardReplicas(
         @NotNull WeaviateCollection collection,
-        @NotNull WeaviateReplicationRest.ShardReplicas shard
+        @NotNull WeaviateReplicationRest.ShardReplicas shard,
+        @NotNull Set<String> arrived
     ) {
         this.collection = collection;
         this.shard = shard;
+        this.arrived = arrived;
     }
 
     /**
@@ -55,6 +61,23 @@ public class WeaviateShardReplicas implements DBSObject, DBPImageProvider, DBPTo
      * every node in the label and push the shard name -- the part that identifies the row -- off
      * the visible width. The full list is in the Nodes column and the tooltip.
      */
+    /**
+     * A name that stays put while the label changes.
+     * <p>
+     * The navigator reuses a tree node only when the object's class and <em>unique</em>
+     * name both match ({@code DBNDatabaseNode#equalObjects}), and without this interface the
+     * unique name is {@code getName()}. This label carries the nodes holding the shard, which is exactly what a movement changes, so
+     * every change made the platform treat the row as a different object: the old node was
+     * dropped, a new one took its place, and whatever was expanded underneath collapsed.
+     * <p>
+     * Identity and label are different things. This is the identity.
+     */
+    @NotNull
+    @Override
+    public String getUniqueName() {
+        return shard.shard();
+    }
+
     @NotNull
     @Override
     @Property(viewable = true, order = 1)
@@ -63,11 +86,14 @@ public class WeaviateShardReplicas implements DBSObject, DBPImageProvider, DBPTo
         if (replicas.isEmpty()) {
             return shard.shard();
         }
-        if (replicas.size() <= 3) {
-            return shard.shard() + " \u2192 " + String.join(", ", replicas);
-        }
-        return shard.shard() + " \u2192 " + String.join(", ", replicas.subList(0, 3))
-            + " and " + (replicas.size() - 3) + " more";
+        String nodes = replicas.size() <= 3
+            ? String.join(", ", replicas)
+            : String.join(", ", replicas.subList(0, 3)) + " and " + (replicas.size() - 3) + " more";
+        // A movement changes one name in that list, which is easy to miss in the refresh that
+        // also redraws everything else. Say which one, until the next read makes it old news.
+        return arrived.isEmpty()
+            ? shard.shard() + " \u2192 " + nodes
+            : shard.shard() + " \u2192 " + nodes + "   (new: " + String.join(", ", arrived) + ")";
     }
 
     /** The shard name on its own, which is what the replicate endpoint expects. */
@@ -110,12 +136,21 @@ public class WeaviateShardReplicas implements DBSObject, DBPImageProvider, DBPTo
         return count + (count == 1 ? " replica" : " replicas");
     }
 
+    /** Nodes this shard has arrived on since the previous read. */
+    @NotNull
+    public Set<String> getArrived() {
+        return arrived;
+    }
+
     @Nullable
     @Override
     public String getObjectToolTip() {
-        return shard.replicas().isEmpty()
-            ? "No node reports a replica of this shard"
-            : "Held by " + String.join(", ", shard.replicas());
+        if (shard.replicas().isEmpty()) {
+            return "No node reports a replica of this shard";
+        }
+        String held = "Held by " + String.join(", ", shard.replicas());
+        return arrived.isEmpty() ? held
+            : held + "\nArrived on " + String.join(", ", arrived) + " since the last look";
     }
 
     @NotNull

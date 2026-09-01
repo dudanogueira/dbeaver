@@ -23,6 +23,7 @@ import org.jkiss.dbeaver.model.DBIcon;
 import org.jkiss.dbeaver.model.DBIconComposite;
 import org.jkiss.dbeaver.model.DBPImage;
 import org.jkiss.dbeaver.model.DBPImageProvider;
+import org.jkiss.dbeaver.model.DBPUniqueObject;
 import org.jkiss.dbeaver.model.DBPToolTipObject;
 import org.jkiss.dbeaver.model.meta.Property;
 import org.jkiss.dbeaver.Log;
@@ -39,7 +40,7 @@ import java.util.List;
  * work today -- and on a server with none at all, an empty folder would be indistinguishable from
  * a broken one.
  */
-public class WeaviateBackupBackend extends WeaviateBackupEntry implements DBPImageProvider, DBPToolTipObject {
+public class WeaviateBackupBackend extends WeaviateBackupEntry implements DBPImageProvider, DBPToolTipObject, DBPUniqueObject {
 
     private static final Log log = Log.getLog(WeaviateBackupBackend.class);
 
@@ -88,6 +89,23 @@ public class WeaviateBackupBackend extends WeaviateBackupEntry implements DBPIma
      * Absent until the listing has been read. Guessing would mean a request from inside
      * {@code getName()}, which the navigator calls while painting.
      */
+    /**
+     * A name that stays put while the label changes.
+     * <p>
+     * The navigator reuses a tree node only when the object's class and <em>unique</em>
+     * name both match ({@code DBNDatabaseNode#equalObjects}), and without this interface the
+     * unique name is {@code getName()}. This label carries how many backups the backend holds, so
+     * every change made the platform treat the row as a different object: the old node was
+     * dropped, a new one took its place, and whatever was expanded underneath collapsed.
+     * <p>
+     * Identity and label are different things. This is the identity.
+     */
+    @NotNull
+    @Override
+    public String getUniqueName() {
+        return id;
+    }
+
     @NotNull
     @Override
     @Property(viewable = true, order = 1)

@@ -20,6 +20,7 @@ import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBPStatefulObject;
+import org.jkiss.dbeaver.model.DBPUniqueObject;
 import org.jkiss.dbeaver.model.struct.DBSObjectState;
 import org.jkiss.dbeaver.model.meta.Property;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
@@ -34,7 +35,7 @@ import java.util.List;
  * hundreds of shards whose names are tenant ids. Flat, there is nothing to say which collection
  * any of them belongs to; this groups them so the collection is the thing you navigate by.
  */
-public class WeaviateShardGroup implements DBSObject, DBPStatefulObject {
+public class WeaviateShardGroup implements DBSObject, DBPStatefulObject, DBPUniqueObject {
 
     private final WeaviateNode parent;
     private final String collection;
@@ -62,6 +63,23 @@ public class WeaviateShardGroup implements DBSObject, DBPStatefulObject {
      * Ordered by count, largest first, so the dominant state leads and the exceptions sit at the
      * end where they stand out.
      */
+    /**
+     * A name that stays put while the label changes.
+     * <p>
+     * The navigator reuses a tree node only when the object's class and <em>unique</em>
+     * name both match ({@code DBNDatabaseNode#equalObjects}), and without this interface the
+     * unique name is {@code getName()}. This label carries a breakdown of its shards by status, so
+     * every change made the platform treat the row as a different object: the old node was
+     * dropped, a new one took its place, and whatever was expanded underneath collapsed.
+     * <p>
+     * Identity and label are different things. This is the identity.
+     */
+    @NotNull
+    @Override
+    public String getUniqueName() {
+        return collection;
+    }
+
     @NotNull
     @Override
     @Property(viewable = true, order = 1)
