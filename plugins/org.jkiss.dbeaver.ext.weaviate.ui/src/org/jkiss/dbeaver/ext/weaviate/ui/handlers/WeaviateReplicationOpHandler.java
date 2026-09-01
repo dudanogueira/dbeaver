@@ -118,9 +118,9 @@ public class WeaviateReplicationOpHandler extends AbstractHandler implements IEl
                 outcome = "left alone: past the point where it can be "
                     + (cancel ? "cancelled" : "deleted");
             }
-            // Named by shard rather than by the tree label: the label says only which direction
-            // the replica is going, and two movements of different shards between the same pair of
-            // nodes read identically. A confirmation is the one place that must not be ambiguous.
+            // Split across the columns rather than repeating the tree label, which at full
+            // length would be truncated by the Name column and lose the end of itself. The
+            // shard identifies the row; the movement goes beside it, where the grid has room.
             rows.add(new WeaviateChangeConfirmDialog.Row(
                 org.jkiss.dbeaver.model.navigator.DBNModel.getStateOverlayImage(
                     org.jkiss.dbeaver.model.DBIcon.TREE_PARTITION, op.getObjectState()),

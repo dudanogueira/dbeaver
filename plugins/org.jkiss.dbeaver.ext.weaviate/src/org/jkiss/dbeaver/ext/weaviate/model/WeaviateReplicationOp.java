@@ -85,31 +85,27 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
     }
 
     /**
-     * What the movement does: {@code MOVE from:weaviate-0 to:weaviate-1}.
+     * The whole movement in one line:
+     * {@code MOVE DBeaverReplicaFixture/KochhPllas51: weaviate-0 \u2192 weaviate-1}.
      * <p>
-     * Deliberately not the whole operation. Collection, shard, source, target, type and state are
-     * each a viewable property, so the navigator already gives them their own columns; naming all
-     * six in the label made a row too wide to read while telling nobody anything the grid was not
-     * already showing.
+     * Type first, because it is what decides whether the source keeps its copy and is the thing
+     * worth checking twice. Then what is being moved, then where from and to.
      * <p>
-     * What is left is the part that is about this operation rather than about the shard it
-     * touches: which way the replica is going, and whether the source keeps its copy. The state is
-     * carried by the overlay -- green when ready, red when cancelled, orange while in flight --
-     * and spelled out in its own column. Only a pending cancel or delete is put in words, because
-     * it is transient and has no column of its own.
-     * <p>
-     * The shard is not here, so two movements of different shards between the same pair of nodes
-     * read alike. Anything acting on a selection therefore names the shard instead -- see the
-     * confirmation in {@code WeaviateReplicationOpHandler}.
+     * The state is not here. It is carried by the overlay -- green when ready, red when
+     * cancelled, orange while in flight -- and spelled out in its own column, and putting it in
+     * the label as well made the row change width every time the operation advanced. A pending
+     * cancel or delete is the exception: it is transient and has no column, so it is said in
+     * words.
      */
     @NotNull
     @Override
     @Property(viewable = true, order = 1)
     public String getName() {
         StringBuilder sb = new StringBuilder()
-            .append(op.type().isEmpty() ? "?" : op.type())
-            .append(" from:").append(op.sourceNode())
-            .append(" to:").append(op.targetNode());
+            .append(op.type().isEmpty() ? "?" : op.type()).append(' ')
+            .append(op.collection()).append('/').append(op.shard())
+            .append(": ").append(op.sourceNode())
+            .append(" \u2192 ").append(op.targetNode());
         if (op.scheduledForCancel()) {
             sb.append("  (cancelling)");
         } else if (op.scheduledForDelete()) {
