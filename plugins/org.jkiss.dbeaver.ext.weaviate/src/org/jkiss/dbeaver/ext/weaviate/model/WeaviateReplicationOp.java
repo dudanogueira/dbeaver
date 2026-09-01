@@ -218,27 +218,40 @@ public class WeaviateReplicationOp extends WeaviateReplicationEntry
     @Nullable
     @Override
     public String getDescription() {
-        StringBuilder sb = new StringBuilder(getShardPath())
-            .append(", ").append(getReplicationState().getLabel().toLowerCase(
-                java.util.Locale.ROOT));
         List<WeaviateReplicationRest.ErrorInfo> errors = op.allErrors();
-        if (!errors.isEmpty()) {
-            sb.append(" -- ").append(errors.size()).append(" error(s), most recently: ")
-                .append(errors.get(errors.size() - 1).message());
+        if (errors.isEmpty()) {
+            // Everything else about this operation is in the label or a column of its own.
+            return null;
         }
-        return sb.toString();
+        return errors.size() + " error(s), most recently: "
+            + errors.get(errors.size() - 1).message();
     }
 
+    /**
+     * Only what the label does not already say.
+     * <p>
+     * The navigator inlines this into the row -- {@code getNodeBriefInfo} returns the tooltip and
+     * {@code DatabaseNavigatorLabelProvider} appends it in brackets whenever "Show object tips" is
+     * on. Restating the operation here therefore doubled the width of a row that already names
+     * the type, the shard and both nodes. Null when there is nothing to add, so no brackets
+     * appear at all.
+     */
     @Nullable
     @Override
     public String getObjectToolTip() {
-        StringBuilder sb = new StringBuilder(op.type())
-            .append(" of ").append(op.collection()).append('/').append(op.shard())
-            .append(" from ").append(op.sourceNode()).append(" to ").append(op.targetNode());
+        StringBuilder sb = new StringBuilder();
         if (op.uncancelable()) {
-            sb.append("\nPast the point where it can be cancelled.");
+            sb.append("past the point where it can be cancelled");
         }
-        return sb.toString();
+        List<WeaviateReplicationRest.ErrorInfo> errors = op.allErrors();
+        if (!errors.isEmpty()) {
+            if (sb.length() > 0) {
+                sb.append("; ");
+            }
+            sb.append(errors.size()).append(" error(s), most recently: ")
+                .append(errors.get(errors.size() - 1).message());
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     @NotNull

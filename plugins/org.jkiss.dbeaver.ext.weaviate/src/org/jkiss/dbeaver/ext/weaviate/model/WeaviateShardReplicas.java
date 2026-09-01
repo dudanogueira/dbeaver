@@ -132,8 +132,8 @@ public class WeaviateShardReplicas implements DBSObject, DBPImageProvider, DBPTo
     @Nullable
     @Override
     public String getDescription() {
-        int count = shard.replicas().size();
-        return count + (count == 1 ? " replica" : " replicas");
+        // The count has its own column and the names are in the label.
+        return null;
     }
 
     /** Nodes this shard has arrived on since the previous read. */
@@ -142,15 +142,22 @@ public class WeaviateShardReplicas implements DBSObject, DBPImageProvider, DBPTo
         return arrived;
     }
 
+    /**
+     * Only what the label leaves out.
+     * <p>
+     * The navigator inlines this into the row, so repeating the node list here -- which the label
+     * already shows -- simply doubled the row's width. What it cannot show is the full list once
+     * it has been capped at three names.
+     */
     @Nullable
     @Override
     public String getObjectToolTip() {
         if (shard.replicas().isEmpty()) {
             return "No node reports a replica of this shard";
         }
-        String held = "Held by " + String.join(", ", shard.replicas());
-        return arrived.isEmpty() ? held
-            : held + "\nArrived on " + String.join(", ", arrived) + " since the last look";
+        return shard.replicas().size() > 3
+            ? "Held by " + String.join(", ", shard.replicas())
+            : null;
     }
 
     @NotNull
