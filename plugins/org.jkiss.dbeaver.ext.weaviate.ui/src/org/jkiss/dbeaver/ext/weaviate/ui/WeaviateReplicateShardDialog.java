@@ -57,7 +57,9 @@ public class WeaviateReplicateShardDialog extends BaseDialog {
     private Combo targetCombo;
     private Button copyButton;
     private Button moveButton;
+    private Button followButton;
     private Label consequence;
+    private boolean follow = true;
 
     private String targetNode;
     private WeaviateReplicationType type = WeaviateReplicationType.MOVE;
@@ -102,6 +104,18 @@ public class WeaviateReplicateShardDialog extends BaseDialog {
     @NotNull
     public WeaviateReplicationType getReplicationType() {
         return type;
+    }
+
+    /**
+     * Whether to watch the movement rather than start it and look away.
+     * <p>
+     * On by default. A movement is the kind of thing you start because you want to know it
+     * finished, and the alternative is starting it and then hunting for it in the tree. It is a
+     * blocking progress window though, so it is a checkbox rather than a certainty -- on a fast
+     * shard it will open and close before it has said anything.
+     */
+    public boolean isFollow() {
+        return follow;
     }
 
     @Override
@@ -157,6 +171,12 @@ public class WeaviateReplicateShardDialog extends BaseDialog {
             SelectionListener.widgetSelectedAdapter(e -> select(WeaviateReplicationType.COPY)));
         moveButton.setSelection(true);
 
+        followButton = UIUtils.createCheckbox(group, "Follow this movement",
+            "Watch it through its states until it finishes. The movement itself runs on the "
+                + "server either way -- closing the window only stops the watching.", true, 1);
+        followButton.addSelectionListener(
+            SelectionListener.widgetSelectedAdapter(e -> follow = followButton.getSelection()));
+
         consequence = new Label(group, SWT.WRAP);
         GridData consequenceGd = new GridData(GridData.FILL_HORIZONTAL);
         consequenceGd.widthHint = UIUtils.getFontHeight(group) * 46;
@@ -211,6 +231,7 @@ public class WeaviateReplicateShardDialog extends BaseDialog {
             return;
         }
         targetNode = candidates.get(index);
+        follow = followButton != null && !followButton.isDisposed() && followButton.getSelection();
         if (sourceCombo != null && !sourceCombo.isDisposed()) {
             sourceNode = sources.get(Math.max(0, sourceCombo.getSelectionIndex()));
         }

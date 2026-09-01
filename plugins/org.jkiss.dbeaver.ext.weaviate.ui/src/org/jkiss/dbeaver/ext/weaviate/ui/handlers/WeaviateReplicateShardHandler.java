@@ -31,6 +31,7 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateNode;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateReplicationRest;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateReplicateShardDialog;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateReplicationRefresh;
+import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateReplicationWatch;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.ui.DBeaverIcons;
 import org.jkiss.dbeaver.ui.UIIcon;
@@ -131,13 +132,19 @@ public class WeaviateReplicateShardHandler extends AbstractHandler implements IE
         String type = dialog.getReplicationType().name();
         String source = dialog.getSourceNode();
         String destination = dialog.getTargetNode();
+        boolean follow = dialog.isFollow();
         try {
             UIUtils.runInProgressService(monitor -> {
                 try {
-                    // Fire and forget: the POST answers with an id and the work then runs for as
-                    // long as it takes. The operation shows up under Replication straight away.
-                    WeaviateReplicationRest.start(dataSource, target.collection(), target.shard(),
-                        source, destination, type);
+                    // The POST answers with an id and the work then runs for as long as it takes.
+                    // The operation shows up under Replication either way; following it just
+                    // means staying on the same progress window until it stops.
+                    String id = WeaviateReplicationRest.start(dataSource, target.collection(),
+                        target.shard(), source, destination, type);
+                    if (follow) {
+                        WeaviateReplicationWatch.followWith(monitor, dataSource, id,
+                            type + " " + target.collection() + "/" + target.shard());
+                    }
                     WeaviateReplicationRefresh.after(monitor, dataSource);
                 } catch (DBException e) {
                     throw new InvocationTargetException(e);

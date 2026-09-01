@@ -34,6 +34,7 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateReplicationRest;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateReplicationState;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateChangeConfirmDialog;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateReplicationRefresh;
+import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateReplicationWatch;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.ui.DBeaverIcons;
 import org.jkiss.dbeaver.ui.UIIcon;
@@ -224,35 +225,13 @@ public abstract class WeaviateReplicationOpHandler extends AbstractHandler imple
         @NotNull WeaviateDataSource dataSource,
         @NotNull WeaviateReplicationOp op
     ) {
-        String id = op.getOperationId();
         try {
             UIUtils.runInProgressService(monitor -> {
-                monitor.beginTask("Watching " + op.getName(),
-                    org.eclipse.core.runtime.IProgressMonitor.UNKNOWN);
                 try {
-                    String last = null;
-                    while (!monitor.isCanceled()) {
-                        WeaviateReplicationRest.OperationInfo current;
-                        try {
-                            current = WeaviateReplicationRest.get(dataSource, id);
-                        } catch (DBException e) {
-                            throw new InvocationTargetException(e);
-                        }
-                        if (current == null) {
-                            // Deleted underneath us, which is a legitimate end to watching.
-                            break;
-                        }
-                        if (!current.state().equals(last)) {
-                            last = current.state();
-                            monitor.subTask(describe(current));
-                        }
-                        if (WeaviateReplicationState.fromName(current.state()).isTerminal()) {
-                            break;
-                        }
-                        org.jkiss.dbeaver.utils.RuntimeUtils.pause(POLL_INTERVAL_MS);
-                    }
-                } finally {
-                    monitor.done();
+                    WeaviateReplicationWatch.followWith(
+                        monitor, dataSource, op.getOperationId(), op.getName());
+                } catch (DBException e) {
+                    throw new InvocationTargetException(e);
                 }
                 WeaviateReplicationRefresh.after(monitor, dataSource);
             });
@@ -264,12 +243,5 @@ public abstract class WeaviateReplicationOpHandler extends AbstractHandler imple
         }
     }
 
-    @NotNull
-    private static String describe(@NotNull WeaviateReplicationRest.OperationInfo op) {
-        List<WeaviateReplicationRest.ErrorInfo> errors = op.allErrors();
-        return errors.isEmpty()
-            ? op.state()
-            : op.state() + " -- " + errors.get(errors.size() - 1).message();
-    }
 
 }
