@@ -118,12 +118,6 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
     private volatile CollectionConfig config;
     private volatile boolean persisted;
     private volatile List<WeaviateProperty> attributes;
-    /**
-     * Beyond this many tenants the platform's choice dialog (a flat list of labels) stops being
-     * usable, and the searchable "Select Tenant..." picker is the only sensible way in.
-     */
-    private static final int MAX_TENANTS_TO_PROMPT = 30;
-
     private static final String TENANT_REQUIRED =
         "This collection is multi-tenant. Right-click the collection and choose "
             + "\"Select Tenant...\" to pick one.";
@@ -132,8 +126,6 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
     private WeaviateUuidConstraint uuidConstraint;
 
     private volatile String lastQueryError;
-    /** Navigator nodes for the Tenants folder; dropped whenever a tenant's state changes. */
-    private volatile List<WeaviateTenantNode> tenantNodes;
     /**
      * The last grouped-task generative output, or null. One text for the whole result set, so
      * it has no row to live on -- the Query panel shows it in the Generative section, polling
@@ -147,6 +139,8 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
     private volatile Map<String, Float> lastRerankScores = Collections.emptyMap();
     private volatile String pendingSchemaJson;
     private volatile List<WeaviateJsonNode> definitionNodes;
+    /** Tenant listing, the tenant node cache, and the state changes that invalidate it. */
+    private final WeaviateTenancy tenancy;
 
     public WeaviateCollection(@NotNull WeaviateDataSource dataSource, @NotNull CollectionConfig config) {
         this(dataSource, config, true);
@@ -160,6 +154,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         this.dataSource = dataSource;
         this.config = config;
         this.persisted = persisted;
+        this.tenancy = new WeaviateTenancy(this, dataSource);
     }
 
     /**
@@ -624,7 +619,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         // after each query and refresh. Changing it afterwards is the Query panel's tenant
         // dropdown, or "Select Tenant..." on the collection.
         if (isMultiTenant() && CommonUtils.isEmpty(spec.getTenant())) {
-            String chosen = promptForTenant(session, monitor, spec);
+            String chosen = tenancy.promptForTenant(session, monitor, spec);
             if (chosen == null) {
                 // Declined, and nothing to fall back on. Reported like a failed query -- banner
                 // and an empty grid -- rather than thrown, so the result tab survives.
@@ -1382,68 +1377,6 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
     }
 
     /**
-     * True when the collection partitions its objects by tenant.
-     * <p>
-     * Weaviate rejects a query against such a collection unless it names a tenant, so the data
-     * view has to ask which one before it can show anything.
-     */
-    public boolean isMultiTenant() {
-        return config.multiTenancy() != null && config.multiTenancy().enabled();
-    }
-
-    /**
-     * Whether writing to an unknown tenant creates it, or null when the server never said.
-     * <p>
-     * Null is not the same as false. Weaviate omits these fields entirely on a server older than
-     * 1.25.2, and a UI that renders the absence as an unticked box invites someone to "fix" a
-     * setting that does not exist.
-     */
-    @Nullable
-    public Boolean getAutoTenantCreation() {
-        return config.multiTenancy() == null ? null : config.multiTenancy().createAutomatically();
-    }
-
-    /** Whether reading an inactive tenant wakes it. See {@link #getAutoTenantCreation()} on null. */
-    @Nullable
-    public Boolean getAutoTenantActivation() {
-        return config.multiTenancy() == null ? null : config.multiTenancy().activateAutomatically();
-    }
-
-    /**
-     * Turns automatic tenant creation and activation on or off.
-     * <p>
-     * Both travel in one request because they are one object to the server: the update carries a
-     * whole multiTenancy block, so sending only one of them would silently reset the other to the
-     * client's default.
-     * <p>
-     * {@code enabled} is always passed through unchanged. Weaviate will not switch multi-tenancy
-     * itself on or off after a collection exists, and leaving it out of the block would ask it to.
-     */
-    public void setAutoTenantOptions(
-        @NotNull DBRProgressMonitor monitor,
-        boolean autoCreation,
-        boolean autoActivation
-    ) throws DBException {
-        if (!isMultiTenant()) {
-            throw new DBException(getName() + " is not multi-tenant");
-        }
-        monitor.subTask("Update multi-tenancy settings of " + getName());
-        try {
-            dataSource.getClient().collections.use(getName()).config.update(
-                b -> b.multiTenancy(mt -> mt
-                    .enabled(true)
-                    .autoTenantCreation(autoCreation)
-                    .autoTenantActivation(autoActivation)));
-            // Read back rather than patching the local copy: the server is free to refuse or
-            // adjust, and the checkboxes must show what it actually holds.
-            refreshConfig();
-        } catch (Exception e) {
-            throw new DBException(
-                "Cannot update multi-tenancy settings of " + getName() + ": " + e.getMessage(), e);
-        }
-    }
-
-    /**
      * Re-reads this collection's definition from the server and drops everything derived from it.
      */
     public void refreshConfig() throws DBException {
@@ -1481,160 +1414,77 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         return this;
     }
 
+    // ---- Tenants -----------------------------------------------------------------------------
+    //
+    // Thin delegates over WeaviateTenancy, which owns the tenant node cache. They stay here
+    // because the navigator reflects over this class (getTenantNodes carries @Association) and
+    // because 26 call sites across the UI and test bundles reach tenants through the collection.
+
     /**
-     * Tenants defined for this collection with their states, ordered by name.
+     * True when the collection partitions its objects by tenant.
      * <p>
-     * One request, no paging, even for a collection with thousands of tenants: the server answers
-     * with the whole list and there is no endpoint that returns part of it. Measured against a
-     * 4000-tenant collection this is around 190 KiB and 25 ms, so the cost of holding them all is
-     * not what limits the UI -- rendering them is. Reading is the uncapped direction; writing
-     * back is not, see {@link #TENANT_UPDATE_CHUNK}.
+     * Weaviate rejects a query against such a collection unless it names a tenant, so the data
+     * view has to ask which one before it can show anything.
      */
-    @NotNull
-    public List<WeaviateTenant> listTenants(@NotNull DBRProgressMonitor monitor) throws DBException {
-        if (!isMultiTenant()) {
-            return List.of();
-        }
-        monitor.subTask("Read tenants of " + getName());
-        try {
-            List<WeaviateTenant> tenants = new ArrayList<>();
-            for (Tenant tenant : dataSource.getClient().collections.use(getName()).tenants.list()) {
-                if (tenant.name() != null && !tenant.name().isBlank()) {
-                    tenants.add(new WeaviateTenant(
-                        tenant.name(),
-                        WeaviateTenantStatus.fromName(
-                            tenant.status() == null ? null : tenant.status().name())));
-                }
-            }
-            tenants.sort(Comparator.comparing(WeaviateTenant::name));
-            return tenants;
-        } catch (Exception e) {
-            throw new DBException(
-                "Cannot list tenants of " + getName() + ": " + e.getMessage(), e);
-        }
+    public boolean isMultiTenant() {
+        return tenancy.isMultiTenant();
     }
 
     /**
-     * Tenants as navigator nodes, for the Tenants folder under a multi-tenant collection.
+     * Whether writing to an unknown tenant creates it, or null when the server never said.
      * <p>
-     * Cached, because the navigator asks repeatedly while painting labels, and dropped whenever
-     * a state changes so the tree cannot go on showing a tenant as active after it was switched
-     * off. A collection with thousands of tenants makes this folder large, which is the same
-     * bargain the platform already makes for a schema with thousands of tables: it is lazy, so
-     * nothing is read until someone expands it.
-     */
-    @Association
-    public List<WeaviateTenantNode> getTenantNodes(@NotNull DBRProgressMonitor monitor) throws DBException {
-        if (!isMultiTenant()) {
-            return List.of();
-        }
-        if (tenantNodes == null) {
-            List<WeaviateTenant> tenants = listTenants(monitor);
-            List<WeaviateTenantNode> nodes = new ArrayList<>(tenants.size());
-            for (WeaviateTenant tenant : tenants) {
-                nodes.add(new WeaviateTenantNode(this, tenant));
-            }
-            tenantNodes = nodes;
-        }
-        return tenantNodes;
-    }
-
-    /**
-     * Tenant nodes already in memory, or null if this collection's tenants have not been read.
-     * <p>
-     * For callers that run while a context menu is being built, where fetching would put a network
-     * round trip on the UI thread.
+     * Null is not the same as false -- see {@link WeaviateTenancy#getAutoTenantCreation()}.
      */
     @Nullable
+    public Boolean getAutoTenantCreation() {
+        return tenancy.getAutoTenantCreation();
+    }
+
+    /** Whether reading an inactive tenant wakes it. See {@link #getAutoTenantCreation()} on null. */
+    @Nullable
+    public Boolean getAutoTenantActivation() {
+        return tenancy.getAutoTenantActivation();
+    }
+
+    /** Turns automatic tenant creation and activation on or off. */
+    public void setAutoTenantOptions(
+        @NotNull DBRProgressMonitor monitor,
+        boolean autoCreation,
+        boolean autoActivation
+    ) throws DBException {
+        tenancy.setAutoTenantOptions(monitor, autoCreation, autoActivation);
+    }
+
+    /** Tenants defined for this collection with their states, ordered by name. */
+    @NotNull
+    public List<WeaviateTenant> listTenants(@NotNull DBRProgressMonitor monitor) throws DBException {
+        return tenancy.listTenants(monitor);
+    }
+
+    /** Tenants as navigator nodes, for the Tenants folder under a multi-tenant collection. */
+    @Association
+    public List<WeaviateTenantNode> getTenantNodes(@NotNull DBRProgressMonitor monitor) throws DBException {
+        return tenancy.getTenantNodes(monitor);
+    }
+
+    /** Tenant nodes already in memory, or null if this collection's tenants have not been read. */
+    @Nullable
     public List<WeaviateTenantNode> getLoadedTenantNodes() {
-        return tenantNodes;
+        return tenancy.getLoadedTenantNodes();
     }
 
-    /**
-     * Forgets the cached tenant nodes. Called after any change of state, and available to the UI
-     * so a navigator refresh shows what the server now holds.
-     */
+    /** Forgets the cached tenant nodes. Called after any change of state. */
     public void resetTenantCache() {
-        tenantNodes = null;
+        tenancy.resetTenantCache();
     }
 
-    /**
-     * How many tenants go in one activate/deactivate request.
-     * <p>
-     * This is the server's hard limit, not a tuning choice. Weaviate rejects an update naming
-     * more than 100 tenants with
-     * {@code 422 maximum number of tenants allowed to be updated simultaneously is 100}
-     * ({@code usecases/schema/tenant.go}, {@code validateTenants(..., allowOverHundred=false)}).
-     * Creating tenants is uncapped -- only updates are limited -- which is why seeding thousands
-     * works and switching them off in one go does not.
-     * <p>
-     * Chunking also buys a progress bar that moves and a Cancel that can be honoured between
-     * chunks, but those are the secondary reasons. The limit is the reason.
-     */
-    public static final int TENANT_UPDATE_CHUNK = 100;
-
-    /**
-     * Activates or deactivates the named tenants, and reports how many actually changed.
-     * <p>
-     * Tenants already in the wanted state are dropped before anything is sent. The server would
-     * accept them, but the count returned is shown to the user, and "deactivated 750" is a false
-     * statement when 700 of them were already inactive.
-     * <p>
-     * Cancelling stops at a chunk boundary, so the work already sent stands. That is why the
-     * dialog re-reads the list afterwards instead of assuming what it asked for is what happened.
-     *
-     * @return the number of tenants whose state was changed
-     */
+    /** Activates or deactivates the named tenants, and reports how many actually changed. */
     public int setTenantStatus(
         @NotNull DBRProgressMonitor monitor,
         @NotNull List<WeaviateTenant> tenants,
         @NotNull WeaviateTenantStatus target
     ) throws DBException {
-        if (!target.isSettable()) {
-            // OFFLOADED needs an offload module rather than a version, and the two transitional
-            // states belong to the server. Refusing here keeps that decision in one place.
-            throw new DBException("Tenants cannot be set to " + target.getLabel());
-        }
-        List<String> pending = new ArrayList<>();
-        for (WeaviateTenant tenant : tenants) {
-            if (tenant.status() != target) {
-                pending.add(tenant.name());
-            }
-        }
-        if (pending.isEmpty()) {
-            return 0;
-        }
-
-        boolean activate = target == WeaviateTenantStatus.ACTIVE;
-        monitor.beginTask(
-            (activate ? "Activate " : "Deactivate ") + pending.size() + " tenants of " + getName(),
-            pending.size());
-        try {
-            var tenantsClient = dataSource.getClient().collections.use(getName()).tenants;
-            int done = 0;
-            for (int from = 0; from < pending.size(); from += TENANT_UPDATE_CHUNK) {
-                if (monitor.isCanceled()) {
-                    break;
-                }
-                List<String> chunk = pending.subList(
-                    from, Math.min(from + TENANT_UPDATE_CHUNK, pending.size()));
-                monitor.subTask(chunk.get(0) + (chunk.size() > 1 ? " and " + (chunk.size() - 1) + " more" : ""));
-                if (activate) {
-                    tenantsClient.activate(chunk);
-                } else {
-                    tenantsClient.deactivate(chunk);
-                }
-                done += chunk.size();
-                monitor.worked(chunk.size());
-            }
-            return done;
-        } catch (Exception e) {
-            throw new DBException("Cannot update tenants of " + getName() + ": " + e.getMessage(), e);
-        } finally {
-            // Whatever happened, including a cancel partway, the cached states are now suspect.
-            resetTenantCache();
-            monitor.done();
-        }
+        return tenancy.setTenantStatus(monitor, tenants, target);
     }
 
     /**
@@ -1684,7 +1534,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
      * nothing on a multi-tenant collection, so reads look empty and deletes appear to do nothing.
      */
     @NotNull
-    private CollectionHandle<Map<String, Object>> handle(@Nullable String tenant) {
+    CollectionHandle<Map<String, Object>> handle(@Nullable String tenant) {
         if (tenant == null || tenant.isBlank()) {
             return dataSource.getClient().collections.use(getName());
         }
@@ -1707,69 +1557,6 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
             return false;
         }
         return dataSource.isIncludeVectorsByDefault();
-    }
-
-    /**
-     * Ask which tenant to read, when the data view is opened on a multi-tenant collection.
-     * <p>
-     * The choice cannot be defaulted: reading the wrong tenant returns real rows that are simply
-     * someone else's, which is worse than showing nothing. Only interactive reads prompt -- an
-     * export runs unattended and must not block on a dialog.
-     *
-     * @return the chosen tenant, or null if the user declined or there are none
-     */
-    @Nullable
-    private String promptForTenant(
-        @NotNull DBCSession session,
-        @NotNull DBRProgressMonitor monitor,
-        @NotNull WeaviateQuerySpec spec
-    ) {
-        if (!session.getPurpose().isUser()) {
-            return null;
-        }
-        List<WeaviateTenant> tenants;
-        try {
-            tenants = listTenants(monitor);
-        } catch (DBException e) {
-            queryLog.warn("Cannot list tenants of " + getName(), e);
-            return null;
-        }
-        if (tenants.isEmpty()) {
-            return null;
-        }
-        // The searchable picker handles any number of tenants, so prefer it whenever the UI
-        // bundle has registered one.
-        WeaviateTenantPrompt prompt = WeaviateTenantPrompt.getProvider();
-        if (prompt != null) {
-            return prompt.selectTenant(getName(), tenants, spec.getTenant());
-        }
-        if (tenants.size() > MAX_TENANTS_TO_PROMPT) {
-            // Fallback only. The platform dialog lays options out as a row of buttons, so past a
-            // handful it is unusable; better to say nothing and let the message point at the
-            // "Select Tenant..." command.
-            queryLog.debug(getName() + " has " + tenants.size()
-                + " tenants and no searchable picker is registered");
-            return null;
-        }
-        // The fallback dialog takes plain labels, so the state is spelled into them -- it is the
-        // one thing that decides whether the chosen tenant can actually be read.
-        List<String> labels = new ArrayList<>(tenants.size());
-        for (WeaviateTenant tenant : tenants) {
-            labels.add(tenant.isActive()
-                ? tenant.name()
-                : tenant.name() + " (" + tenant.status().getLabel() + ")");
-        }
-        DBPPlatformUI.UserChoiceResponse response = DBWorkbench.getPlatformUI().showUserChoice(
-            "Select tenant",
-            "\"" + getName() + "\" is a multi-tenant collection. Choose which tenant's data to show.",
-            labels,
-            List.of(),
-            null,
-            0);
-        if (response.choiceIndex < 0 || response.choiceIndex >= tenants.size()) {
-            return null;
-        }
-        return tenants.get(response.choiceIndex).name();
     }
 
     // ---- DBSDataManipulator ----------------------------------------------------------------
@@ -1801,7 +1588,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
             throw new DBException(
                 "Select a tenant in the Weaviate Query panel before deleting from a multi-tenant collection");
         }
-        return new DeleteBatch(uuidIndex, tenant);
+        return new WeaviateDeleteBatch(this, uuidIndex, tenant);
     }
 
     @NotNull
@@ -1835,111 +1622,6 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         @NotNull DBCExecutionSource source
     ) throws DBException {
         throw new DBException("Truncating a Weaviate collection is not supported yet");
-    }
-
-    /**
-     * Collects the UUIDs of the rows marked for deletion and removes them in one request.
-     * <p>
-     * DBeaver calls {@link #add} once per row and {@link #execute} once when the user saves, so
-     * batching here turns "delete 200 selected rows" into a single call rather than 200.
-     */
-    private final class DeleteBatch implements ExecuteBatch {
-
-        private final int uuidIndex;
-        private final String tenant;
-        private final List<String> ids = new ArrayList<>();
-
-        DeleteBatch(int uuidIndex, @Nullable String tenant) {
-            this.uuidIndex = uuidIndex;
-            this.tenant = tenant;
-        }
-
-        @NotNull
-        @Override
-        public ExecuteBatch add(@NotNull Object[] attributeValues) throws DBCException {
-            if (uuidIndex >= attributeValues.length) {
-                throw new DBCException("Row has no " + WeaviateColumns.UUID + " value to delete by");
-            }
-            Object value = attributeValues[uuidIndex];
-            String id = value == null ? null : value.toString().trim();
-            if (id == null || id.isEmpty()) {
-                throw new DBCException("Cannot delete a row with an empty " + WeaviateColumns.UUID);
-            }
-            ids.add(id);
-            return this;
-        }
-
-        @NotNull
-        @Override
-        public DBCStatistics execute(
-            @NotNull DBCSession session,
-            @NotNull Map<String, Object> options
-        ) throws DBException {
-            DBCStatistics statistics = new DBCStatistics();
-            if (ids.isEmpty()) {
-                return statistics;
-            }
-            long startTime = System.currentTimeMillis();
-            statistics.setQueryText("DELETE " + ids.size() + " object(s) FROM " + getName());
-            try {
-                DeleteManyResponse response = handle(tenant)
-                    .data.deleteMany(
-                        Filter.uuid().containsAny(ids.toArray(new String[0])),
-                        b -> b.verbose(true));
-                long failed = response.failed();
-                if (failed > 0) {
-                    // Surfaced rather than swallowed: the grid would otherwise drop the rows
-                    // locally and look as though the delete had succeeded.
-                    throw new DBCException(
-                        "Weaviate deleted " + response.successful() + " of " + ids.size()
-                            + " object(s); " + failed + " failed" + firstError(response));
-                }
-                statistics.setRowsUpdated(response.successful());
-            } catch (DBCException e) {
-                throw e;
-            } catch (Exception e) {
-                String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                queryLog.warn("Weaviate delete failed for collection " + getName() + ": " + msg, e);
-                throw new DBCException("Failed to delete from " + getName() + ": " + msg, e);
-            } finally {
-                statistics.setExecuteTime(System.currentTimeMillis() - startTime);
-                ids.clear();
-            }
-            return statistics;
-        }
-
-        @Override
-        public void generatePersistActions(
-            @NotNull DBCSession session,
-            @NotNull List<DBEPersistAction> actions,
-            @NotNull Map<String, Object> options
-        ) {
-            // "Generate SQL" for the pending changes. There is no SQL dialect behind Weaviate,
-            // so the best that can be offered is a readable description of what would be sent.
-            for (String id : ids) {
-                actions.add(new SQLDatabasePersistActionComment(
-                    getDataSource(),
-                    "Delete object " + id + " from " + getName()));
-            }
-        }
-
-        @Override
-        public void close() {
-            ids.clear();
-        }
-    }
-
-    @NotNull
-    private static String firstError(@NotNull DeleteManyResponse response) {
-        if (response.objects() == null) {
-            return "";
-        }
-        for (DeleteManyResponse.DeletedObject o : response.objects()) {
-            if (!o.successful() && o.error() != null) {
-                return ": " + o.error();
-            }
-        }
-        return "";
     }
 
     @Nullable

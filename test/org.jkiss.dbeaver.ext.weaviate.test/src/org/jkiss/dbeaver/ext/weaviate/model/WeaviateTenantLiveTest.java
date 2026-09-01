@@ -185,15 +185,15 @@ public class WeaviateTenantLiveTest extends DBeaverUnitTest {
                 Assumptions.abort("seed with --scale to run this: " + e.getMessage());
                 return;
             }
-            Assumptions.assumeTrue(names.size() >= WeaviateCollection.TENANT_UPDATE_CHUNK,
+            Assumptions.assumeTrue(names.size() >= WeaviateTenancy.TENANT_UPDATE_CHUNK,
                 () -> SCALE_COLLECTION + " has only " + names.size()
-                    + " tenants; seed with --scale " + (WeaviateCollection.TENANT_UPDATE_CHUNK * 2));
+                    + " tenants; seed with --scale " + (WeaviateTenancy.TENANT_UPDATE_CHUNK * 2));
 
-            List<String> chunk = names.subList(0, WeaviateCollection.TENANT_UPDATE_CHUNK);
+            List<String> chunk = names.subList(0, WeaviateTenancy.TENANT_UPDATE_CHUNK);
             try {
                 Assertions.assertDoesNotThrow(() -> scale.deactivate(chunk),
                     () -> "the server refused a batch of " + chunk.size()
-                        + ". WeaviateCollection.TENANT_UPDATE_CHUNK is above the server's limit.");
+                        + ". WeaviateTenancy.TENANT_UPDATE_CHUNK is above the server's limit.");
             } finally {
                 scale.activate(chunk);
             }
