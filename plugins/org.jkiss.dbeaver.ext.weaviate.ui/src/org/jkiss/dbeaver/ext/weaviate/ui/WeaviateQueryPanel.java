@@ -45,15 +45,13 @@ import org.eclipse.ui.forms.events.ExpansionEvent;
 import org.eclipse.ui.forms.widgets.ExpandableComposite;
 import org.jkiss.dbeaver.ui.controls.ExpandableCompositeEx;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateFilterSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateGroupBySection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryBanner;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryPanelContext;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateSectionRows;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateTenantRow;
-import org.jkiss.dbeaver.ext.weaviate.model.WeaviateColumns;
-import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterOperator;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterRow;
-import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterTranslator;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateHybridFusion;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQueryMode;
@@ -66,7 +64,6 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorParser;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorTarget;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorizer;
 import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
-import org.jkiss.dbeaver.model.DBPDataKind;
 import org.jkiss.dbeaver.model.exec.DBCLogicalOperator;
 import org.jkiss.dbeaver.ui.UIUtils;
 import org.jkiss.dbeaver.model.runtime.VoidProgressMonitor;
@@ -159,11 +156,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     private Label hybridAlphaValue;
     private Combo hybridFusionCombo;
     private final WeaviateQueryBanner banner = new WeaviateQueryBanner(this::clearRememberedError);
-    private Composite filtersGroup;
-    private Composite filterRowsHolder;
-    private Button filterAndRadio;
-    private Button filterOrRadio;
-    private final java.util.List<FilterRowUi> filterRowUis = new java.util.ArrayList<>();
+    private final WeaviateFilterSection filterSection = new WeaviateFilterSection(this);
     private final WeaviateGroupBySection groupBySection = new WeaviateGroupBySection(this);
     /** The property label and combo, hidden together where grouping does not apply. */
 
@@ -274,7 +267,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
             mode.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
         }
 
-        createFilterSection(content);
+        filterSection.createControls(content);
         groupBySection.createControls(content);
 
         // Must run here as well as in activatePanel(): the row starts hidden, and on first
@@ -375,10 +368,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         // The title is part of the section's own layout, and a longer one can need more width.
         section.layout(true, true);
         reflow();
-    }
-
-    private void updateFilterCount() {
-        setSectionCount(filtersGroup, WeaviateUIMessages.query_filters, filterRowUis.size());
     }
 
     /**
@@ -1584,113 +1573,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         }
     }
 
-    private void createFilterSection(Composite parent) {
-        // Last of the stacked sections and collapsed by default: a query is usually run without
-        // filters, and the rows below are the panel's tallest block when they are used.
-        filtersGroup = createSection(parent, WeaviateUIMessages.query_filters, "filters", 1, false);
-
-        Composite header = new Composite(filtersGroup, SWT.NONE);
-        GridLayout hl = new GridLayout(4, false);
-        hl.marginWidth = 0;
-        hl.marginHeight = 0;
-        header.setLayout(hl);
-        header.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-
-        new Label(header, SWT.NONE).setText(WeaviateUIMessages.query_match);
-        filterAndRadio = new Button(header, SWT.RADIO);
-        filterAndRadio.setText(WeaviateUIMessages.query_match_all);
-        filterAndRadio.setSelection(true);
-        filterOrRadio = new Button(header, SWT.RADIO);
-        filterOrRadio.setText(WeaviateUIMessages.query_match_any);
-
-        Button addRow = new Button(header, SWT.PUSH);
-        addRow.setText("+ Add filter");
-        addRow.setLayoutData(new GridData(SWT.RIGHT, SWT.CENTER, true, false));
-        addRow.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                addFilterRow(null);
-            }
-        });
-
-        filterRowsHolder = new Composite(filtersGroup, SWT.NONE);
-        GridLayout rl = new GridLayout(1, false);
-        rl.marginWidth = 0;
-        rl.marginHeight = 0;
-        rl.verticalSpacing = 3;
-        filterRowsHolder.setLayout(rl);
-        filterRowsHolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
-    }
-
-    private void addFilterRow(@Nullable WeaviateFilterRow seed) {
-        if (filterRowsHolder == null || filterRowsHolder.isDisposed()) return;
-        FilterRowUi ui = new FilterRowUi(filterRowsHolder, filterPropertyNames(), seed);
-        filterRowUis.add(ui);
-        filterRowsHolder.layout(true, true);
-        updateFilterCount();
-    }
-
-    private void clearFilterRows() {
-        for (FilterRowUi ui : new ArrayList<>(filterRowUis)) {
-            ui.dispose();
-        }
-        filterRowUis.clear();
-        // Needed on its own account: loading a spec with no filters at all clears the rows without
-        // adding any, and the title would otherwise keep the previous spec's count.
-        updateFilterCount();
-    }
-
-    private List<WeaviateFilterRow> collectFilterRows() {
-        List<WeaviateFilterRow> rows = new ArrayList<>(filterRowUis.size());
-        for (FilterRowUi ui : filterRowUis) {
-            WeaviateFilterRow row = ui.toRow();
-            if (row != null) rows.add(row);
-        }
-        return rows;
-    }
-
-    /**
-     * Property names for the filter rows: the collection's own, plus the synthetic columns the
-     * grid shows.
-     * <p>
-     * Kept apart from {@link #currentPropertyNames()}, which feeds the BM25, generative and
-     * rerank pickers -- none of those can do anything with a uuid or a timestamp. The translator
-     * has always known how to filter these three; until now nothing offered them.
-     */
-    @NotNull
-    private List<String> filterPropertyNames() {
-        // The collection's own properties lead. A new row selects the first entry, and defaulting
-        // that to a synthetic column would quietly filter on something nobody chose.
-        List<String> names = new ArrayList<>(currentPropertyNames());
-        names.add(WeaviateFilterTranslator.UUID_COLUMN);
-        names.add(WeaviateColumns.CREATED);
-        names.add(WeaviateColumns.UPDATED);
-        return names;
-    }
-
-    private DBPDataKind dataKindForProperty(@NotNull String propertyName) {
-        // The synthetic columns are not in the schema, so their type has to be stated here or
-        // the value would be coerced as text and never match.
-        if (WeaviateColumns.CREATED.equals(propertyName)
-            || WeaviateColumns.UPDATED.equals(propertyName)
-        ) {
-            return DBPDataKind.DATETIME;
-        }
-        if (WeaviateFilterTranslator.UUID_COLUMN.equalsIgnoreCase(propertyName)) {
-            return DBPDataKind.STRING;
-        }
-        WeaviateCollection collection = currentCollection();
-        if (collection == null) return DBPDataKind.STRING;
-        try {
-            for (WeaviateProperty p : collection.getProperties(new VoidProgressMonitor())) {
-                if (p.getName().equals(propertyName)) return p.getDataKind();
-            }
-        } catch (DBException ignored) {
-            // fall through
-        }
-        return DBPDataKind.STRING;
-    }
-
     private void loadAutoCutIntoUi(@NotNull WeaviateQuerySpec spec) {
         // All modes, not just the spec's: these options are per-mode widgets over one shared
         // value each, and a demoted spec must leave them configured everywhere.
@@ -1829,17 +1711,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         groupBySection.loadFrom(spec);
 
 
-        // Filter rows
-        if (filterRowsHolder != null && !filterRowsHolder.isDisposed()) {
-            clearFilterRows();
-            for (WeaviateFilterRow row : spec.getFilterRows()) {
-                addFilterRow(row);
-            }
-            if (filterAndRadio != null) {
-                filterAndRadio.setSelection(!spec.isAnyFilter());
-                filterOrRadio.setSelection(spec.isAnyFilter());
-            }
-        }
+        filterSection.loadFrom(spec);
 
         // Every mode's inputs load from the one spec, not just the current mode's. A spec
         // demoted to Fetch on viewer-open still carries the remembered search inputs, and
@@ -1928,8 +1800,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         List<WeaviateVectorTarget> targets = mode.supportsTargetVectors()
             ? currentTargets(mode)
             : Collections.emptyList();
-        List<WeaviateFilterRow> rows = collectFilterRows();
-        boolean any = filterOrRadio != null && filterOrRadio.getSelection();
+        List<WeaviateFilterRow> rows = filterSection.collectRows();
+        boolean any = filterSection.isAnyFilter();
         WeaviateQuerySpec.Builder builder;
         switch (mode) {
             case BM25: {
@@ -2146,99 +2018,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     @Override
     public void contributeActions(IContributionManager manager) {
         // No toolbar actions for now.
-    }
-
-    /**
-     * SWT controls for a single filter row. Owns its container Composite so disposing it
-     * cleanly removes the row from the layout.
-     */
-    private final class FilterRowUi {
-        private final Composite container;
-        private final Combo propertyCombo;
-        private final Combo opCombo;
-        private final Text valueField;
-
-        FilterRowUi(@NotNull Composite parent, @NotNull List<String> propertyNames, @Nullable WeaviateFilterRow seed) {
-            container = new Composite(parent, SWT.NONE);
-            GridLayout gl = new GridLayout(4, false);
-            gl.marginWidth = 0;
-            gl.marginHeight = 0;
-            container.setLayout(gl);
-            container.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-
-            propertyCombo = new Combo(container, SWT.READ_ONLY);
-            for (String name : propertyNames) propertyCombo.add(name);
-            GridData pcGd = new GridData(SWT.LEFT, SWT.CENTER, false, false);
-            pcGd.widthHint = 140;
-            propertyCombo.setLayoutData(pcGd);
-
-            opCombo = new Combo(container, SWT.READ_ONLY);
-            for (WeaviateFilterOperator op : WeaviateFilterRow.SUPPORTED_OPERATORS) {
-                opCombo.add(op.getLabel());
-            }
-            opCombo.select(0);
-            opCombo.addSelectionListener(new SelectionAdapter() {
-                @Override
-                public void widgetSelected(SelectionEvent e) {
-                    syncValueEnabled();
-                }
-            });
-
-            valueField = new Text(container, SWT.BORDER);
-            valueField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-            valueField.setMessage("value");
-
-            Button remove = new Button(container, SWT.PUSH | SWT.FLAT);
-            remove.setText("✕");
-            remove.setToolTipText(WeaviateUIMessages.query_remove_filter);
-            remove.addSelectionListener(new SelectionAdapter() {
-                @Override
-                public void widgetSelected(SelectionEvent e) {
-                    dispose();
-                    filterRowUis.remove(FilterRowUi.this);
-                    filterRowsHolder.layout(true, true);
-                    updateFilterCount();
-                }
-            });
-
-            if (seed != null) {
-                propertyCombo.setText(seed.property());
-                int idx = WeaviateFilterRow.SUPPORTED_OPERATORS.indexOf(seed.operator());
-                opCombo.select(Math.max(0, idx));
-                if (seed.rawValue() != null) valueField.setText(seed.rawValue());
-            } else if (!propertyNames.isEmpty()) {
-                propertyCombo.select(0);
-            }
-            syncValueEnabled();
-        }
-
-        private void syncValueEnabled() {
-            WeaviateFilterOperator op = currentOperator();
-            valueField.setEnabled(op.takesValue());
-            // The cell holds one value, a comma-separated list, or a low/high pair depending on
-            // the operator, so the hint has to say which.
-            valueField.setMessage(op.takesList() ? "comma-separated" : "value");
-        }
-
-        private WeaviateFilterOperator currentOperator() {
-            int idx = opCombo.getSelectionIndex();
-            if (idx < 0) idx = 0;
-            return WeaviateFilterRow.SUPPORTED_OPERATORS.get(idx);
-        }
-
-        @Nullable
-        WeaviateFilterRow toRow() {
-            String property = propertyCombo.getText();
-            if (property == null || property.isBlank()) return null;
-            WeaviateFilterOperator op = currentOperator();
-            String raw = valueField.getText();
-            DBPDataKind kind = dataKindForProperty(property);
-            return new WeaviateFilterRow(property, op, raw, kind);
-        }
-
-        void dispose() {
-            if (!container.isDisposed()) container.dispose();
-        }
     }
 
     /**
