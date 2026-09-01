@@ -548,7 +548,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         List<WeaviateProperty> attributes = getProperties(monitor);
         List<String> declaredVectors = getVectorNames();
         List<String> vectorNames = includeVectors(session, spec)
-            ? narrowToTargets(spec, declaredVectors)
+            ? WeaviateQueryRequest.narrowToTargets(spec, declaredVectors)
             : Collections.emptyList();
         // Derived from what the collection declares, not from what this query asked for: the
         // column name collapses to a bare "_vector" when a collection has only one, so reading it
@@ -588,7 +588,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         if (spec.isWithCertainty() && spec.getMode().supportsCertainty() && !groupedMetadata) {
             columnNames.add(WeaviateColumns.CERTAINTY);
         }
-        if (hasRerankScore(exec)) {
+        if (WeaviateQueryRequest.hasRerankScore(exec)) {
             columnNames.add(WeaviateColumns.RERANK_SCORE);
         }
         // From exec for the same reason the generative columns are: a demoted read is not grouped,
@@ -652,11 +652,11 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
             statistics.setQueryText("Filter not applied — " + e.getMessage());
             return statistics;
         }
-        List<SortBy> sortBy = spec.rankedResults() ? Collections.emptyList() : buildSortBy(dataFilter, attributes);
+        List<SortBy> sortBy = spec.rankedResults() ? Collections.emptyList() : WeaviateQueryRequest.buildSortBy(dataFilter, attributes);
         int limit = maxRows > 0 ? (int) Math.min(maxRows, Integer.MAX_VALUE) : 0;
         int offset = firstRow > 0 ? (int) Math.min(firstRow, Integer.MAX_VALUE) : 0;
 
-        String queryText = describeQuery(exec, filter, sortBy, limit, offset);
+        String queryText = WeaviateQueryDescription.describeQuery(exec, filter, sortBy, limit, offset);
         statistics.setQueryText(queryText);
 
         // An unbounded plain fetch is an export ("extract in a single query"). Offset paging cannot
@@ -795,7 +795,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
                         if (spec.isIncludeVector()) b.includeVector();
                         // The export path must return the same columns the grid shows, so the
                         // opt-in metadata rides along here as well.
-                        List<Metadata> extra = extraMetadata(spec);
+                        List<Metadata> extra = WeaviateQueryRequest.extraMetadata(spec);
                         if (!extra.isEmpty()) b.returnMetadata(extra);
                         return b;
                     });
@@ -839,43 +839,43 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
             handle(spec.getTenant()).query;
         switch (spec.getMode()) {
             case BM25:
-                return query.bm25(requireQuery(spec, "BM25"),
-                    b -> bm25Options(b, spec, filter, limit, offset));
+                return query.bm25(WeaviateQueryRequest.requireQuery(spec, "BM25"),
+                    b -> WeaviateQueryRequest.bm25Options(b, spec, filter, limit, offset));
             case NEAR_TEXT: {
-                String text = requireQuery(spec, "Near Text");
+                String text = WeaviateQueryRequest.requireQuery(spec, "Near Text");
                 // A target is chosen by swapping the first argument, not by a builder call: the
                 // Target record carries the query text as well as the vectors it applies to.
                 NearText nearText = spec.hasTargets()
-                    ? NearText.of(buildTextTarget(spec, text),
-                        b -> nearTextOptions(b, spec, filter, limit, offset))
+                    ? NearText.of(WeaviateQueryRequest.buildTextTarget(spec, text),
+                        b -> WeaviateQueryRequest.nearTextOptions(b, spec, filter, limit, offset))
                     : NearText.of(text,
-                        b -> nearTextOptions(b, spec, filter, limit, offset));
+                        b -> WeaviateQueryRequest.nearTextOptions(b, spec, filter, limit, offset));
                 return runNear(query, nearText, spec, () -> query.nearText(nearText));
             }
             case NEAR_VECTOR: {
                 NearVector nearVector = spec.hasTargets()
-                    ? NearVector.of(buildVectorTarget(spec),
-                        b -> nearVectorOptions(b, spec, filter, limit, offset))
-                    : NearVector.of(requireVector(spec),
-                        b -> nearVectorOptions(b, spec, filter, limit, offset));
+                    ? NearVector.of(WeaviateQueryRequest.buildVectorTarget(spec),
+                        b -> WeaviateQueryRequest.nearVectorOptions(b, spec, filter, limit, offset))
+                    : NearVector.of(WeaviateQueryRequest.requireVector(spec),
+                        b -> WeaviateQueryRequest.nearVectorOptions(b, spec, filter, limit, offset));
                 return runNear(query, nearVector, spec, () -> query.nearVector(nearVector));
             }
             case NEAR_OBJECT: {
-                NearObject nearObject = NearObject.of(requireObjectId(spec),
-                    b -> nearObjectOptions(b, spec, filter, limit, offset));
+                NearObject nearObject = NearObject.of(WeaviateQueryRequest.requireObjectId(spec),
+                    b -> WeaviateQueryRequest.nearObjectOptions(b, spec, filter, limit, offset));
                 return runNear(query, nearObject, spec, () -> query.nearObject(nearObject));
             }
             case HYBRID: {
-                String text = requireQuery(spec, "Hybrid");
+                String text = WeaviateQueryRequest.requireQuery(spec, "Hybrid");
                 return spec.hasTargets()
-                    ? query.hybrid(buildTextTarget(spec, text),
-                        b -> hybridOptions(b, spec, filter, limit, offset))
+                    ? query.hybrid(WeaviateQueryRequest.buildTextTarget(spec, text),
+                        b -> WeaviateQueryRequest.hybridOptions(b, spec, filter, limit, offset))
                     : query.hybrid(text,
-                        b -> hybridOptions(b, spec, filter, limit, offset));
+                        b -> WeaviateQueryRequest.hybridOptions(b, spec, filter, limit, offset));
             }
             case FETCH:
             default:
-                return query.fetchObjects(b -> fetchOptions(b, spec, filter, sortBy, limit, offset));
+                return query.fetchObjects(b -> WeaviateQueryRequest.fetchOptions(b, spec, filter, sortBy, limit, offset));
         }
     }
 
@@ -896,51 +896,51 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         WeaviateGenerateClient<Map<String, Object>> generate =
             handle(spec.getTenant()).generate;
         Function<GenerativeTask.Builder, ObjectBuilder<GenerativeTask>> task =
-            t -> configureTask(t, spec.getGenerative());
+            t -> WeaviateQueryRequest.configureTask(t, spec.getGenerative());
         // The near_* arms need the task as an object, not a builder function: the score-reading
         // path constructs the request itself.
         GenerativeTask taskObject = GenerativeTask.of(task);
         switch (spec.getMode()) {
             case BM25:
-                return generate.bm25(requireQuery(spec, "BM25"),
-                    b -> bm25Options(b, spec, filter, limit, offset), task);
+                return generate.bm25(WeaviateQueryRequest.requireQuery(spec, "BM25"),
+                    b -> WeaviateQueryRequest.bm25Options(b, spec, filter, limit, offset), task);
             case NEAR_TEXT: {
-                String text = requireQuery(spec, "Near Text");
+                String text = WeaviateQueryRequest.requireQuery(spec, "Near Text");
                 NearText nearText = spec.hasTargets()
-                    ? NearText.of(buildTextTarget(spec, text),
-                        b -> nearTextOptions(b, spec, filter, limit, offset))
+                    ? NearText.of(WeaviateQueryRequest.buildTextTarget(spec, text),
+                        b -> WeaviateQueryRequest.nearTextOptions(b, spec, filter, limit, offset))
                     : NearText.of(text,
-                        b -> nearTextOptions(b, spec, filter, limit, offset));
+                        b -> WeaviateQueryRequest.nearTextOptions(b, spec, filter, limit, offset));
                 return runNearGenerative(generate, nearText, taskObject, spec,
                     () -> generate.nearText(nearText, taskObject));
             }
             case NEAR_VECTOR: {
                 NearVector nearVector = spec.hasTargets()
-                    ? NearVector.of(buildVectorTarget(spec),
-                        b -> nearVectorOptions(b, spec, filter, limit, offset))
-                    : NearVector.of(requireVector(spec),
-                        b -> nearVectorOptions(b, spec, filter, limit, offset));
+                    ? NearVector.of(WeaviateQueryRequest.buildVectorTarget(spec),
+                        b -> WeaviateQueryRequest.nearVectorOptions(b, spec, filter, limit, offset))
+                    : NearVector.of(WeaviateQueryRequest.requireVector(spec),
+                        b -> WeaviateQueryRequest.nearVectorOptions(b, spec, filter, limit, offset));
                 return runNearGenerative(generate, nearVector, taskObject, spec,
                     () -> generate.nearVector(nearVector, taskObject));
             }
             case NEAR_OBJECT: {
-                NearObject nearObject = NearObject.of(requireObjectId(spec),
-                    b -> nearObjectOptions(b, spec, filter, limit, offset));
+                NearObject nearObject = NearObject.of(WeaviateQueryRequest.requireObjectId(spec),
+                    b -> WeaviateQueryRequest.nearObjectOptions(b, spec, filter, limit, offset));
                 return runNearGenerative(generate, nearObject, taskObject, spec,
                     () -> generate.nearObject(nearObject, taskObject));
             }
             case HYBRID: {
-                String text = requireQuery(spec, "Hybrid");
+                String text = WeaviateQueryRequest.requireQuery(spec, "Hybrid");
                 return spec.hasTargets()
-                    ? generate.hybrid(buildTextTarget(spec, text),
-                        b -> hybridOptions(b, spec, filter, limit, offset), task)
+                    ? generate.hybrid(WeaviateQueryRequest.buildTextTarget(spec, text),
+                        b -> WeaviateQueryRequest.hybridOptions(b, spec, filter, limit, offset), task)
                     : generate.hybrid(text,
-                        b -> hybridOptions(b, spec, filter, limit, offset), task);
+                        b -> WeaviateQueryRequest.hybridOptions(b, spec, filter, limit, offset), task);
             }
             case FETCH:
             default:
                 return generate.fetchObjects(
-                    b -> fetchOptions(b, spec, filter, sortBy, limit, offset), task);
+                    b -> WeaviateQueryRequest.fetchOptions(b, spec, filter, sortBy, limit, offset), task);
         }
     }
 
@@ -962,7 +962,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         @Nullable String defaultVectorName,
         @NotNull List<Object[]> rows
     ) {
-        GroupBy groupBy = buildGroupBy(spec.getGroupBy());
+        GroupBy groupBy = WeaviateQueryRequest.buildGroupBy(spec.getGroupBy());
         if (spec.getGenerative() != null) {
             GenerativeResponseGrouped<Map<String, Object>> response =
                 executeGroupedGenerativeQuery(spec, filter, sortBy, limit, offset, groupBy);
@@ -994,12 +994,6 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         }
     }
 
-    @NotNull
-    private static GroupBy buildGroupBy(@NotNull WeaviateGroupBySpec spec) {
-        return GroupBy.property(
-            spec.getProperty(), spec.getMaxGroups(), spec.getMaxObjectsPerGroup());
-    }
-
     /**
      * The grouped twin of {@link #executeQuery}. Every operator has a trailing-{@code GroupBy}
      * overload, so this is the same dispatch with one more argument -- and, like the generative
@@ -1017,45 +1011,45 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         WeaviateQueryClient<Map<String, Object>> query = handle(spec.getTenant()).query;
         switch (spec.getMode()) {
             case BM25:
-                return query.bm25(requireQuery(spec, "BM25"),
-                    b -> bm25Options(b, spec, filter, limit, offset), groupBy);
+                return query.bm25(WeaviateQueryRequest.requireQuery(spec, "BM25"),
+                    b -> WeaviateQueryRequest.bm25Options(b, spec, filter, limit, offset), groupBy);
             case NEAR_TEXT: {
-                String text = requireQuery(spec, "Near Text");
+                String text = WeaviateQueryRequest.requireQuery(spec, "Near Text");
                 NearText nearText = spec.hasTargets()
-                    ? NearText.of(buildTextTarget(spec, text),
-                        b -> nearTextOptions(b, spec, filter, limit, offset))
+                    ? NearText.of(WeaviateQueryRequest.buildTextTarget(spec, text),
+                        b -> WeaviateQueryRequest.nearTextOptions(b, spec, filter, limit, offset))
                     : NearText.of(text,
-                        b -> nearTextOptions(b, spec, filter, limit, offset));
+                        b -> WeaviateQueryRequest.nearTextOptions(b, spec, filter, limit, offset));
                 return runNearGrouped(query, nearText, groupBy, spec,
                     () -> query.nearText(nearText, groupBy));
             }
             case NEAR_VECTOR: {
                 NearVector nearVector = spec.hasTargets()
-                    ? NearVector.of(buildVectorTarget(spec),
-                        b -> nearVectorOptions(b, spec, filter, limit, offset))
-                    : NearVector.of(requireVector(spec),
-                        b -> nearVectorOptions(b, spec, filter, limit, offset));
+                    ? NearVector.of(WeaviateQueryRequest.buildVectorTarget(spec),
+                        b -> WeaviateQueryRequest.nearVectorOptions(b, spec, filter, limit, offset))
+                    : NearVector.of(WeaviateQueryRequest.requireVector(spec),
+                        b -> WeaviateQueryRequest.nearVectorOptions(b, spec, filter, limit, offset));
                 return runNearGrouped(query, nearVector, groupBy, spec,
                     () -> query.nearVector(nearVector, groupBy));
             }
             case NEAR_OBJECT: {
-                NearObject nearObject = NearObject.of(requireObjectId(spec),
-                    b -> nearObjectOptions(b, spec, filter, limit, offset));
+                NearObject nearObject = NearObject.of(WeaviateQueryRequest.requireObjectId(spec),
+                    b -> WeaviateQueryRequest.nearObjectOptions(b, spec, filter, limit, offset));
                 return runNearGrouped(query, nearObject, groupBy, spec,
                     () -> query.nearObject(nearObject, groupBy));
             }
             case HYBRID: {
-                String text = requireQuery(spec, "Hybrid");
+                String text = WeaviateQueryRequest.requireQuery(spec, "Hybrid");
                 return spec.hasTargets()
-                    ? query.hybrid(buildTextTarget(spec, text),
-                        b -> hybridOptions(b, spec, filter, limit, offset), groupBy)
+                    ? query.hybrid(WeaviateQueryRequest.buildTextTarget(spec, text),
+                        b -> WeaviateQueryRequest.hybridOptions(b, spec, filter, limit, offset), groupBy)
                     : query.hybrid(text,
-                        b -> hybridOptions(b, spec, filter, limit, offset), groupBy);
+                        b -> WeaviateQueryRequest.hybridOptions(b, spec, filter, limit, offset), groupBy);
             }
             case FETCH:
             default:
                 return query.fetchObjects(
-                    b -> fetchOptions(b, spec, filter, sortBy, limit, offset), groupBy);
+                    b -> WeaviateQueryRequest.fetchOptions(b, spec, filter, sortBy, limit, offset), groupBy);
         }
     }
 
@@ -1071,39 +1065,39 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
     ) {
         WeaviateGenerateClient<Map<String, Object>> generate = handle(spec.getTenant()).generate;
         Function<GenerativeTask.Builder, ObjectBuilder<GenerativeTask>> task =
-            t -> configureTask(t, spec.getGenerative());
+            t -> WeaviateQueryRequest.configureTask(t, spec.getGenerative());
         GenerativeTask taskObject = GenerativeTask.of(task);
         switch (spec.getMode()) {
             case BM25:
-                return generate.bm25(requireQuery(spec, "BM25"),
-                    b -> bm25Options(b, spec, filter, limit, offset), task, groupBy);
+                return generate.bm25(WeaviateQueryRequest.requireQuery(spec, "BM25"),
+                    b -> WeaviateQueryRequest.bm25Options(b, spec, filter, limit, offset), task, groupBy);
             case NEAR_TEXT: {
-                String text = requireQuery(spec, "Near Text");
+                String text = WeaviateQueryRequest.requireQuery(spec, "Near Text");
                 NearText nearText = spec.hasTargets()
-                    ? NearText.of(buildTextTarget(spec, text),
-                        b -> nearTextOptions(b, spec, filter, limit, offset))
+                    ? NearText.of(WeaviateQueryRequest.buildTextTarget(spec, text),
+                        b -> WeaviateQueryRequest.nearTextOptions(b, spec, filter, limit, offset))
                     : NearText.of(text,
-                        b -> nearTextOptions(b, spec, filter, limit, offset));
+                        b -> WeaviateQueryRequest.nearTextOptions(b, spec, filter, limit, offset));
                 return runNearGroupedGenerative(generate, nearText, taskObject, groupBy, spec,
                     () -> generate.nearText(nearText, taskObject, groupBy));
             }
             case NEAR_VECTOR: {
                 NearVector nearVector = spec.hasTargets()
-                    ? NearVector.of(buildVectorTarget(spec),
-                        b -> nearVectorOptions(b, spec, filter, limit, offset))
-                    : NearVector.of(requireVector(spec),
-                        b -> nearVectorOptions(b, spec, filter, limit, offset));
+                    ? NearVector.of(WeaviateQueryRequest.buildVectorTarget(spec),
+                        b -> WeaviateQueryRequest.nearVectorOptions(b, spec, filter, limit, offset))
+                    : NearVector.of(WeaviateQueryRequest.requireVector(spec),
+                        b -> WeaviateQueryRequest.nearVectorOptions(b, spec, filter, limit, offset));
                 return runNearGroupedGenerative(generate, nearVector, taskObject, groupBy, spec,
                     () -> generate.nearVector(nearVector, taskObject, groupBy));
             }
             case NEAR_OBJECT: {
-                NearObject nearObject = NearObject.of(requireObjectId(spec),
-                    b -> nearObjectOptions(b, spec, filter, limit, offset));
+                NearObject nearObject = NearObject.of(WeaviateQueryRequest.requireObjectId(spec),
+                    b -> WeaviateQueryRequest.nearObjectOptions(b, spec, filter, limit, offset));
                 return runNearGroupedGenerative(generate, nearObject, taskObject, groupBy, spec,
                     () -> generate.nearObject(nearObject, taskObject, groupBy));
             }
             case HYBRID: {
-                String text = requireQuery(spec, "Hybrid");
+                String text = WeaviateQueryRequest.requireQuery(spec, "Hybrid");
                 // Task before options here, options before task everywhere else. That is the
                 // client's own inconsistency, not a slip: the grouped generative hybrid overload
                 // is declared (query, task, options, groupBy) while its ungrouped twin and every
@@ -1111,15 +1105,15 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
                 // are Functions, so only their builder types keep this honest -- swap them and it
                 // stops compiling rather than silently sending a hybrid with no alpha.
                 return spec.hasTargets()
-                    ? generate.hybrid(buildTextTarget(spec, text), task,
-                        b -> hybridOptions(b, spec, filter, limit, offset), groupBy)
+                    ? generate.hybrid(WeaviateQueryRequest.buildTextTarget(spec, text), task,
+                        b -> WeaviateQueryRequest.hybridOptions(b, spec, filter, limit, offset), groupBy)
                     : generate.hybrid(text, task,
-                        b -> hybridOptions(b, spec, filter, limit, offset), groupBy);
+                        b -> WeaviateQueryRequest.hybridOptions(b, spec, filter, limit, offset), groupBy);
             }
             case FETCH:
             default:
                 return generate.fetchObjects(
-                    b -> fetchOptions(b, spec, filter, sortBy, limit, offset), task, groupBy);
+                    b -> WeaviateQueryRequest.fetchOptions(b, spec, filter, sortBy, limit, offset), task, groupBy);
         }
     }
 
@@ -1218,271 +1212,6 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         return response;
     }
 
-    // One options method per mode, shared verbatim by the plain and generative dispatchers.
-    // Concrete builder types throughout: the ancestors carrying the shared setters are
-    // package-private in the client, so there is no common type to abstract over.
-
-    private static Bm25.Builder bm25Options(
-        @NotNull Bm25.Builder b, @NotNull WeaviateQuerySpec spec,
-        @Nullable Filter filter, int limit, int offset
-    ) {
-        applyCommon(b, spec, filter, limit, offset);
-        b.returnMetadata(scoreMetadata(spec));
-        List<String> queryProperties = spec.getQueryProperties();
-        if (!queryProperties.isEmpty()) b.queryProperties(queryProperties);
-        return b;
-    }
-
-    private static NearText.Builder nearTextOptions(
-        @NotNull NearText.Builder b, @NotNull WeaviateQuerySpec spec,
-        @Nullable Filter filter, int limit, int offset
-    ) {
-        applyCommon(b, spec, filter, limit, offset);
-        Rerank rerank = buildRerank(spec);
-        if (rerank != null) b.rerank(rerank);
-        b.returnMetadata(Metadata.DISTANCE);
-        if (spec.getDistance() != null) b.distance(spec.getDistance());
-        return b;
-    }
-
-    private static NearVector.Builder nearVectorOptions(
-        @NotNull NearVector.Builder b, @NotNull WeaviateQuerySpec spec,
-        @Nullable Filter filter, int limit, int offset
-    ) {
-        applyCommon(b, spec, filter, limit, offset);
-        Rerank rerank = buildRerank(spec);
-        if (rerank != null) b.rerank(rerank);
-        b.returnMetadata(Metadata.DISTANCE);
-        if (spec.getDistance() != null) b.distance(spec.getDistance());
-        return b;
-    }
-
-    private static NearObject.Builder nearObjectOptions(
-        @NotNull NearObject.Builder b, @NotNull WeaviateQuerySpec spec,
-        @Nullable Filter filter, int limit, int offset
-    ) {
-        applyCommon(b, spec, filter, limit, offset);
-        Rerank rerank = buildRerank(spec);
-        if (rerank != null) b.rerank(rerank);
-        b.returnMetadata(Metadata.DISTANCE);
-        if (spec.getDistance() != null) b.distance(spec.getDistance());
-        return b;
-    }
-
-    private static Hybrid.Builder hybridOptions(
-        @NotNull Hybrid.Builder b, @NotNull WeaviateQuerySpec spec,
-        @Nullable Filter filter, int limit, int offset
-    ) {
-        applyCommon(b, spec, filter, limit, offset);
-        b.returnMetadata(scoreMetadata(spec));
-        if (spec.getAlpha() != null) b.alpha(spec.getAlpha());
-        if (spec.getFusionType() != null) b.fusionType(spec.getFusionType().toClientType());
-        return b;
-    }
-
-    private static FetchObjects.Builder fetchOptions(
-        @NotNull FetchObjects.Builder b, @NotNull WeaviateQuerySpec spec,
-        @Nullable Filter filter, @NotNull List<SortBy> sortBy, int limit, int offset
-    ) {
-        applyCommon(b, spec, filter, limit, offset);
-        if (!sortBy.isEmpty()) b.sort(sortBy);
-        return b;
-    }
-
-    @NotNull
-    private static float[] requireVector(@NotNull WeaviateQuerySpec spec) {
-        float[] vector = spec.getVector();
-        if (vector == null || vector.length == 0) {
-            throw new IllegalStateException("Near Vector mode requires a non-empty vector");
-        }
-        return vector;
-    }
-
-    /**
-     * Near Vector is handed a vector; Near Object is handed an object id and the server
-     * resolves that object's stored vector itself, so this works even when the reference
-     * object's vector is never returned to the client.
-     */
-    @NotNull
-    private static String requireObjectId(@NotNull WeaviateQuerySpec spec) {
-        String uuid = spec.getObjectId();
-        if (uuid == null || uuid.isBlank()) {
-            throw new IllegalStateException(
-                "Near Object mode requires the UUID of a reference object");
-        }
-        return uuid;
-    }
-
-    /**
-     * The spec's generative task as the client wants it. The provider override only rides along
-     * when one was chosen -- with none sent, the server falls back to the collection's own
-     * generative module, which is the ordinary case.
-     */
-    @NotNull
-    private static ObjectBuilder<GenerativeTask> configureTask(
-        @NotNull GenerativeTask.Builder t,
-        @NotNull WeaviateGenerativeTask spec
-    ) {
-        GenerativeProvider provider = spec.getProvider() == null ? null
-            : spec.getProvider().toClientProvider(
-                spec.getModel(), spec.getTemperature(), spec.getMaxTokens());
-        if (spec.getSinglePrompt() != null) {
-            t.singlePrompt(spec.getSinglePrompt(), sb -> {
-                if (spec.isReturnMetadata()) sb.metadata(true);
-                if (provider != null) sb.generativeProvider(provider);
-                return sb;
-            });
-        }
-        if (spec.getGroupedTask() != null) {
-            t.groupedTask(spec.getGroupedTask(), gb -> {
-                if (!spec.getGroupedProperties().isEmpty()) {
-                    gb.properties(spec.getGroupedProperties());
-                }
-                if (spec.isReturnMetadata()) gb.metadata(true);
-                if (provider != null) gb.generativeProvider(provider);
-                return gb;
-            });
-        }
-        return t;
-    }
-
-    /**
-     * The Target for a text-driven search -- Near Text or Hybrid -- carrying both the query text
-     * and the named vectors to embed it against.
-     * <p>
-     * A single target sends no join strategy: there is nothing to join, and the client's combined
-     * record would insist on one anyway.
-     */
-    @NotNull
-    private static Target buildTextTarget(@NotNull WeaviateQuerySpec spec, @NotNull String text) {
-        List<WeaviateVectorTarget> targets = spec.getTargets();
-        List<String> queries = List.of(text);
-        if (targets.size() == 1) {
-            return new Target.TextTarget(weightOf(targets.get(0)), queries);
-        }
-        List<Target.VectorWeight> weights = new ArrayList<>(targets.size());
-        for (WeaviateVectorTarget target : targets) {
-            weights.add(weightOf(target));
-        }
-        return new Target.CombinedTextTarget(queries, combinationOf(spec), weights);
-    }
-
-    /**
-     * The Target for Near Vector, where each named vector is searched with its own query vector.
-     * Different vector spaces have different shapes, so there is no one vector to share.
-     */
-    @NotNull
-    private static NearVectorTarget buildVectorTarget(@NotNull WeaviateQuerySpec spec) {
-        List<WeaviateVectorTarget> targets = spec.getTargets();
-        List<Target.VectorTarget> vectorTargets = new ArrayList<>(targets.size());
-        for (WeaviateVectorTarget target : targets) {
-            Object vector = target.queryVectorForClient();
-            if (vector == null) {
-                throw new IllegalStateException(
-                    "Near Vector target " + target.getName() + " has no query vector");
-            }
-            vectorTargets.add(new Target.VectorTarget(target.getName(), target.getWeight(), vector));
-        }
-        if (vectorTargets.size() == 1) {
-            return vectorTargets.get(0);
-        }
-        return new Target.CombinedVectorTarget(combinationOf(spec), vectorTargets);
-    }
-
-    @NotNull
-    private static Target.VectorWeight weightOf(@NotNull WeaviateVectorTarget target) {
-        return new Target.VectorWeight(target.getName(), target.getWeight());
-    }
-
-    /**
-     * The spec's rerank request as the client type, or null for none. Attached inline in the
-     * near_* dispatch arms -- only their builders expose rerank in client 6.3.1 (see
-     * {@link WeaviateQueryMode#supportsRerank()}), and their common ancestor carrying the
-     * setter is package-private, so there is no type to write a shared helper against.
-     */
-    @Nullable
-    private static Rerank buildRerank(@NotNull WeaviateQuerySpec spec) {
-        WeaviateRerankSpec rerank = spec.getRerank();
-        if (rerank == null) {
-            return null;
-        }
-        String query = rerank.getQuery();
-        return query == null
-            ? Rerank.by(rerank.getProperty())
-            : Rerank.by(rerank.getProperty(), rb -> rb.query(query));
-    }
-
-    /**
-     * The join strategy to send for a multi-target search. Defaults to MIN, which is what Weaviate
-     * itself falls back to -- the client's combined records require a strategy, so there is no way
-     * to send "unspecified" and let the server decide.
-     */
-    @NotNull
-    private static Target.CombinationMethod combinationOf(@NotNull WeaviateQuerySpec spec) {
-        WeaviateVectorCombination combination = spec.getCombination();
-        return combination == null
-            ? WeaviateVectorCombination.MIN.toClientType()
-            : combination.toClientType();
-    }
-
-    private static <B extends io.weaviate.client6.v1.api.collections.query.BaseQueryOptions.Builder<B, ?>>
-    void applyCommon(
-        @NotNull B b,
-        @NotNull WeaviateQuerySpec spec,
-        @Nullable Filter filter,
-        int limit,
-        int offset
-    ) {
-        if (limit > 0) b.limit(limit);
-        if (offset > 0) b.offset(offset);
-        if (filter != null) b.filters(filter);
-        if (spec.isIncludeVector()) {
-            // Ask for only the targeted vectors when the search names any, so the grid columns
-            // built from the same list in readData are the ones that actually come back.
-            List<String> requested = targetVectorNames(spec);
-            if (requested.isEmpty()) {
-                b.includeVector();
-            } else {
-                b.includeVector(requested);
-            }
-        }
-        // The client calls Weaviate's autocut "autolimit"; the wire field is autocut.
-        Integer autoCut = spec.getAutoCut();
-        if (autoCut != null && autoCut > 0 && spec.getMode().supportsAutoCut()) {
-            b.autolimit(autoCut);
-        }
-        // Opt-in metadata. returnMetadata is additive across calls on the same builder, so this
-        // does not disturb the per-mode SCORE/DISTANCE requests made at the dispatch sites.
-        List<Metadata> extra = extraMetadata(spec);
-        if (!extra.isEmpty()) {
-            b.returnMetadata(extra);
-        }
-    }
-
-    /**
-     * The metadata the user opted into beyond what the mode itself needs, ready to request.
-     * Certainty is gated on the mode: the server derives it from vector distance, so asking for
-     * it elsewhere returns nothing and the flag is simply ignored.
-     */
-    @NotNull
-    private static List<Metadata> extraMetadata(@NotNull WeaviateQuerySpec spec) {
-        List<Metadata> extra = new ArrayList<>(3);
-        if (spec.isWithCreated()) extra.add(Metadata.CREATION_TIME_UNIX);
-        if (spec.isWithUpdated()) extra.add(Metadata.LAST_UPDATE_TIME_UNIX);
-        if (spec.isWithCertainty() && spec.getMode().supportsCertainty()) {
-            extra.add(Metadata.CERTAINTY);
-        }
-        return extra;
-    }
-
-    /**
-     * Whether a rerank score column is offered for this spec.
-     * <p>
-     * Everything here is knowable before the query runs, which is what lets the column be
-     * offered only when it will actually be filled: the search must be reranked, the seam that
-     * reads the score must have resolved, and the read must not be generative -- the generate
-     * client uses its own Rpc, which this does not wrap.
-     */
     /**
      * How {@code propertyName}'s analyzer would split {@code text}.
      * <p>
@@ -1516,83 +1245,6 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
             throw new DBException("Cannot tokenize " + getName() + "." + propertyName
                 + ": " + e.getMessage(), e);
         }
-    }
-
-    private static boolean hasRerankScore(@NotNull WeaviateQuerySpec spec) {
-        if (spec.getRerank() == null) {
-            return false;
-        }
-        // Each path has its own seam, and any can resolve without the others. Grouped is a
-        // separate seam again: a grouped reply carries its objects somewhere else entirely, so
-        // reading a score off one is not the same operation as reading it off a flat reply.
-        if (spec.isGrouped()) {
-            return spec.getGenerative() != null
-                ? WeaviateRerankSupport.isGroupedGenerativeAvailable()
-                : WeaviateRerankSupport.isGroupedAvailable();
-        }
-        return spec.getGenerative() != null
-            ? WeaviateRerankSupport.isGenerativeAvailable()
-            : WeaviateRerankSupport.isAvailable();
-    }
-
-    /**
-     * The declared vectors a query is about: its targets when it names any, all of them otherwise.
-     * A target the collection no longer declares is dropped rather than turned into a blank column.
-     */
-    @NotNull
-    private static List<String> narrowToTargets(
-        @NotNull WeaviateQuerySpec spec,
-        @NotNull List<String> declared
-    ) {
-        List<String> targets = targetVectorNames(spec);
-        if (targets.isEmpty()) {
-            return declared;
-        }
-        List<String> out = new ArrayList<>(targets.size());
-        for (String name : targets) {
-            if (declared.contains(name)) {
-                out.add(name);
-            }
-        }
-        return out;
-    }
-
-    /**
-     * Distinct target names of a spec, in order, or empty when it names none.
-     * <p>
-     * The one rule for which vectors a query is about: readData builds the grid's vector columns
-     * from it and applyCommon asks the server for exactly those. Deriving the two separately is
-     * how columns come to be permanently blank, or data to arrive with nowhere to go.
-     */
-    @NotNull
-    private static List<String> targetVectorNames(@NotNull WeaviateQuerySpec spec) {
-        List<String> names = new ArrayList<>(spec.getTargets().size());
-        for (WeaviateVectorTarget target : spec.getTargets()) {
-            if (!names.contains(target.getName())) {
-                names.add(target.getName());
-            }
-        }
-        return names;
-    }
-
-    /**
-     * Metadata to request for a scored query. The explanation is only asked for when it will be
-     * shown -- producing it is extra server-side work for a column nobody looked at.
-     */
-    @NotNull
-    private static Metadata[] scoreMetadata(@NotNull WeaviateQuerySpec spec) {
-        return spec.isExplainScore()
-            ? new Metadata[]{Metadata.SCORE, Metadata.EXPLAIN_SCORE}
-            : new Metadata[]{Metadata.SCORE};
-    }
-
-    @NotNull
-    private static String requireQuery(@NotNull WeaviateQuerySpec spec, @NotNull String modeLabel) {
-        String text = spec.getQuery();
-        if (text == null || text.isBlank()) {
-            throw new IllegalStateException(modeLabel + " mode requires a query string");
-        }
-        return text;
     }
 
     @Override
@@ -1662,7 +1314,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         if (spec.isWithCertainty() && mode.supportsCertainty() && !groupedMetadata) {
             rs.addColumn(WeaviateColumns.CERTAINTY, DBPDataKind.NUMERIC);
         }
-        if (hasRerankScore(spec)) {
+        if (WeaviateQueryRequest.hasRerankScore(spec)) {
             rs.addColumn(WeaviateColumns.RERANK_SCORE, DBPDataKind.NUMERIC);
         }
         if (spec.isGrouped()) {
@@ -1697,146 +1349,6 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
             return Collections.emptyList();
         }
         return new ArrayList<>(new TreeMap<>(vectors).keySet());
-    }
-
-    @NotNull
-    private static List<SortBy> buildSortBy(
-        @Nullable DBDDataFilter dataFilter,
-        @NotNull List<WeaviateProperty> attributes
-    ) {
-        if (dataFilter == null) {
-            return Collections.emptyList();
-        }
-        List<DBDAttributeConstraint> ordered = new ArrayList<>();
-        for (DBDAttributeConstraint c : dataFilter.getConstraints()) {
-            if (c.getOrderPosition() > 0) {
-                ordered.add(c);
-            }
-        }
-        if (ordered.isEmpty()) {
-            return Collections.emptyList();
-        }
-        ordered.sort((a, b) -> Integer.compare(a.getOrderPosition(), b.getOrderPosition()));
-        List<SortBy> out = new ArrayList<>(ordered.size());
-        for (DBDAttributeConstraint c : ordered) {
-            String name = c.getAttribute() != null ? c.getAttribute().getName() : c.getAttributeName();
-            if (name == null || name.isEmpty()) continue;
-            SortBy sort = mapSortBy(name);
-            out.add(c.isOrderDescending() ? sort.desc() : sort.asc());
-        }
-        return out;
-    }
-
-    @NotNull
-    private static SortBy mapSortBy(@NotNull String name) {
-        if (WeaviateColumns.UUID.equalsIgnoreCase(name)) {
-            return SortBy.uuid();
-        }
-        return SortBy.property(name);
-    }
-
-    @NotNull
-    private static String describeQuery(
-        @NotNull WeaviateQuerySpec spec,
-        @Nullable Filter filter,
-        @NotNull List<SortBy> sortBy,
-        int limit,
-        int offset
-    ) {
-        // Build the argument list first, then join it. The previous version patched up
-        // trailing separators in place and emitted an unbalanced "fetchObjects)" whenever
-        // a FETCH query had no arguments at all.
-        String function;
-        List<String> args = new ArrayList<>();
-        switch (spec.getMode()) {
-            case BM25:
-                function = "bm25";
-                args.add("query=" + quote(spec.getQuery()));
-                break;
-            case NEAR_TEXT:
-                function = "nearText";
-                args.add("query=" + quote(spec.getQuery()));
-                break;
-            case NEAR_VECTOR:
-                function = "nearVector";
-                if (!spec.hasTargets()) {
-                    args.add("dim=" + (spec.getVector() == null ? 0 : spec.getVector().length));
-                }
-                break;
-            case NEAR_OBJECT:
-                function = "nearObject";
-                args.add("id=" + quote(spec.getObjectId()));
-                break;
-            case HYBRID:
-                function = "hybrid";
-                args.add("query=" + quote(spec.getQuery()));
-                if (spec.getAlpha() != null) args.add("alpha=" + spec.getAlpha());
-                break;
-            case FETCH:
-            default:
-                function = "fetchObjects";
-                break;
-        }
-        describeTargets(spec, args);
-        if (spec.getRerank() != null) {
-            args.add("rerank=" + spec.getRerank());
-        }
-        if (spec.isGrouped()) {
-            args.add("groupBy=" + spec.getGroupBy());
-        }
-        WeaviateGenerativeTask generative = spec.getGenerative();
-        if (generative != null) {
-            String kind = generative.getSinglePrompt() != null && generative.getGroupedTask() != null
-                ? "single+grouped"
-                : generative.getSinglePrompt() != null ? "single" : "grouped";
-            args.add("generate=" + kind);
-            if (generative.getProvider() != null) {
-                args.add("provider=" + generative.getProvider().name());
-            }
-        }
-        if (limit > 0) args.add("limit=" + limit);
-        if (offset > 0) args.add("offset=" + offset);
-        if (filter != null) args.add("filter=" + filter);
-        if (!sortBy.isEmpty()) args.add("sort=" + sortBy);
-        return function + "(" + String.join(", ", args) + ")";
-    }
-
-    /**
-     * Add the target vectors and their join strategy to the statement shown in the result tab, so
-     * what is on screen says which vectors were actually searched and how they were weighed.
-     */
-    private static void describeTargets(@NotNull WeaviateQuerySpec spec, @NotNull List<String> args) {
-        if (!spec.hasTargets()) {
-            return;
-        }
-        WeaviateVectorCombination combination = spec.getCombination();
-        boolean weighted = combination != null && combination.usesWeights();
-        List<String> described = new ArrayList<>(spec.getTargets().size());
-        for (WeaviateVectorTarget target : spec.getTargets()) {
-            StringBuilder sb = new StringBuilder(target.getName());
-            // The weight only shows where it does something -- see WeaviateVectorCombination.
-            if (weighted && target.getWeight() != null) {
-                sb.append(':').append(target.getWeight());
-            }
-            if (target.isMulti()) {
-                float[][] multi = target.getMultiVector();
-                sb.append("[").append(multi.length).append('x')
-                    .append(multi.length == 0 ? 0 : multi[0].length).append(']');
-            } else if (target.getVector() != null) {
-                sb.append("[").append(target.getVector().length).append(']');
-            }
-            described.add(sb.toString());
-        }
-        args.add("targets=[" + String.join(", ", described) + "]");
-        // One target is not joined with anything, so naming a strategy would be noise.
-        if (spec.getTargets().size() > 1) {
-            args.add("join=" + (combination == null ? WeaviateVectorCombination.MIN : combination).name());
-        }
-    }
-
-    @NotNull
-    private static String quote(@Nullable String s) {
-        return s == null ? "null" : "\"" + s.replace("\"", "\\\"") + "\"";
     }
 
     /**
