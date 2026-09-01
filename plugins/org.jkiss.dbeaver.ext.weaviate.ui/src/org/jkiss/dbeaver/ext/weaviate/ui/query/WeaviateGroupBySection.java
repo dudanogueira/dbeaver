@@ -160,9 +160,9 @@ public class WeaviateGroupBySection {
      */
     public void syncVisibility() {
         boolean applies = context.currentMode().supportsGroupBy();
-        WeaviateSectionRows.setVisible(groupWhenGrouping, applies && selectedProperty() != null);
-        WeaviateSectionRows.setVisible(groupPropertyRow, applies);
-        WeaviateSectionRows.setVisible(List.of(groupUnavailableLabel), !applies);
+        WeaviateSectionWidgets.setVisible(groupWhenGrouping, applies && selectedProperty() != null);
+        WeaviateSectionWidgets.setVisible(groupPropertyRow, applies);
+        WeaviateSectionWidgets.setVisible(List.of(groupUnavailableLabel), !applies);
         if (groupByGroup != null && !groupByGroup.isDisposed()) {
             groupByGroup.layout(true, true);
         }

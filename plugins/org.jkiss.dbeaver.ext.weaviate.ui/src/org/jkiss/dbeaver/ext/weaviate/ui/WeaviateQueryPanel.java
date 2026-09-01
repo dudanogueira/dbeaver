@@ -46,19 +46,18 @@ import org.eclipse.ui.forms.widgets.ExpandableComposite;
 import org.jkiss.dbeaver.ui.controls.ExpandableCompositeEx;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateFilterSection;
+import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateGenerativeSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateGroupBySection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryBanner;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryPanelContext;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateRerankSection;
-import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateSectionRows;
+import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateSectionWidgets;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateTenantRow;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateFilterRow;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateHybridFusion;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQueryMode;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQuerySpec;
-import org.jkiss.dbeaver.ext.weaviate.model.WeaviateGenerativeProvider;
-import org.jkiss.dbeaver.ext.weaviate.model.WeaviateGenerativeTask;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorCombination;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorParser;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateVectorTarget;
@@ -102,20 +101,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     private final Map<WeaviateQueryMode, Button> includeVectorChecks = new EnumMap<>(WeaviateQueryMode.class);
     /** Rerank section per near_* mode: property picker, optional query, module hint. */
     private final WeaviateRerankSection rerankSection = new WeaviateRerankSection(this);
-    /** Generative section per mode: prompts, provider override, and the grouped-result box. */
-    private final Map<WeaviateQueryMode, Composite> generativeGroups = new EnumMap<>(WeaviateQueryMode.class);
-    private final Map<WeaviateQueryMode, Text> generativeSingleFields = new EnumMap<>(WeaviateQueryMode.class);
-    private final Map<WeaviateQueryMode, Text> generativeGroupedFields = new EnumMap<>(WeaviateQueryMode.class);
-    private final Map<WeaviateQueryMode, org.eclipse.swt.widgets.List> generativePropertyLists = new EnumMap<>(WeaviateQueryMode.class);
-    private final Map<WeaviateQueryMode, Combo> generativeProviderCombos = new EnumMap<>(WeaviateQueryMode.class);
-    private final Map<WeaviateQueryMode, Text> generativeModelFields = new EnumMap<>(WeaviateQueryMode.class);
-    private final Map<WeaviateQueryMode, Text> generativeTemperatureFields = new EnumMap<>(WeaviateQueryMode.class);
-    private final Map<WeaviateQueryMode, Text> generativeMaxTokensFields = new EnumMap<>(WeaviateQueryMode.class);
-    private final Map<WeaviateQueryMode, Button> generativeMetadataChecks = new EnumMap<>(WeaviateQueryMode.class);
-    private final Map<WeaviateQueryMode, Text> generativeResultFields = new EnumMap<>(WeaviateQueryMode.class);
-    /** Section rows revealed once generation is switched on, and once a provider is named. */
-    private final Map<WeaviateQueryMode, List<Control>> generativeWhenGenerating = new EnumMap<>(WeaviateQueryMode.class);
-    private final Map<WeaviateQueryMode, List<Control>> generativeWhenProviderNamed = new EnumMap<>(WeaviateQueryMode.class);
+    private final WeaviateGenerativeSection generativeSection = new WeaviateGenerativeSection(this);
     /** Opt-in metadata checkboxes per mode: created / updated / (near_* only) certainty. */
     private final Map<WeaviateQueryMode, Button> createdChecks = new EnumMap<>(WeaviateQueryMode.class);
     private final Map<WeaviateQueryMode, Button> updatedChecks = new EnumMap<>(WeaviateQueryMode.class);
@@ -273,7 +259,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         tenantRow.refresh();
         refreshTargetSections();
         rerankSection.refresh();
-        refreshGenerativeSections();
+        generativeSection.refresh();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();
@@ -469,7 +455,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         l.setText(WeaviateUIMessages.query_fetch_hint);
         addIncludeVectorField(c, WeaviateQueryMode.FETCH);
         addMetadataFields(c, WeaviateQueryMode.FETCH);
-        addGenerativeField(c, WeaviateQueryMode.FETCH);
+        generativeSection.addTo(c, WeaviateQueryMode.FETCH);
         l.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
         return c;
     }
@@ -496,7 +482,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         addMetadataFields(c, WeaviateQueryMode.BM25);
         addExplainScoreField(c, WeaviateQueryMode.BM25);
         addAutoCutField(c, WeaviateQueryMode.BM25);
-        addGenerativeField(c, WeaviateQueryMode.BM25);
+        generativeSection.addTo(c, WeaviateQueryMode.BM25);
         return c;
     }
 
@@ -520,7 +506,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         addAutoCutField(c, WeaviateQueryMode.NEAR_TEXT);
         addTargetVectorField(c, WeaviateQueryMode.NEAR_TEXT);
         rerankSection.addTo(c, WeaviateQueryMode.NEAR_TEXT);
-        addGenerativeField(c, WeaviateQueryMode.NEAR_TEXT);
+        generativeSection.addTo(c, WeaviateQueryMode.NEAR_TEXT);
         return c;
     }
 
@@ -547,7 +533,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         addAutoCutField(c, WeaviateQueryMode.NEAR_VECTOR);
         addTargetVectorField(c, WeaviateQueryMode.NEAR_VECTOR);
         rerankSection.addTo(c, WeaviateQueryMode.NEAR_VECTOR);
-        addGenerativeField(c, WeaviateQueryMode.NEAR_VECTOR);
+        generativeSection.addTo(c, WeaviateQueryMode.NEAR_VECTOR);
         return c;
     }
 
@@ -571,7 +557,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         addMetadataFields(c, WeaviateQueryMode.NEAR_OBJECT);
         addAutoCutField(c, WeaviateQueryMode.NEAR_OBJECT);
         rerankSection.addTo(c, WeaviateQueryMode.NEAR_OBJECT);
-        addGenerativeField(c, WeaviateQueryMode.NEAR_OBJECT);
+        generativeSection.addTo(c, WeaviateQueryMode.NEAR_OBJECT);
         return c;
     }
 
@@ -634,7 +620,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         addExplainScoreField(c, WeaviateQueryMode.HYBRID);
         addAutoCutField(c, WeaviateQueryMode.HYBRID);
         addTargetVectorField(c, WeaviateQueryMode.HYBRID);
-        addGenerativeField(c, WeaviateQueryMode.HYBRID);
+        generativeSection.addTo(c, WeaviateQueryMode.HYBRID);
         return c;
     }
 
@@ -770,299 +756,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         targetRowUis.put(mode, new ArrayList<>());
     }
 
-    /**
-     * Adds the Generative section to a mode's field panel. Every mode gets one -- the generate
-     * client mirrors every query operator, a plain fetch included.
-     */
-    private void addGenerativeField(@NotNull Composite c, @NotNull WeaviateQueryMode mode) {
-        Composite group = createSection(
-            c, WeaviateUIMessages.query_generative, "generative." + mode.name(), 2, false);
-        group.setToolTipText(WeaviateUIMessages.query_generative_tip);
-        ((GridData) group.getParent().getLayoutData()).horizontalSpan = 2;
-
-        // The provider leads, and doubles as the section's on/off switch: with "(no generation)"
-        // selected there is nothing to prompt, so the rest of the section is not merely disabled
-        // but absent. Choosing anything reveals it.
-        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_generative_provider);
-        Combo providerCombo = new Combo(group, SWT.READ_ONLY);
-        providerCombo.setLayoutData(fillFieldData());
-        providerCombo.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                syncGenerativeVisibility(mode);
-                updateGenerativeCount(mode);
-            }
-        });
-
-        // Shown whenever generation is on at all.
-        List<Control> whenGenerating = new ArrayList<>();
-        Label singleLabel = new Label(group, SWT.NONE);
-        singleLabel.setText(WeaviateUIMessages.query_generative_single);
-        Text singleField = new Text(group, SWT.BORDER);
-        singleField.setLayoutData(fillFieldData());
-        singleField.setMessage(WeaviateUIMessages.query_generative_single_hint);
-        singleField.addListener(SWT.Modify, e -> updateGenerativeCount(mode));
-        whenGenerating.add(singleLabel);
-        whenGenerating.add(singleField);
-
-        Label groupedLabel = new Label(group, SWT.NONE);
-        groupedLabel.setText(WeaviateUIMessages.query_generative_grouped);
-        Text groupedField = new Text(group, SWT.BORDER);
-        groupedField.setLayoutData(fillFieldData());
-        groupedField.setMessage(WeaviateUIMessages.query_generative_grouped_hint);
-        groupedField.addListener(SWT.Modify, e -> updateGenerativeCount(mode));
-        whenGenerating.add(groupedLabel);
-        whenGenerating.add(groupedField);
-
-        Label propsLabel = new Label(group, SWT.NONE);
-        propsLabel.setText(WeaviateUIMessages.query_generative_properties);
-        propsLabel.setLayoutData(labelTopData());
-        org.eclipse.swt.widgets.List propertyList =
-            new org.eclipse.swt.widgets.List(group, SWT.MULTI | SWT.BORDER | SWT.V_SCROLL);
-        GridData plGd = new GridData(SWT.FILL, SWT.FILL, true, false);
-        plGd.heightHint = 60;
-        propertyList.setLayoutData(plGd);
-        propertyList.setToolTipText(WeaviateUIMessages.query_generative_properties_tip);
-        whenGenerating.add(propsLabel);
-        whenGenerating.add(propertyList);
-
-        // Shown only for a named provider: with the collection default the server never sees
-        // these, so they would be three boxes whose values go nowhere.
-        List<Control> whenProviderNamed = new ArrayList<>();
-        Label modelLabel = new Label(group, SWT.NONE);
-        modelLabel.setText(WeaviateUIMessages.query_generative_model);
-        Text modelField = new Text(group, SWT.BORDER);
-        modelField.setLayoutData(fillFieldData());
-        whenProviderNamed.add(modelLabel);
-        whenProviderNamed.add(modelField);
-
-        Label temperatureLabel = new Label(group, SWT.NONE);
-        temperatureLabel.setText(WeaviateUIMessages.query_generative_temperature);
-        Text temperatureField = new Text(group, SWT.BORDER);
-        temperatureField.setLayoutData(fillFieldData());
-        whenProviderNamed.add(temperatureLabel);
-        whenProviderNamed.add(temperatureField);
-
-        Label maxTokensLabel = new Label(group, SWT.NONE);
-        maxTokensLabel.setText(WeaviateUIMessages.query_generative_max_tokens);
-        Text maxTokensField = new Text(group, SWT.BORDER);
-        maxTokensField.setLayoutData(fillFieldData());
-        whenProviderNamed.add(maxTokensLabel);
-        whenProviderNamed.add(maxTokensField);
-
-        Label metadataSpacer = new Label(group, SWT.NONE);
-        metadataSpacer.setText("");
-        Button metadataCheck = new Button(group, SWT.CHECK);
-        metadataCheck.setText(WeaviateUIMessages.query_generative_metadata);
-        metadataCheck.setToolTipText(WeaviateUIMessages.query_generative_metadata_tip);
-        whenGenerating.add(metadataSpacer);
-        whenGenerating.add(metadataCheck);
-
-        Label resultLabel = new Label(group, SWT.NONE);
-        resultLabel.setText(WeaviateUIMessages.query_generative_grouped_result);
-        resultLabel.setLayoutData(labelTopData());
-        // Read-only rather than disabled: disabled text cannot be selected or copied, and
-        // copying the generated answer out is half the point of showing it.
-        Text resultField = new Text(group, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL | SWT.READ_ONLY);
-        GridData rfGd = new GridData(SWT.FILL, SWT.FILL, true, false);
-        rfGd.heightHint = 60;
-        resultField.setLayoutData(rfGd);
-        whenGenerating.add(resultLabel);
-        whenGenerating.add(resultField);
-
-        generativeGroups.put(mode, group);
-        generativeSingleFields.put(mode, singleField);
-        generativeGroupedFields.put(mode, groupedField);
-        generativePropertyLists.put(mode, propertyList);
-        generativeProviderCombos.put(mode, providerCombo);
-        generativeModelFields.put(mode, modelField);
-        generativeTemperatureFields.put(mode, temperatureField);
-        generativeMaxTokensFields.put(mode, maxTokensField);
-        generativeMetadataChecks.put(mode, metadataCheck);
-        generativeResultFields.put(mode, resultField);
-        generativeWhenGenerating.put(mode, whenGenerating);
-        generativeWhenProviderNamed.put(mode, whenProviderNamed);
-        syncGenerativeVisibility(mode);
-    }
-
-    /**
-     * Refill the provider dropdowns and property lists from the collection the panel is bound
-     * to. The first provider entry is the collection's own generative module, named so the
-     * default is a visible choice rather than a blank.
-     */
-    private void refreshGenerativeSections() {
-        WeaviateCollection collection = currentCollection();
-        String moduleKind = null;
-        if (collection != null) {
-            try {
-                moduleKind = collection.getGenerativeModuleKind();
-            } catch (Exception e) {
-                log.debug("Failed to read the generative module", e);
-            }
-        }
-        String defaultEntry = moduleKind == null
-            ? WeaviateUIMessages.query_generative_provider_default_none
-            : NLS.bind(WeaviateUIMessages.query_generative_provider_default, moduleKind);
-        List<String> properties = currentPropertyNames();
-        for (WeaviateQueryMode mode : generativeProviderCombos.keySet()) {
-            Combo combo = generativeProviderCombos.get(mode);
-            if (combo == null || combo.isDisposed()) {
-                continue;
-            }
-            int selected = combo.getSelectionIndex();
-            combo.removeAll();
-            combo.add(WeaviateUIMessages.query_generative_provider_none);
-            combo.add(defaultEntry);
-            for (WeaviateGenerativeProvider provider : WeaviateGenerativeProvider.values()) {
-                combo.add(provider.getLabel());
-            }
-            combo.select(Math.max(0, selected));
-            org.eclipse.swt.widgets.List list = generativePropertyLists.get(mode);
-            if (list != null && !list.isDisposed()) {
-                List<String> keep = List.of(list.getSelection());
-                list.removeAll();
-                for (String name : properties) {
-                    list.add(name);
-                }
-                for (String name : keep) {
-                    int idx = list.indexOf(name);
-                    if (idx >= 0) list.select(idx);
-                }
-            }
-            syncGenerativeVisibility(mode);
-            updateGenerativeCount(mode);
-        }
-    }
-
-    /**
-     * Reveal as much of the section as the provider choice justifies.
-     * <p>
-     * Hidden rather than disabled: with no generation chosen there is nothing to prompt, and a
-     * column of greyed-out boxes reads as broken rather than as not-applicable. The rows keep
-     * their contents while hidden, so flipping the provider back brings the prompts with it.
-     */
-    private void syncGenerativeVisibility(@NotNull WeaviateQueryMode mode) {
-        int idx = providerIndex(mode);
-        WeaviateSectionRows.setVisible(generativeWhenGenerating.get(mode), idx > 0);
-        WeaviateSectionRows.setVisible(generativeWhenProviderNamed.get(mode), idx > 1);
-        Composite group = generativeGroups.get(mode);
-        if (group != null && !group.isDisposed()) {
-            group.layout(true, true);
-        }
-        reflow();
-    }
-
-    private int providerIndex(@NotNull WeaviateQueryMode mode) {
-        Combo combo = generativeProviderCombos.get(mode);
-        if (combo == null || combo.isDisposed()) {
-            return 0;
-        }
-        return Math.max(0, combo.getSelectionIndex());
-    }
-
-    /**
-     * The chosen provider override, or null for both "no generation" and "collection default" --
-     * neither sends one. Use {@link #providerIndex} to tell those two apart.
-     */
-    @Nullable
-    private WeaviateGenerativeProvider selectedGenerativeProvider(@NotNull WeaviateQueryMode mode) {
-        int idx = providerIndex(mode);
-        return idx <= 1 ? null : WeaviateGenerativeProvider.values()[idx - 2];
-    }
-
-    /** Count = prompts filled in (0-2), so the folded title says whether anything will generate. */
-    private void updateGenerativeCount(@NotNull WeaviateQueryMode mode) {
-        if (providerIndex(mode) == 0) {
-            setSectionCount(generativeGroups.get(mode), WeaviateUIMessages.query_generative, 0);
-            return;
-        }
-        int count = 0;
-        Text single = generativeSingleFields.get(mode);
-        Text grouped = generativeGroupedFields.get(mode);
-        if (single != null && !single.isDisposed() && !single.getText().isBlank()) count++;
-        if (grouped != null && !grouped.isDisposed() && !grouped.getText().isBlank()) count++;
-        setSectionCount(generativeGroups.get(mode), WeaviateUIMessages.query_generative, count);
-    }
-
-    /**
-     * The generative task the current mode's section describes, or null for none.
-     *
-     * @throws IllegalArgumentException with a banner message for a half-configured task, so a
-     *                                  request that cannot mean what it says is never sent
-     */
-    @Nullable
-    private WeaviateGenerativeTask currentGenerative(@NotNull WeaviateQueryMode mode) {
-        Text singleField = generativeSingleFields.get(mode);
-        Text groupedField = generativeGroupedFields.get(mode);
-        if (singleField == null || singleField.isDisposed()
-            || groupedField == null || groupedField.isDisposed()
-        ) {
-            return null;
-        }
-        if (providerIndex(mode) == 0) {
-            // Generation switched off. The prompt fields are hidden but keep their text, so this
-            // is deliberate rather than a half-filled state worth complaining about.
-            return null;
-        }
-        String single = singleField.getText();
-        String grouped = groupedField.getText();
-        org.eclipse.swt.widgets.List propertyList = generativePropertyLists.get(mode);
-        List<String> groupedProperties = propertyList == null || propertyList.isDisposed()
-            ? Collections.emptyList() : List.of(propertyList.getSelection());
-        WeaviateGenerativeProvider provider = selectedGenerativeProvider(mode);
-        String model = textOf(generativeModelFields.get(mode));
-        String temperatureRaw = textOf(generativeTemperatureFields.get(mode));
-        String maxTokensRaw = textOf(generativeMaxTokensFields.get(mode));
-
-        if (single.isBlank() && grouped.isBlank()) {
-            // Nothing to generate. Leftover provider params are fine -- they cost nothing --
-            // but selected task properties suggest a grouped task someone forgot to type.
-            if (!groupedProperties.isEmpty()) {
-                throw new IllegalArgumentException(
-                    WeaviateUIMessages.query_generative_props_without_grouped);
-            }
-            return null;
-        }
-        if (grouped.isBlank() && !groupedProperties.isEmpty()) {
-            throw new IllegalArgumentException(
-                WeaviateUIMessages.query_generative_props_without_grouped);
-        }
-        Float temperature = null;
-        if (!temperatureRaw.isBlank()) {
-            try {
-                temperature = Float.parseFloat(temperatureRaw.strip());
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException(
-                    NLS.bind(WeaviateUIMessages.query_generative_invalid_temperature, temperatureRaw));
-            }
-        }
-        Integer maxTokens = null;
-        if (!maxTokensRaw.isBlank()) {
-            try {
-                maxTokens = Integer.parseInt(maxTokensRaw.strip());
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException(
-                    NLS.bind(WeaviateUIMessages.query_generative_invalid_max_tokens, maxTokensRaw));
-            }
-        }
-        Button metadataCheck = generativeMetadataChecks.get(mode);
-        return WeaviateGenerativeTask.builder()
-            .singlePrompt(single)
-            .groupedTask(grouped)
-            .groupedProperties(groupedProperties)
-            .provider(provider)
-            .model(model)
-            .temperature(temperature)
-            .maxTokens(maxTokens)
-            .returnMetadata(metadataCheck != null && !metadataCheck.isDisposed()
-                && metadataCheck.getSelection())
-            .build();
-    }
-
-    @NotNull
-    private static String textOf(@Nullable Text field) {
-        return field == null || field.isDisposed() || field.getText() == null ? "" : field.getText();
-    }
 
     /**
      * Show the target-vector section only where there is a choice to make: a collection declaring
@@ -1445,17 +1138,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
             if (spinner != null && !spinner.isDisposed()) {
                 spinner.setSelection(spec.getAutoCut() == null ? 0 : spec.getAutoCut());
             }
-            setCheck(explainScoreChecks.get(mode), spec.isExplainScore());
-            setCheck(includeVectorChecks.get(mode), spec.isIncludeVector());
-            setCheck(createdChecks.get(mode), spec.isWithCreated());
-            setCheck(updatedChecks.get(mode), spec.isWithUpdated());
-            setCheck(certaintyChecks.get(mode), spec.isWithCertainty());
-        }
-    }
-
-    private static void setCheck(@Nullable Button check, boolean selected) {
-        if (check != null && !check.isDisposed()) {
-            check.setSelection(selected);
+            WeaviateSectionWidgets.setChecked(explainScoreChecks.get(mode), spec.isExplainScore());
+            WeaviateSectionWidgets.setChecked(includeVectorChecks.get(mode), spec.isIncludeVector());
+            WeaviateSectionWidgets.setChecked(createdChecks.get(mode), spec.isWithCreated());
+            WeaviateSectionWidgets.setChecked(updatedChecks.get(mode), spec.isWithUpdated());
+            WeaviateSectionWidgets.setChecked(certaintyChecks.get(mode), spec.isWithCertainty());
         }
     }
 
@@ -1478,68 +1165,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     }
 
 
-    /**
-     * Show the last grouped-task output in the current mode's result box. One text for the whole
-     * result set, so it has no row to live on -- the section is where the task was written, and
-     * where its answer is read.
-     */
-    private void refreshGenerativeResult() {
-        WeaviateCollection collection = currentCollection();
-        String text = collection == null ? null : collection.getLastGenerativeGroupedResult();
-        Text resultField = generativeResultFields.get(currentMode());
-        if (resultField != null && !resultField.isDisposed()) {
-            resultField.setText(text == null ? "" : text);
-        }
-    }
-
-    private void loadGenerativeIntoUi(@NotNull WeaviateQuerySpec spec) {
-        WeaviateGenerativeTask task = spec.getGenerative();
-        for (WeaviateQueryMode mode : generativeSingleFields.keySet()) {
-            loadGenerativeIntoUi(mode, task);
-        }
-    }
-
-    private void loadGenerativeIntoUi(@NotNull WeaviateQueryMode mode, @Nullable WeaviateGenerativeTask task) {
-        Text singleField = generativeSingleFields.get(mode);
-        if (singleField == null || singleField.isDisposed()) {
-            return;
-        }
-        singleField.setText(task == null || task.getSinglePrompt() == null ? "" : task.getSinglePrompt());
-        Text groupedField = generativeGroupedFields.get(mode);
-        if (groupedField != null && !groupedField.isDisposed()) {
-            groupedField.setText(task == null || task.getGroupedTask() == null ? "" : task.getGroupedTask());
-        }
-        org.eclipse.swt.widgets.List propertyList = generativePropertyLists.get(mode);
-        if (propertyList != null && !propertyList.isDisposed()) {
-            propertyList.deselectAll();
-            if (task != null) {
-                for (String name : task.getGroupedProperties()) {
-                    int idx = propertyList.indexOf(name);
-                    if (idx >= 0) propertyList.select(idx);
-                }
-            }
-        }
-        Combo providerCombo = generativeProviderCombos.get(mode);
-        if (providerCombo != null && !providerCombo.isDisposed()) {
-            WeaviateGenerativeProvider provider = task == null ? null : task.getProvider();
-            int idx = task == null ? 0 : provider == null ? 1 : provider.ordinal() + 2;
-            providerCombo.select(idx);
-        }
-        setFieldText(generativeModelFields.get(mode), task == null ? null : task.getModel());
-        setFieldText(generativeTemperatureFields.get(mode),
-            task == null || task.getTemperature() == null ? null : task.getTemperature().toString());
-        setFieldText(generativeMaxTokensFields.get(mode),
-            task == null || task.getMaxTokens() == null ? null : task.getMaxTokens().toString());
-        setCheck(generativeMetadataChecks.get(mode), task != null && task.isReturnMetadata());
-        syncGenerativeVisibility(mode);
-        updateGenerativeCount(mode);
-    }
-
-    private static void setFieldText(@Nullable Text field, @Nullable String value) {
-        if (field != null && !field.isDisposed()) {
-            field.setText(value == null ? "" : value);
-        }
-    }
 
     private void loadSpecIntoUi() {
         WeaviateCollection collection = currentCollection();
@@ -1552,7 +1177,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         loadAutoCutIntoUi(spec);
         loadTargetsIntoUi(spec);
         rerankSection.loadFrom(spec);
-        loadGenerativeIntoUi(spec);
+        generativeSection.loadFrom(spec);
         groupBySection.loadFrom(spec);
 
 
@@ -1719,7 +1344,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
             .explainScore(currentExplainScore())
             .includeVector(currentIncludeVector())
             .rerank(rerankSection.currentRerank(mode))
-            .generative(currentGenerative(mode))
+            .generative(generativeSection.currentGenerative(mode))
             .withCreated(currentCheck(createdChecks))
             .withUpdated(currentCheck(updatedChecks))
             .withCertainty(currentCheck(certaintyChecks))
@@ -1796,7 +1421,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     }
 
     private void refreshStatusFromCollection() {
-        refreshGenerativeResult();
+        generativeSection.refreshResult();
         WeaviateCollection collection = currentCollection();
         if (collection == null) {
             banner.hide();
@@ -1830,7 +1455,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         tenantRow.refresh();
         refreshTargetSections();
         rerankSection.refresh();
-        refreshGenerativeSections();
+        generativeSection.refresh();
         loadSpecIntoUi();
         updateFieldVisibility();
         refreshStatusFromCollection();
@@ -1852,7 +1477,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         tenantRow.refresh();
         refreshTargetSections();
         rerankSection.refresh();
-        refreshGenerativeSections();
+        generativeSection.refresh();
         // refreshTenants ran before the read completed the first time round, so re-sync after.
         tenantRow.syncSelection();
         loadSpecIntoUi();

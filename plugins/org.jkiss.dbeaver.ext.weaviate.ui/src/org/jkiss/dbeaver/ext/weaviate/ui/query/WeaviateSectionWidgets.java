@@ -17,22 +17,40 @@
 package org.jkiss.dbeaver.ext.weaviate.ui.query;
 
 import org.eclipse.swt.layout.GridData;
+import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Text;
 import org.jkiss.code.Nullable;
 
 import java.util.List;
 
 /**
- * Showing and hiding rows inside a section.
+ * Null- and dispose-safe access to the widgets inside a section.
+ * <p>
+ * Sections load themselves from a spec that may be missing any given value, and they do it after
+ * a mode switch may already have disposed a composite, so every one of these would otherwise be
+ * written as a two-line guard at each call site.
  * <p>
  * Visibility alone is not enough: an invisible control still occupies its grid cell, so a hidden
  * row would leave a blank gap the size of the controls nobody can see. Setting {@code exclude}
  * takes it out of the layout as well, which is what makes a section shrink rather than go blank.
  */
-public final class WeaviateSectionRows {
+public final class WeaviateSectionWidgets {
 
-    private WeaviateSectionRows() {
+    private WeaviateSectionWidgets() {
         // Utility class.
+    }
+
+    public static void setText(@Nullable Text field, @Nullable String value) {
+        if (field != null && !field.isDisposed()) {
+            field.setText(value == null ? "" : value);
+        }
+    }
+
+    public static void setChecked(@Nullable Button check, boolean selected) {
+        if (check != null && !check.isDisposed()) {
+            check.setSelection(selected);
+        }
     }
 
     public static void setVisible(@Nullable List<Control> rows, boolean visible) {
