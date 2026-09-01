@@ -51,6 +51,18 @@ public enum WeaviateServerFeature {
     // -- Replication
     REPLICATION_DELETION_STRATEGY(1, 28, 0),
     REPLICATION_ASYNC_ENABLED(1, 29, 0),
+    /**
+     * Moving a shard replica between nodes.
+     * <p>
+     * Gated at 1.32 rather than 1.31, when the endpoints first appeared, because 1.32 renamed the
+     * whole wire model -- shardId to shard, sourceNodeId to sourceNode, targetNodeId to
+     * targetNode, transferType to type -- and added the uncancelable, scheduledForCancel and
+     * scheduledForDelete flags this plugin decides what to offer from. Against 1.31 the responses
+     * would parse into blanks.
+     */
+    REPLICA_MOVEMENT(1, 32, 0),
+    /** The INTEGRATING state, between FINALIZING and READY. */
+    REPLICATION_INTEGRATING_STATE(1, 38, 0),
 
     // -- Vector index types and compression
     DYNAMIC_INDEX_TYPE(1, 25, 0),
