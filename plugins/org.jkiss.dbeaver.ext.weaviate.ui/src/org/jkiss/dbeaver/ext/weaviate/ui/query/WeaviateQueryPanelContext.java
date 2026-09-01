@@ -16,8 +16,13 @@
  */
 package org.jkiss.dbeaver.ext.weaviate.ui.query;
 
+import org.eclipse.swt.widgets.Composite;
+import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQueryMode;
+
+import java.util.List;
 
 /**
  * What a piece of the Query panel is allowed to ask of the panel around it.
@@ -48,4 +53,39 @@ public interface WeaviateQueryPanelContext {
 
     /** Run the query as it currently stands, as if Run had been pressed. */
     void runQuery();
+
+    /** The mode the panel is currently showing. */
+    @NotNull
+    WeaviateQueryMode currentMode();
+
+    /** Property names of the current collection, or empty when there is none. */
+    @NotNull
+    List<String> currentPropertyNames();
+
+    /**
+     * Re-measure the scrolled content after something changed height.
+     * <p>
+     * The one way a section may affect layout beyond its own composite. It lays out the content,
+     * recomputes the scroller's minimum size at the current client width, then lays out the parent.
+     */
+    void reflow();
+
+    /**
+     * Build a foldable section and return the client composite to fill.
+     * <p>
+     * Only here, never re-implemented: it seeds the stored expansion state before handing over the
+     * persistence key. {@code setPersistenceKey} restores whatever is on file and an absent
+     * setting reads as false, so a section created expanded would otherwise collapse itself the
+     * instant it became persistent.
+     */
+    @NotNull
+    Composite createSection(
+        @NotNull Composite parent,
+        @NotNull String title,
+        @NotNull String persistKey,
+        int columns,
+        boolean expandedByDefault);
+
+    /** Put a count in a section's title, or drop it when the count is zero. */
+    void setSectionCount(@Nullable Composite client, @NotNull String title, int count);
 }
