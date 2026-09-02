@@ -24,29 +24,40 @@ import org.jkiss.code.Nullable;
  * Maximal Marginal Relevance: spread the results out instead of returning near-duplicates.
  * <p>
  * A plain vector search answers "what is closest", which on a corpus with repetitive content
- * returns the same thing several times over. MMR re-picks from a wider candidate pool, trading a
- * little relevance for results that differ from each other.
+ * returns the same thing several times over. MMR re-picks from the candidates, trading a little
+ * relevance for results that differ from each other.
+ * <p>
+ * <b>The query's own limit is the candidate pool.</b> MMR chooses {@code limit} results out of the
+ * rows the search would otherwise have returned, so it can only do something when the read fetches
+ * more rows than MMR returns. Measured against a 13-row fixture: fetching 13 and asking MMR for 5
+ * gives one row from each cluster, while fetching 5 and asking MMR for 5 gives the same five
+ * near-duplicates in a different order -- there was nothing left to choose from. The server
+ * refuses the inverse outright: <em>MMR limit (13) cannot be larger than the query limit (5)</em>.
  * <p>
  * Vector modes only, plus hybrid -- it re-ranks by vector distance between candidates, so there is
  * nothing for it to do on a pure keyword search. See
  * {@link WeaviateQueryMode#supportsDiversity()}.
  *
- * @param candidates how many results to consider before picking, or null for the server's
- *                   default. Must be at least the query's limit to change anything: MMR chooses
- *                   from this pool, so a pool the size of the result set leaves nothing to choose
- * @param balance    0 favours diversity, 1 favours relevance, or null for the server's default
+ * @param limit   how many results to return after diversifying. Required: the server answers
+ *                <em>MMR limit must be at least 1</em> if it is left out
+ * @param balance 0 for maximum diversity, 1 for pure relevance -- at 1 the results are the ones
+ *                the search would have returned anyway. Null leaves it to the server
  */
-public record WeaviateDiversitySpec(@Nullable Integer candidates, @Nullable Float balance) {
+public record WeaviateDiversitySpec(int limit, @Nullable Float balance) {
 
-    /** Neither field set: MMR on, entirely with the server's own defaults. */
-    public static final WeaviateDiversitySpec DEFAULTS = new WeaviateDiversitySpec(null, null);
+    /** The server's own floor; anything below it is refused rather than defaulted. */
+    public static final int MIN_LIMIT = 1;
+
+    public WeaviateDiversitySpec {
+        if (limit < MIN_LIMIT) {
+            throw new IllegalArgumentException("MMR limit must be at least " + MIN_LIMIT);
+        }
+    }
 
     @NotNull
     public Diversity toClientType() {
         return Diversity.mmr(b -> {
-            if (candidates != null && candidates > 0) {
-                b.limit(candidates);
-            }
+            b.limit(limit);
             if (balance != null) {
                 b.balance(balance);
             }

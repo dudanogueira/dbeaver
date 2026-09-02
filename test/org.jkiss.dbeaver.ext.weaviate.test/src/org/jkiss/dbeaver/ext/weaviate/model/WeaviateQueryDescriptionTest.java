@@ -118,15 +118,15 @@ public class WeaviateQueryDescriptionTest extends DBeaverUnitTest {
 
     @Test
     public void mmrRendersOnlyTheFieldsThatWereSet() {
+        // The limit is required, so it is always rendered; balance is not.
         WeaviateQuerySpec bare = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_TEXT)
-            .query("dog").diversity(WeaviateDiversitySpec.DEFAULTS).build();
-        Assertions.assertTrue(describe(bare).contains("mmr"), describe(bare));
-        Assertions.assertFalse(describe(bare).contains("mmr("), describe(bare));
+            .query("dog").diversity(new WeaviateDiversitySpec(5, null)).build();
+        Assertions.assertTrue(describe(bare).contains("mmr(limit=5)"), describe(bare));
 
         WeaviateQuerySpec tuned = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_TEXT)
-            .query("dog").diversity(new WeaviateDiversitySpec(100, 0.5f)).build();
+            .query("dog").diversity(new WeaviateDiversitySpec(5, 0.5f)).build();
         Assertions.assertTrue(
-            describe(tuned).contains("mmr(candidates=100, balance=0.5)"), describe(tuned));
+            describe(tuned).contains("mmr(limit=5, balance=0.5)"), describe(tuned));
     }
 
     @Test

@@ -163,14 +163,22 @@ public class WeaviateQueryRequestTest extends DBeaverUnitTest {
     }
 
     @Test
+    public void mmrRefusesALimitBelowOne() {
+        // The server answers "MMR limit must be at least 1" rather than defaulting, so a spec
+        // that could only produce that error is rejected where it is built.
+        Assertions.assertThrows(IllegalArgumentException.class,
+            () -> new WeaviateDiversitySpec(0, null));
+    }
+
+    @Test
     public void diversityIsDroppedOnAModeThatCannotDiversify() {
-        WeaviateQuerySpec vector = near().diversity(WeaviateDiversitySpec.DEFAULTS).build();
+        WeaviateQuerySpec vector = near().diversity(new WeaviateDiversitySpec(5, null)).build();
         Assertions.assertNotNull(vector.getDiversity());
         Assertions.assertNotNull(WeaviateQueryRequest.diversity(vector));
 
         // BM25 ranks by term relevance; there is no distance between candidates to spread out on.
         WeaviateQuerySpec keyword = WeaviateQuerySpec.builder(WeaviateQueryMode.BM25)
-            .query("shoes").diversity(WeaviateDiversitySpec.DEFAULTS).build();
+            .query("shoes").diversity(new WeaviateDiversitySpec(5, null)).build();
         Assertions.assertNull(keyword.getDiversity());
         Assertions.assertNull(WeaviateQueryRequest.diversity(keyword));
     }

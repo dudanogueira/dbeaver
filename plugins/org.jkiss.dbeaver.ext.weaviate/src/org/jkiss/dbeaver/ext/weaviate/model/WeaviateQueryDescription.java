@@ -109,9 +109,9 @@ final class WeaviateQueryDescription {
         WeaviateDiversitySpec diversity = spec.getDiversity();
         if (diversity != null) {
             List<String> mmr = new ArrayList<>(2);
-            if (diversity.candidates() != null) mmr.add("candidates=" + diversity.candidates());
+            mmr.add("limit=" + diversity.limit());
             if (diversity.balance() != null) mmr.add("balance=" + diversity.balance());
-            args.add("mmr" + (mmr.isEmpty() ? "" : "(" + String.join(", ", mmr) + ")"));
+            args.add("mmr(" + String.join(", ", mmr) + ")");
         }
         // Named even though it changes nothing about which rows come back: it changes what the
         // server does, and a log line that hides that makes two different queries look identical.
