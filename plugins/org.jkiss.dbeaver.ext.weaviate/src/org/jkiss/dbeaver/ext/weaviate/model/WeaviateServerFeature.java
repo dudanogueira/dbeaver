@@ -64,6 +64,16 @@ public enum WeaviateServerFeature {
     /** The INTEGRATING state, between FINALIZING and READY. */
     REPLICATION_INTEGRATING_STATE(1, 38, 0),
 
+    // -- Aliases
+    /**
+     * Alternate names for a collection.
+     * <p>
+     * Rarely load-bearing as a gate: the bundled client hard-codes a minimum supported server of
+     * 1.32 and refuses to connect below it. Recorded here anyway, because a version literal in the
+     * navigator registration is exactly what this enum exists to prevent.
+     */
+    ALIASES(1, 32, 0),
+
     // -- Vector index types and compression
     DYNAMIC_INDEX_TYPE(1, 25, 0),
     /** Cluster-based index with built-in RQ compression; preview. */

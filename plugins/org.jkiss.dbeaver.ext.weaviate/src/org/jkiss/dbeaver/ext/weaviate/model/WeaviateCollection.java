@@ -411,6 +411,22 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
     }
 
     /**
+     * The aliases that resolve to this collection.
+     * <p>
+     * A filtered view of the connection-wide list rather than a second one: an alias belongs to
+     * the server, and two caches for the same objects can disagree. The datasource holds the cache
+     * -- see {@code WeaviateAliases#forCollection} for why the filtering is done here rather than
+     * asked of the server.
+     */
+    @NotNull
+    @Association
+    public List<WeaviateAlias> getAliases(@NotNull DBRProgressMonitor monitor) throws DBException {
+        return dataSource instanceof WeaviateDataSource ds
+            ? ds.getCollectionAliases(monitor, getName())
+            : List.of();
+    }
+
+    /**
      * Kind of the collection's configured generative module ("OPENAI", ...), or null when none
      * is. What a generative query uses when no runtime provider override is sent -- the Query
      * panel names it in the provider dropdown's default entry.

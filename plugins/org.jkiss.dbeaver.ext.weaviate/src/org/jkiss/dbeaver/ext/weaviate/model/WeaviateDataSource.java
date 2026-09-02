@@ -75,6 +75,7 @@ public class WeaviateDataSource extends AbstractDataSource
     private volatile List<WeaviateDbUser> dbUsers;
     private volatile List<WeaviateOidcGroup> oidcGroups;
     private volatile List<WeaviateReplicationEntry> replicationEntries;
+    private final WeaviateAliases aliasSupport = new WeaviateAliases(this);
     private final WeaviatePlacementTracker placementTracker = new WeaviatePlacementTracker();
     private final long id;
     private final DBPExclusiveResource exclusiveLock = new SimpleExclusiveLock();
@@ -592,6 +593,17 @@ public class WeaviateDataSource extends AbstractDataSource
                 }
             }
         }
+        return collections;
+    }
+
+    /**
+     * Collections already in memory, or null. For callers that must not fetch.
+     * <p>
+     * Read while the navigator paints alias labels, which is why it cannot load: see
+     * {@link WeaviateAlias#isDangling()}.
+     */
+    @Nullable
+    public List<WeaviateCollection> getLoadedCollections() {
         return collections;
     }
 
@@ -1282,6 +1294,75 @@ public class WeaviateDataSource extends AbstractDataSource
         return replicationEntries;
     }
 
+    // -- Aliases ----------------------------------------------------------------------------
+
+    /**
+     * Every alias on this server: alternate names, each pointing at one collection.
+     * <p>
+     * Unlike the Security and Replication folders this one carries no advisory row, because it
+     * needs none. Those two cannot tell "the feature is switched off" from "nothing is defined
+     * yet" -- Weaviate advertises no RBAC capability, and an empty list is the same answer to both
+     * questions. Aliases have no such ambiguity: on any server this client will talk to, the
+     * endpoint always answers, so an empty folder means an empty folder.
+     */
+    @NotNull
+    @Association
+    public List<WeaviateAlias> getAliases(@NotNull DBRProgressMonitor monitor) throws DBException {
+        return aliasSupport.list(monitor);
+    }
+
+    /** The aliases pointing at one collection. See {@link WeaviateCollection#getAliases}. */
+    @NotNull
+    public List<WeaviateAlias> getCollectionAliases(
+        @NotNull DBRProgressMonitor monitor,
+        @NotNull String collection
+    ) throws DBException {
+        return aliasSupport.forCollection(monitor, collection);
+    }
+
+    public void createAlias(
+        @NotNull DBRProgressMonitor monitor,
+        @NotNull String alias,
+        @NotNull String targetCollection
+    ) throws DBException {
+        aliasSupport.create(monitor, alias, targetCollection);
+    }
+
+    public void retargetAlias(
+        @NotNull DBRProgressMonitor monitor,
+        @NotNull String alias,
+        @NotNull String newTargetCollection
+    ) throws DBException {
+        aliasSupport.retarget(monitor, alias, newTargetCollection);
+    }
+
+    public boolean deleteAlias(@NotNull DBRProgressMonitor monitor, @NotNull String alias)
+        throws DBException {
+        return aliasSupport.delete(monitor, alias);
+    }
+
+    /** Forgets the alias list, so the next expansion asks the server again. */
+    public void resetAliasCache() {
+        aliasSupport.reset();
+    }
+
+    /** Aliases already in memory, or null. For callers that must not fetch. */
+    @Nullable
+    public List<WeaviateAlias> getLoadedAliases() {
+        return aliasSupport.loaded();
+    }
+
+    /**
+     * Whether this server has aliases at all, for the folders' {@code visibleIf}.
+     * <p>
+     * Rarely false in practice -- the bundled client refuses to talk to anything below 1.32 at
+     * all -- but the version lives in {@link WeaviateServerFeature} rather than as a literal here,
+     * which is the whole point of that registry.
+     */
+    public boolean isAliasSupported() {
+        return supports(WeaviateServerFeature.ALIASES);
+    }
+
     public WeaviateClient getClient() {
         return client;
     }
@@ -1325,6 +1406,7 @@ public class WeaviateDataSource extends AbstractDataSource
             oidcGroups = null;
             replicationEntries = null;
         }
+        aliasSupport.reset();
         return this;
     }
 
