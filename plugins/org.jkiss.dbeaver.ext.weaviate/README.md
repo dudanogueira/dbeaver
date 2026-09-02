@@ -115,11 +115,16 @@ reactor stays hermetic:
 
 ```bash
 mvn clean verify -T 1C                                    # unit only
-WEAVIATE_TENANT_FIXTURE_URL=http://localhost:8080 \
-WEAVIATE_RBAC_FIXTURE_URL=http://localhost:8080 \
-WEAVIATE_REPLICATION_FIXTURE_URL=http://localhost:8080 \
-  mvn clean verify -T 1C                                  # plus the live ones
+for v in FILTER GROUP TENANT TOKENIZE BACKUP RBAC REPLICATION; do
+  export WEAVIATE_${v}_FIXTURE_URL=http://localhost:8080
+done
+mvn clean verify -T 1C                                    # plus the live ones
 ```
+
+Eight fixture variables, one per live test class. `WEAVIATE_OLD_FIXTURE_URL` is the odd one out:
+it wants a *deliberately old* server, because `WeaviateVersionGateLiveTest` exists to check that a
+feature gate hides what that server cannot do. Pointing it at the same server as the others proves
+nothing.
 
 Each area has a seed script under `testdata/`, run with
 `uv run --with weaviate-client seed_<area>_fixture.py` and `--cleanup` to undo. They exist to make
