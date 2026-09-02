@@ -216,11 +216,23 @@
                 name="Create Alias..."
                 description="Point a new name at a collection"
                 categoryId="org.jkiss.dbeaver.core.navigator"/>
+        <!-- One command with a parameter, unlike replication's one-per-action split. That split
+             existed because enablement differed between the actions; here both apply to any alias
+             row, and only the label and icon differ, which updateElement sets per entry. -->
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.manageAlias"
+                name="Alias"
+                description="Repoint or delete a Weaviate alias"
+                categoryId="org.jkiss.dbeaver.core.navigator">
+            <commandParameter id="operation" name="Operation" optional="false"/>
+        </command>
     </extension>
 
     <extension point="org.eclipse.ui.commandImages">
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.createAlias"
                icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/add.png"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageAlias"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/edit.svg"/>
     </extension>
 
     <extension point="org.eclipse.ui.handlers">
@@ -229,6 +241,9 @@
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.createAlias"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateAliasFolderHandler"/>
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageAlias"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateAliasHandler"/>
     </extension>
 
     <extension point="org.eclipse.ui.menus">
@@ -258,6 +273,14 @@
                 <visibleWhen checkEnabled="true"/>
             </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.createAlias">
+                <visibleWhen checkEnabled="true"/>
+            </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageAlias" id="weaviate.alias.retarget">
+                <parameter name="operation" value="retarget"/>
+                <visibleWhen checkEnabled="true"/>
+            </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageAlias" id="weaviate.alias.delete">
+                <parameter name="operation" value="delete"/>
                 <visibleWhen checkEnabled="true"/>
             </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.selectTenant">

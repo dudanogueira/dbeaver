@@ -315,6 +315,18 @@ public final class WeaviateUIMessages extends NLS {
     public static String alias_retarget_explanation;
     public static String alias_button_create;
     public static String alias_button_repoint;
+    public static String alias_title;
+    public static String alias_row_type;
+    public static String alias_retarget_one_only;
+    public static String alias_delete_title;
+    public static String alias_delete_prompt_one;
+    public static String alias_delete_prompt_many;
+    public static String alias_delete_outcome;
+    public static String alias_delete_already_gone;
+    public static String alias_button_delete;
+    public static String alias_action_retarget;
+    public static String alias_action_delete_one;
+    public static String alias_action_delete_many;
 
     private WeaviateUIMessages() {
     }
