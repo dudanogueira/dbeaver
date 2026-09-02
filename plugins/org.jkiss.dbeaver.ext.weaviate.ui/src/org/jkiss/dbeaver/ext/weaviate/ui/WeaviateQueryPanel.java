@@ -51,6 +51,7 @@ import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateGroupBySection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryBanner;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryPanelContext;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateRerankSection;
+import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateSearchOptionsSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateTargetSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateSectionWidgets;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateTenantRow;
@@ -137,6 +138,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     private Combo hybridFusionCombo;
     private final WeaviateQueryBanner banner = new WeaviateQueryBanner(this::clearRememberedError);
     private final WeaviateFilterSection filterSection = new WeaviateFilterSection(this);
+    private final WeaviateSearchOptionsSection searchOptionsSection =
+        new WeaviateSearchOptionsSection(this);
     private final WeaviateGroupBySection groupBySection = new WeaviateGroupBySection(this);
     /** The property label and combo, hidden together where grouping does not apply. */
 
@@ -247,6 +250,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
             mode.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
         }
 
+        searchOptionsSection.createControls(content);
         filterSection.createControls(content);
         groupBySection.createControls(content);
 
@@ -788,6 +792,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         // Group-by is a shared section, so a mode change has to re-evaluate it here; the
         // per-mode sections are swapped wholesale below instead.
         groupBySection.syncVisibility();
+        // Shared too, and for a sharper reason: two of its four options exist for some modes
+        // only, so a mode change decides which controls are there at all.
+        searchOptionsSection.syncVisibility();
 
         Composite top;
         switch (mode) {
@@ -890,6 +897,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         groupBySection.loadFrom(spec);
 
 
+        searchOptionsSection.loadFrom(spec);
         filterSection.loadFrom(spec);
 
         // Every mode's inputs load from the one spec, not just the current mode's. A spec
@@ -1058,6 +1066,11 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
             .withUpdated(currentCheck(updatedChecks))
             .withCertainty(currentCheck(certaintyChecks))
             .groupBy(groupBySection.currentGroupBy())
+            .consistencyLevel(searchOptionsSection.currentConsistencyLevel())
+            .searchOperator(searchOptionsSection.currentSearchOperator())
+            .minimumOrTokens(searchOptionsSection.currentMinimumOrTokens())
+            .diversity(searchOptionsSection.currentDiversity())
+            .withQueryProfile(searchOptionsSection.isWithQueryProfile())
             .targets(targets)
             // Only sent when there is more than one target to join; with one there is nothing
             // to join and the model leaves the strategy off the request entirely.

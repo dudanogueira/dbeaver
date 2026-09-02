@@ -59,6 +59,9 @@ public class WeaviateGenerativeSection {
 
     private static final Log log = Log.getLog(WeaviateGenerativeSection.class);
 
+    /** Lines of room for a prompt box. Prompts run longer than queries, so more than a query box. */
+    private static final int PROMPT_BOX_LINES = 4;
+
     private final WeaviateQueryPanelContext context;
 
     /** Generative section per mode: prompts, provider override, and the grouped-result box. */
@@ -108,8 +111,12 @@ public class WeaviateGenerativeSection {
         List<Control> whenGenerating = new ArrayList<>();
         Label singleLabel = new Label(group, SWT.NONE);
         singleLabel.setText(WeaviateUIMessages.query_generative_single);
-        Text singleField = new Text(group, SWT.BORDER);
+        // A prompt is prose, so it gets room to be prose in. Deliberately without the panel's
+        // run chord: firing a generative query is a call to a paid provider, and a keystroke that
+        // does that while someone is still composing the prompt is the wrong kind of shortcut.
+        Text singleField = new Text(group, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
         singleField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        WeaviateSectionWidgets.setVisibleLines(singleField, PROMPT_BOX_LINES);
         singleField.setMessage(WeaviateUIMessages.query_generative_single_hint);
         singleField.addListener(SWT.Modify, e -> updateCount(mode));
         whenGenerating.add(singleLabel);
@@ -117,8 +124,12 @@ public class WeaviateGenerativeSection {
 
         Label groupedLabel = new Label(group, SWT.NONE);
         groupedLabel.setText(WeaviateUIMessages.query_generative_grouped);
-        Text groupedField = new Text(group, SWT.BORDER);
+        // A prompt is prose, so it gets room to be prose in. Deliberately without the panel's
+        // run chord: firing a generative query is a call to a paid provider, and a keystroke that
+        // does that while someone is still composing the prompt is the wrong kind of shortcut.
+        Text groupedField = new Text(group, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
         groupedField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        WeaviateSectionWidgets.setVisibleLines(groupedField, PROMPT_BOX_LINES);
         groupedField.setMessage(WeaviateUIMessages.query_generative_grouped_hint);
         groupedField.addListener(SWT.Modify, e -> updateCount(mode));
         whenGenerating.add(groupedLabel);
