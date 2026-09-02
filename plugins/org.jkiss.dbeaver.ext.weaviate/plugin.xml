@@ -100,20 +100,6 @@
                         description="Weaviate collections">
                     <items label="Collections" itemLabel="Collection"
                            path="collection" property="collections" icon="#folder_table">
-                        <!-- The complete definition as the server reports it. The typed folders
-                             below are limited to what the bundled client can model; this one is
-                             built from the raw JSON, so nothing is hidden. -->
-                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateJsonNode"
-                                id="definition" label="Definition"
-                                icon="#folder_info"
-                                description="Full collection definition as stored by the server">
-                            <items label="Entry" itemLabel="Entry"
-                                   path="definitionEntry" property="definitionNodes" icon="#info">
-                                <items label="Entry" itemLabel="Entry"
-                                       path="definitionChild" property="children" icon="#info"
-                                       recursive=".."/>
-                            </items>
-                        </folder>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty"
                                 id="properties" label="Properties"
                                 icon="#columns"
@@ -210,6 +196,22 @@
                                 visibleIf="object.dataSource.aliasSupported">
                             <items label="Alias" itemLabel="Alias"
                                    path="collectionAlias" property="aliases" icon="#synonym"/>
+                        </folder>
+                        <!-- Last, and named for what makes it different: the typed folders above
+                             are limited to what the bundled client can model, while this one is
+                             built from the server's own JSON, so nothing is hidden. It is the
+                             fallback view rather than the headline one, which is why it sits at
+                             the end. -->
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateJsonNode"
+                                id="definition" label="Raw Definition"
+                                icon="#folder_info"
+                                description="Full collection definition as stored by the server">
+                            <items label="Entry" itemLabel="Entry"
+                                   path="definitionEntry" property="definitionNodes" icon="#info">
+                                <items label="Entry" itemLabel="Entry"
+                                       path="definitionChild" property="children" icon="#info"
+                                       recursive=".."/>
+                            </items>
                         </folder>
                     </items>
                 </folder>
