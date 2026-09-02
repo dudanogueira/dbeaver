@@ -88,4 +88,15 @@ public interface WeaviateQueryPanelContext {
 
     /** Put a count in a section's title, or drop it when the count is zero. */
     void setSectionCount(@Nullable Composite client, @NotNull String title, int count);
+
+    /**
+     * Told when the bound collection gains or loses the ability to target named vectors.
+     * <p>
+     * A notification, not an instruction: the target section knows whether targeting means
+     * anything here, and the panel decides what that implies for the widgets it owns. Today it
+     * hides Near Vector's lone vector box, which is how a single-vector collection says which
+     * space to search -- once targets are on offer that box would be a second, contradictory way
+     * to say the same thing.
+     */
+    void onTargetsAvailable(boolean available);
 }
