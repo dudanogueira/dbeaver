@@ -302,6 +302,20 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_explain_score;
     public static String query_explain_score_tip;
 
+    // Aliases
+    public static String alias_create_title;
+    public static String alias_retarget_title;
+    public static String alias_name;
+    public static String alias_name_hint;
+    public static String alias_target;
+    public static String alias_name_spaces;
+    public static String alias_name_taken;
+    public static String alias_no_collections;
+    public static String alias_create_explanation;
+    public static String alias_retarget_explanation;
+    public static String alias_button_create;
+    public static String alias_button_repoint;
+
     private WeaviateUIMessages() {
     }
 }
