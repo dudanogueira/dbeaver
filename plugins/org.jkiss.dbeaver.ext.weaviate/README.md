@@ -61,6 +61,7 @@ The navigator tree, top level down, and where each part lives.
 | **Backups** | list by backend, create and restore as DBeaver tasks with a poll loop | `WeaviateBackup*`, `model/tasks/` | `ui/tasks/` |
 | **Security** | roles and their permissions, database users, OIDC groups; create, edit and delete roles; manage users, assign roles, rotate keys | `WeaviateRole`, `WeaviateDbUser`, `WeaviateRbacAction`, `WeaviateRbacKind` | `WeaviateRoleDialog`, `WeaviateRoleRuleDialog`, `WeaviateRoleAssignmentDialog`, `WeaviateApiKeyDialog` |
 | **Replication** | movements with their state history, where each shard's replicas are, start a move or copy, follow, cancel, delete, force-delete | `WeaviateReplicationOp`, `WeaviateReplicationState`, `WeaviatePlacementTracker` | `WeaviateReplicateShardDialog`, `WeaviateReplicationWatch` |
+| **Aliases** | list every alias and the collection it resolves to, from the connection or from a collection's own folder; create, repoint, delete | `WeaviateAlias`, `WeaviateAliases` | `WeaviateAliasDialog` |
 | **Modules, Server Metadata** | what the server has enabled, with links to the docs for each | `WeaviateModule`, `WeaviateDocTopics` | - |
 
 Version-gated features are declared once in `WeaviateServerFeature` rather than as version
@@ -82,6 +83,13 @@ them:
 
 So actions, states and scopes are carried as `String` and `Map`, never as enums that can throw or
 null. A server newer than this build degrades to "shown but not editable" instead of failing.
+
+Aliases are the counter-example, and the reason the check is worth doing each time rather than
+assuming: `Alias` is a two-field record carrying exactly what the wire carries, and the namespace
+has no enum at all, so that branch stays on the client. It is also the only area that therefore
+works on OIDC connections, where a REST helper cannot authenticate. The five rough edges it does
+have -- an argument order, a null list, a filter parameter named twice over, and 404 handled two
+different ways -- are pinned by `WeaviateAliasLiveTest` rather than routed around.
 
 ## Layout
 
@@ -115,13 +123,13 @@ reactor stays hermetic:
 
 ```bash
 mvn clean verify -T 1C                                    # unit only
-for v in FILTER GROUP TENANT TOKENIZE BACKUP RBAC REPLICATION; do
+for v in FILTER GROUP TENANT TOKENIZE BACKUP RBAC REPLICATION ALIAS; do
   export WEAVIATE_${v}_FIXTURE_URL=http://localhost:8080
 done
 mvn clean verify -T 1C                                    # plus the live ones
 ```
 
-Eight fixture variables, one per live test class. `WEAVIATE_OLD_FIXTURE_URL` is the odd one out:
+Nine fixture variables, one per live test class. `WEAVIATE_OLD_FIXTURE_URL` is the odd one out:
 it wants a *deliberately old* server, because `WeaviateVersionGateLiveTest` exists to check that a
 feature gate hides what that server cannot do. Pointing it at the same server as the others proves
 nothing.
@@ -130,7 +138,8 @@ Each area has a seed script under `testdata/`, run with
 `uv run --with weaviate-client seed_<area>_fixture.py` and `--cleanup` to undo. They exist to make
 the *shapes* reproducible, not the data: the RBAC fixture covers every permission scope shape, and
 the replication fixture deliberately includes one shard replicated onto every node, so there is no
-legal target for a movement.
+legal target for a movement, and the alias fixture puts two aliases on one collection and none on
+another.
 
 The live tests are there for one job - catching drift between the server's vocabularies and this
 plugin's. A new state or action shows up as a failure naming it, rather than as a blank row in
