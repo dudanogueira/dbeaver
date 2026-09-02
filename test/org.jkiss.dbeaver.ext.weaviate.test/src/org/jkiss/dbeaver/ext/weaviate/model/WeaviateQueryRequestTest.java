@@ -207,6 +207,83 @@ public class WeaviateQueryRequestTest extends DBeaverUnitTest {
         }
     }
 
+    // -- boost -------------------------------------------------------------------------------
+
+    @Test
+    public void boostWeightIsABlendFractionNotAMultiplier() {
+        // The server's own rule, and the one a caller is most likely to get wrong: "weight" reads
+        // as a multiplier, so 5 is the natural first guess and the server answers
+        // "boost: weight must be between 0 and 1, got 5.000000" only after the query is sent.
+        Assertions.assertThrows(IllegalArgumentException.class,
+            () -> new WeaviateBoostSpec(WeaviateBoostKind.PROPERTY_VALUE, "rating",
+                null, null, null, null, null, null, 5f, null));
+        Assertions.assertThrows(IllegalArgumentException.class,
+            () -> new WeaviateBoostSpec(WeaviateBoostKind.PROPERTY_VALUE, "rating",
+                null, null, null, null, null, null, -0.1f, null));
+        // Both ends are legal, and so is leaving it out.
+        Assertions.assertDoesNotThrow(
+            () -> new WeaviateBoostSpec(WeaviateBoostKind.PROPERTY_VALUE, "rating",
+                null, null, null, null, null, null, 0f, null));
+        Assertions.assertDoesNotThrow(
+            () -> new WeaviateBoostSpec(WeaviateBoostKind.PROPERTY_VALUE, "rating",
+                null, null, null, null, null, null, 1f, null));
+        Assertions.assertDoesNotThrow(
+            () -> new WeaviateBoostSpec(WeaviateBoostKind.PROPERTY_VALUE, "rating",
+                null, null, null, null, null, null, null, null));
+    }
+
+    @Test
+    public void aBoostNeedsAProperty() {
+        Assertions.assertThrows(IllegalArgumentException.class,
+            () -> new WeaviateBoostSpec(WeaviateBoostKind.PROPERTY_VALUE, "  ",
+                null, null, null, null, null, null, null, null));
+    }
+
+    @Test
+    public void bothDecayKindsNeedAScale() {
+        for (WeaviateBoostKind kind : WeaviateBoostKind.values()) {
+            if (!kind.isDecay()) {
+                continue;
+            }
+            Assertions.assertThrows(IllegalArgumentException.class,
+                () -> new WeaviateBoostSpec(kind, "year", "2025", null,
+                    null, null, null, null, null, null),
+                kind.name());
+        }
+    }
+
+    @Test
+    public void numericDecayRefusesAnOriginThatIsNotANumber() {
+        // Caught here rather than at Float.parseFloat inside toClientType, which would throw
+        // NumberFormatException from the middle of building a request.
+        Assertions.assertThrows(IllegalArgumentException.class,
+            () -> new WeaviateBoostSpec(WeaviateBoostKind.NUMERIC_DECAY, "year", "recently", "5",
+                null, null, null, null, null, null));
+        Assertions.assertDoesNotThrow(
+            () -> new WeaviateBoostSpec(WeaviateBoostKind.NUMERIC_DECAY, "year", "2025", "5",
+                null, null, null, null, null, null));
+    }
+
+    @Test
+    public void timeDecayTakesADurationScaleRatherThanANumber() {
+        // Its scale is a duration string, so the numeric check must not apply to it.
+        Assertions.assertDoesNotThrow(
+            () -> new WeaviateBoostSpec(WeaviateBoostKind.TIME_DECAY, "publishedAt", null, "30d",
+                null, null, null, null, 0.5f, null));
+    }
+
+    @Test
+    public void aBoostAppliesToEveryMode() {
+        // It sits on BaseQueryOptions, not on one operator, so no mode may drop it.
+        WeaviateBoostSpec boost = new WeaviateBoostSpec(WeaviateBoostKind.PROPERTY_VALUE, "rating",
+            null, null, null, null, null, WeaviateBoostModifier.SQRT, 0.9f, null);
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            WeaviateQuerySpec spec = WeaviateQuerySpec.builder(mode)
+                .query("x").vector(new float[]{1f}).objectId("id").boost(boost).build();
+            Assertions.assertEquals(boost, spec.getBoost(), mode.name());
+        }
+    }
+
     // -- required input ----------------------------------------------------------------------
 
     @Test

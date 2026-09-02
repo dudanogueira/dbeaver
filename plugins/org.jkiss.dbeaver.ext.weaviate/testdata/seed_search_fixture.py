@@ -33,6 +33,7 @@ Environment:
 from __future__ import annotations
 
 import argparse
+import datetime
 import math
 import os
 import sys
@@ -157,6 +158,9 @@ def create(client: weaviate.WeaviateClient, name: str, vectorizer: str | None, s
             wc.Property(name="rating", data_type=wc.DataType.NUMBER),
             wc.Property(name="published", data_type=wc.DataType.BOOL),
             wc.Property(name="tags", data_type=wc.DataType.TEXT_ARRAY),
+            # A real date, because the time-decay boost refuses anything else -- the server
+            # answers "boost condition[0] time_decay: property ..." and names the offender.
+            wc.Property(name="publishedAt", data_type=wc.DataType.DATE),
         ],
     )
     print(f"created {name} ({shards} shards, "
@@ -169,6 +173,10 @@ def fill(client: weaviate.WeaviateClient, name: str, self_provided: bool) -> int
         properties = {
             "title": title, "body": body, "topic": topic,
             "year": year, "rating": rating, "published": published, "tags": tags,
+            # Spread across the year each row claims, so a time-decay boost has a gradient
+            # rather than four identical timestamps.
+            "publishedAt": datetime.datetime(
+                year, 1 + (int(tail) - 1) % 12, 1, tzinfo=datetime.timezone.utc),
         }
         uuid = f"00000000-0000-4000-8000-0000000000{tail}"
         if self_provided:
@@ -209,6 +217,9 @@ BM25 "alpine trail" -- the operator is the whole point:
   At least N words, N=1      01 02 03 04 05 06 07 08
   At least N words, N=2      06
 
+  Matched sets, listed by id. BM25 ranks them, and the ranking shifts with the shard layout,
+  so compare which rows came back rather than the order they came back in.
+
   All four measured against this fixture on 1.39.0, not inferred from the names.
 
 Filters worth trying:
@@ -217,6 +228,20 @@ Filters worth trying:
   rating > 4.5                  08, 10, 12, 13
   tags CONTAINS ANY [alpine]    06, 07, 08
   topic = software              10, 11, 12
+
+Boost -- weight is a blend fraction in [0, 1], not a multiplier. The server refuses anything
+else: "boost: weight must be between 0 and 1". Measured on BM25 "trail", limit 6:
+
+  no boost                              04 01 02 03 06 05
+  by property value, rating, w=0.0      04 01 02 03 06 05   0 changes nothing
+  by property value, rating, w=0.3      04 01 02 03 06 07
+  by property value, rating, w=0.9      01 02 03 07 06 04   rating order takes over
+  near a number, year, o=2025, s=1,
+    w=0.9                               01 02 06 04 03 07
+  near a date, publishedAt, 365d,
+    w=0.9                               02 06 01 04 03 07
+
+  "Near a date" needs publishedAt, not year -- the server refuses a non-date property.
 
 Query profile: switch it on with any of the above. Three shards, so expect more than one entry;
 the row counts per shard are what say whether the work was spread evenly.

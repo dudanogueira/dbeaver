@@ -312,6 +312,10 @@ final class WeaviateQueryRequest {
         if (spec.getConsistencyLevel() != null) {
             b.consistencyLevel(spec.getConsistencyLevel().toClientType());
         }
+        // Every mode again, and for the same reason: boost is on BaseQueryOptions.
+        if (spec.getBoost() != null) {
+            b.boost(spec.getBoost().toClientType());
+        }
         // The client calls Weaviate's autocut "autolimit"; the wire field is autocut.
         Integer autoCut = spec.getAutoCut();
         if (autoCut != null && autoCut > 0 && spec.getMode().supportsAutoCut()) {

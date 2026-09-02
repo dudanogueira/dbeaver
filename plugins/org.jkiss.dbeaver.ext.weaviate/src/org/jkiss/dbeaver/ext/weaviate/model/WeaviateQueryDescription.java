@@ -118,6 +118,11 @@ final class WeaviateQueryDescription {
         if (spec.getConsistencyLevel() != null) {
             args.add("consistency=" + spec.getConsistencyLevel().name());
         }
+        WeaviateBoostSpec boost = spec.getBoost();
+        if (boost != null) {
+            args.add("boost=" + boost.kind().name() + "(" + boost.property()
+                + (boost.weight() == null ? "" : ", weight=" + boost.weight()) + ")");
+        }
         if (spec.isWithQueryProfile()) args.add("profile");
         if (limit > 0) args.add("limit=" + limit);
         if (offset > 0) args.add("offset=" + offset);

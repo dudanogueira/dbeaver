@@ -45,6 +45,7 @@ import org.eclipse.ui.forms.events.ExpansionEvent;
 import org.eclipse.ui.forms.widgets.ExpandableComposite;
 import org.jkiss.dbeaver.ui.controls.ExpandableCompositeEx;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateBoostSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateFilterSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateGenerativeSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateGroupBySection;
@@ -143,6 +144,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         new WeaviateSearchOptionsSection(this);
     private final WeaviateQueryProfileSection queryProfileSection =
         new WeaviateQueryProfileSection(this);
+    private final WeaviateBoostSection boostSection = new WeaviateBoostSection(this);
     private final WeaviateGroupBySection groupBySection = new WeaviateGroupBySection(this);
     /** The property label and combo, hidden together where grouping does not apply. */
 
@@ -254,6 +256,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         }
 
         searchOptionsSection.createControls(content);
+        boostSection.createControls(content);
         filterSection.createControls(content);
         groupBySection.createControls(content);
         queryProfileSection.createControls(content);
@@ -902,6 +905,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
 
 
         searchOptionsSection.loadFrom(spec);
+        boostSection.loadFrom(spec);
         filterSection.loadFrom(spec);
 
         // Every mode's inputs load from the one spec, not just the current mode's. A spec
@@ -1075,6 +1079,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
             .minimumOrTokens(searchOptionsSection.currentMinimumOrTokens())
             .diversity(searchOptionsSection.currentDiversity())
             .withQueryProfile(searchOptionsSection.isWithQueryProfile())
+            .boost(boostSection.currentBoost())
             .targets(targets)
             // Only sent when there is more than one target to join; with one there is nothing
             // to join and the model leaves the strategy off the request entirely.

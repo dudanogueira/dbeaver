@@ -75,6 +75,8 @@ public final class WeaviateQuerySpec {
      * same reason: producing it is work nobody asked for on a query that is merely being read.
      */
     private final boolean withQueryProfile;
+    /** Ranking nudge, or null. Every mode: the client takes it on {@code BaseQueryOptions}. */
+    private final WeaviateBoostSpec boost;
 
     public WeaviateQuerySpec(@NotNull Builder b) {
         this.mode = b.mode;
@@ -104,6 +106,7 @@ public final class WeaviateQuerySpec {
         this.minimumOrTokens = b.minimumOrTokens;
         this.diversity = b.diversity;
         this.withQueryProfile = b.withQueryProfile;
+        this.boost = b.boost;
     }
 
     /**
@@ -355,6 +358,12 @@ public final class WeaviateQuerySpec {
         return withQueryProfile;
     }
 
+    /** The ranking nudge, or null. Applies to every mode. */
+    @Nullable
+    public WeaviateBoostSpec getBoost() {
+        return boost;
+    }
+
     /**
      * Whether this spec will actually group.
      * <p>
@@ -409,7 +418,8 @@ public final class WeaviateQuerySpec {
             .searchOperator(searchOperator)
             .minimumOrTokens(minimumOrTokens)
             .diversity(diversity)
-            .withQueryProfile(withQueryProfile);
+            .withQueryProfile(withQueryProfile)
+            .boost(boost);
     }
 
     /**
@@ -491,6 +501,7 @@ public final class WeaviateQuerySpec {
         private Integer minimumOrTokens;
         private WeaviateDiversitySpec diversity;
         private boolean withQueryProfile;
+        private WeaviateBoostSpec boost;
 
         private Builder(@NotNull WeaviateQueryMode mode) {
             this.mode = mode;
@@ -623,6 +634,11 @@ public final class WeaviateQuerySpec {
 
         public Builder withQueryProfile(boolean withQueryProfile) {
             this.withQueryProfile = withQueryProfile;
+            return this;
+        }
+
+        public Builder boost(@Nullable WeaviateBoostSpec boost) {
+            this.boost = boost;
             return this;
         }
 
