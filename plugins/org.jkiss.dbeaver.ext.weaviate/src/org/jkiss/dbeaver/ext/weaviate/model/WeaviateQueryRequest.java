@@ -19,6 +19,7 @@ package org.jkiss.dbeaver.ext.weaviate.model;
 import io.weaviate.client6.v1.api.collections.generate.GenerativeProvider;
 import io.weaviate.client6.v1.api.collections.generate.GenerativeTask;
 import io.weaviate.client6.v1.api.collections.query.Bm25;
+import io.weaviate.client6.v1.api.collections.query.Diversity;
 import io.weaviate.client6.v1.api.collections.query.FetchObjects;
 import io.weaviate.client6.v1.api.collections.query.Filter;
 import io.weaviate.client6.v1.api.collections.query.GroupBy;
@@ -29,6 +30,7 @@ import io.weaviate.client6.v1.api.collections.query.NearText;
 import io.weaviate.client6.v1.api.collections.query.NearVector;
 import io.weaviate.client6.v1.api.collections.query.NearVectorTarget;
 import io.weaviate.client6.v1.api.collections.query.Rerank;
+import io.weaviate.client6.v1.api.collections.query.SearchOperator;
 import io.weaviate.client6.v1.api.collections.query.SortBy;
 import io.weaviate.client6.v1.api.collections.query.Target;
 import io.weaviate.client6.v1.internal.ObjectBuilder;
@@ -75,6 +77,8 @@ final class WeaviateQueryRequest {
     ) {
         applyCommon(b, spec, filter, limit, offset);
         b.returnMetadata(scoreMetadata(spec));
+        SearchOperator operator = searchOperator(spec);
+        if (operator != null) b.searchOperator(operator);
         List<String> queryProperties = spec.getQueryProperties();
         if (!queryProperties.isEmpty()) b.queryProperties(queryProperties);
         return b;
@@ -89,6 +93,8 @@ final class WeaviateQueryRequest {
         if (rerank != null) b.rerank(rerank);
         b.returnMetadata(Metadata.DISTANCE);
         if (spec.getDistance() != null) b.distance(spec.getDistance());
+        Diversity diversity = diversity(spec);
+        if (diversity != null) b.diversity(diversity);
         return b;
     }
 
@@ -101,6 +107,8 @@ final class WeaviateQueryRequest {
         if (rerank != null) b.rerank(rerank);
         b.returnMetadata(Metadata.DISTANCE);
         if (spec.getDistance() != null) b.distance(spec.getDistance());
+        Diversity diversity = diversity(spec);
+        if (diversity != null) b.diversity(diversity);
         return b;
     }
 
@@ -113,6 +121,8 @@ final class WeaviateQueryRequest {
         if (rerank != null) b.rerank(rerank);
         b.returnMetadata(Metadata.DISTANCE);
         if (spec.getDistance() != null) b.distance(spec.getDistance());
+        Diversity diversity = diversity(spec);
+        if (diversity != null) b.diversity(diversity);
         return b;
     }
 
@@ -124,6 +134,10 @@ final class WeaviateQueryRequest {
         b.returnMetadata(scoreMetadata(spec));
         if (spec.getAlpha() != null) b.alpha(spec.getAlpha());
         if (spec.getFusionType() != null) b.fusionType(spec.getFusionType().toClientType());
+        SearchOperator operator = searchOperator(spec);
+        if (operator != null) b.searchOperator(operator);
+        Diversity diversity = diversity(spec);
+        if (diversity != null) b.diversity(diversity);
         return b;
     }
 
@@ -293,6 +307,11 @@ final class WeaviateQueryRequest {
                 b.includeVector(requested);
             }
         }
+        // Every mode, because the client takes it on BaseQueryOptions rather than on any one
+        // operator -- and unset is not the same as a default, so it is only sent when chosen.
+        if (spec.getConsistencyLevel() != null) {
+            b.consistencyLevel(spec.getConsistencyLevel().toClientType());
+        }
         // The client calls Weaviate's autocut "autolimit"; the wire field is autocut.
         Integer autoCut = spec.getAutoCut();
         if (autoCut != null && autoCut > 0 && spec.getMode().supportsAutoCut()) {
@@ -307,17 +326,41 @@ final class WeaviateQueryRequest {
     }
 
     /**
+     * The keyword operator as the client wants it, or null to send none.
+     * <p>
+     * Null is a real answer: leaving {@code searchOperator} off is not the same as sending OR with
+     * a minimum of one, because the server picks its own default and may change it.
+     */
+    @Nullable
+    static SearchOperator searchOperator(@NotNull WeaviateQuerySpec spec) {
+        WeaviateSearchOperator operator = spec.getSearchOperator();
+        return operator == null ? null : operator.toClientType(spec.getMinimumOrTokens());
+    }
+
+    /** The MMR request as the client wants it, or null when the search is not diversified. */
+    @Nullable
+    static Diversity diversity(@NotNull WeaviateQuerySpec spec) {
+        WeaviateDiversitySpec diversity = spec.getDiversity();
+        return diversity == null ? null : diversity.toClientType();
+    }
+
+    /**
      * The metadata the user opted into beyond what the mode itself needs, ready to request.
      * Certainty is gated on the mode: the server derives it from vector distance, so asking for
      * it elsewhere returns nothing and the flag is simply ignored.
      */
     @NotNull
     static List<Metadata> extraMetadata(@NotNull WeaviateQuerySpec spec) {
-        List<Metadata> extra = new ArrayList<>(3);
+        List<Metadata> extra = new ArrayList<>(4);
         if (spec.isWithCreated()) extra.add(Metadata.CREATION_TIME_UNIX);
         if (spec.isWithUpdated()) extra.add(Metadata.LAST_UPDATE_TIME_UNIX);
         if (spec.isWithCertainty() && spec.getMode().supportsCertainty()) {
             extra.add(Metadata.CERTAINTY);
+        }
+        // Asking for the profile is what makes the server produce one; it is not returned
+        // otherwise. Every mode can be profiled.
+        if (spec.isWithQueryProfile()) {
+            extra.add(Metadata.QUERY_PROFILE);
         }
         return extra;
     }

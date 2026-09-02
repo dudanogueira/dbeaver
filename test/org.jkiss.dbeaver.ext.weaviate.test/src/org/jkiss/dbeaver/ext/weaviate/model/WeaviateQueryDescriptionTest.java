@@ -90,6 +90,46 @@ public class WeaviateQueryDescriptionTest extends DBeaverUnitTest {
     }
 
     @Test
+    public void searchOptionsAppearInTheLoggedCall() {
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.BM25)
+            .query("shoes")
+            .searchOperator(WeaviateSearchOperator.OR)
+            .minimumOrTokens(2)
+            .consistencyLevel(WeaviateConsistencyLevel.QUORUM)
+            .withQueryProfile(true)
+            .build();
+        String described = describe(spec);
+        Assertions.assertTrue(described.contains("operator=OR(2)"), described);
+        // Consistency changes what the server does rather than which rows come back, so a log
+        // line that hid it would make two different queries look identical.
+        Assertions.assertTrue(described.contains("consistency=QUORUM"), described);
+        Assertions.assertTrue(described.contains("profile"), described);
+    }
+
+    @Test
+    public void anOperatorWithoutAMinimumIsNotGivenOne() {
+        WeaviateQuerySpec spec = WeaviateQuerySpec.builder(WeaviateQueryMode.BM25)
+            .query("shoes").searchOperator(WeaviateSearchOperator.AND).build();
+        // "(" alone would match bm25( -- what must not appear is a minimum on an operator that
+        // does not read one.
+        Assertions.assertTrue(describe(spec).contains("operator=AND"), describe(spec));
+        Assertions.assertFalse(describe(spec).contains("AND("), describe(spec));
+    }
+
+    @Test
+    public void mmrRendersOnlyTheFieldsThatWereSet() {
+        WeaviateQuerySpec bare = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_TEXT)
+            .query("dog").diversity(WeaviateDiversitySpec.DEFAULTS).build();
+        Assertions.assertTrue(describe(bare).contains("mmr"), describe(bare));
+        Assertions.assertFalse(describe(bare).contains("mmr("), describe(bare));
+
+        WeaviateQuerySpec tuned = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_TEXT)
+            .query("dog").diversity(new WeaviateDiversitySpec(100, 0.5f)).build();
+        Assertions.assertTrue(
+            describe(tuned).contains("mmr(candidates=100, balance=0.5)"), describe(tuned));
+    }
+
+    @Test
     public void nearVectorReportsItsDimensionRatherThanTheVector() {
         WeaviateQuerySpec spec = WeaviateQuerySpec.nearVector(new float[]{0.1f, 0.2f, 0.3f});
         Assertions.assertEquals("nearVector(dim=3)", describe(spec));

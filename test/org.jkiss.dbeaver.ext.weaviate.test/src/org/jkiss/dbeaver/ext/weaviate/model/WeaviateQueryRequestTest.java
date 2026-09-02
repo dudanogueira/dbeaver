@@ -119,6 +119,86 @@ public class WeaviateQueryRequestTest extends DBeaverUnitTest {
         Assertions.assertTrue(WeaviateQueryRequest.extraMetadata(near().build()).isEmpty());
     }
 
+    // -- search options ----------------------------------------------------------------------
+
+    @Test
+    public void theProfileIsOptInLikeTheOtherMetadata() {
+        // Asking is what makes the server produce one, so an unasked query must not carry it.
+        Assertions.assertFalse(
+            WeaviateQueryRequest.extraMetadata(near().build()).contains(Metadata.QUERY_PROFILE));
+        Assertions.assertTrue(
+            WeaviateQueryRequest.extraMetadata(near().withQueryProfile(true).build())
+                .contains(Metadata.QUERY_PROFILE));
+    }
+
+    @Test
+    public void anUnsetOperatorSendsNothing() {
+        // Not the same as sending OR with a minimum of one: unset leaves the choice to the server.
+        Assertions.assertNull(WeaviateQueryRequest.searchOperator(WeaviateQuerySpec.bm25("shoes")));
+    }
+
+    @Test
+    public void orCarriesItsMinimumAndTheOthersDoNot() {
+        Assertions.assertTrue(WeaviateSearchOperator.OR.takesMinimum());
+        Assertions.assertFalse(WeaviateSearchOperator.AND.takesMinimum());
+        Assertions.assertFalse(WeaviateSearchOperator.AND_CROSS.takesMinimum());
+        // A missing or nonsensical minimum falls back to OR's own default rather than reaching
+        // the server as zero.
+        Assertions.assertNotNull(WeaviateSearchOperator.OR.toClientType(null));
+        Assertions.assertNotNull(WeaviateSearchOperator.OR.toClientType(0));
+    }
+
+    @Test
+    public void theOperatorIsDroppedOnAModeThatHasNone() {
+        // The setting survives on the spec so switching back restores it; what must not happen is
+        // it reaching a vector search, which has no tokens to combine.
+        WeaviateQuerySpec keyword = WeaviateQuerySpec.builder(WeaviateQueryMode.BM25)
+            .query("shoes").searchOperator(WeaviateSearchOperator.AND).build();
+        Assertions.assertEquals(WeaviateSearchOperator.AND, keyword.getSearchOperator());
+
+        WeaviateQuerySpec vector = WeaviateQuerySpec.builder(WeaviateQueryMode.NEAR_TEXT)
+            .query("dog").searchOperator(WeaviateSearchOperator.AND).build();
+        Assertions.assertNull(vector.getSearchOperator());
+        Assertions.assertNull(WeaviateQueryRequest.searchOperator(vector));
+    }
+
+    @Test
+    public void diversityIsDroppedOnAModeThatCannotDiversify() {
+        WeaviateQuerySpec vector = near().diversity(WeaviateDiversitySpec.DEFAULTS).build();
+        Assertions.assertNotNull(vector.getDiversity());
+        Assertions.assertNotNull(WeaviateQueryRequest.diversity(vector));
+
+        // BM25 ranks by term relevance; there is no distance between candidates to spread out on.
+        WeaviateQuerySpec keyword = WeaviateQuerySpec.builder(WeaviateQueryMode.BM25)
+            .query("shoes").diversity(WeaviateDiversitySpec.DEFAULTS).build();
+        Assertions.assertNull(keyword.getDiversity());
+        Assertions.assertNull(WeaviateQueryRequest.diversity(keyword));
+    }
+
+    @Test
+    public void everyModeAgreesWithWhatTheClientBuildersAccept() {
+        // These four rules are the whole feature -- get one wrong and a control is offered where
+        // the server will refuse it, or hidden where it would have worked.
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            boolean keyword = mode == WeaviateQueryMode.BM25 || mode == WeaviateQueryMode.HYBRID;
+            Assertions.assertEquals(keyword, mode.supportsSearchOperator(), mode.name());
+            boolean vectorish = mode != WeaviateQueryMode.BM25 && mode != WeaviateQueryMode.FETCH;
+            Assertions.assertEquals(vectorish, mode.supportsDiversity(), mode.name());
+        }
+    }
+
+    @Test
+    public void consistencyLevelSurvivesAModeSwitch() {
+        // Unlike the operator and MMR it applies everywhere, so no mode may drop it.
+        for (WeaviateQueryMode mode : WeaviateQueryMode.values()) {
+            WeaviateQuerySpec spec = WeaviateQuerySpec.builder(mode)
+                .query("x").vector(new float[]{1f}).objectId("id")
+                .consistencyLevel(WeaviateConsistencyLevel.QUORUM).build();
+            Assertions.assertEquals(
+                WeaviateConsistencyLevel.QUORUM, spec.getConsistencyLevel(), mode.name());
+        }
+    }
+
     // -- required input ----------------------------------------------------------------------
 
     @Test

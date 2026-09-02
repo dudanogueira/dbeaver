@@ -106,6 +106,29 @@ public enum WeaviateQueryMode {
     }
 
     /**
+     * Whether the mode takes a keyword search operator.
+     * <p>
+     * BM25 and hybrid's keyword half, and nowhere else -- the client exposes
+     * {@code searchOperator} on {@code Bm25.Builder} and {@code Hybrid.Builder} only, which
+     * matches the server: a vector search has no tokens to combine.
+     */
+    public boolean supportsSearchOperator() {
+        return this == BM25 || this == HYBRID;
+    }
+
+    /**
+     * Whether the mode can diversify its results with MMR.
+     * <p>
+     * The three vector searches and hybrid. MMR re-picks from a candidate pool by vector distance
+     * between the candidates, so a pure keyword search has nothing for it to measure, and Fetch
+     * ranks nothing at all. The client agrees: {@code diversity} sits on
+     * {@code BaseVectorSearchBuilder} and on {@code Hybrid.Builder}.
+     */
+    public boolean supportsDiversity() {
+        return this == NEAR_TEXT || this == NEAR_VECTOR || this == NEAR_OBJECT || this == HYBRID;
+    }
+
+    /**
      * Whether autocut applies.
      * <p>
      * Autocut trims where the ranking metric jumps, so it needs a ranking: every mode except a

@@ -59,6 +59,22 @@ public final class WeaviateQuerySpec {
     /** Group-by request, or null. Applies to every mode -- the client has a grouped overload
      *  for all six. */
     private final WeaviateGroupBySpec groupBy;
+    /**
+     * Replica read level, or null for the server's own. Every mode: the client takes it on
+     * {@code BaseQueryOptions}, not on any one operator.
+     */
+    private final WeaviateConsistencyLevel consistencyLevel;
+    /** Keyword operator, or null for the server's own. Keyword modes only. */
+    private final WeaviateSearchOperator searchOperator;
+    /** How many tokens {@link WeaviateSearchOperator#OR} needs; ignored by the others. */
+    private final Integer minimumOrTokens;
+    /** MMR request, or null for no diversification. Vector modes and hybrid. */
+    private final WeaviateDiversitySpec diversity;
+    /**
+     * Whether to ask the server how it ran the query. Opt-in like the other metadata, and for the
+     * same reason: producing it is work nobody asked for on a query that is merely being read.
+     */
+    private final boolean withQueryProfile;
 
     public WeaviateQuerySpec(@NotNull Builder b) {
         this.mode = b.mode;
@@ -83,6 +99,11 @@ public final class WeaviateQuerySpec {
         this.targets = b.targets == null ? Collections.emptyList() : List.copyOf(b.targets);
         this.combination = b.combination;
         this.groupBy = b.groupBy;
+        this.consistencyLevel = b.consistencyLevel;
+        this.searchOperator = b.searchOperator;
+        this.minimumOrTokens = b.minimumOrTokens;
+        this.diversity = b.diversity;
+        this.withQueryProfile = b.withQueryProfile;
     }
 
     /**
@@ -303,6 +324,37 @@ public final class WeaviateQuerySpec {
         return groupBy;
     }
 
+    /** Replica read level, or null for the server's own. */
+    @Nullable
+    public WeaviateConsistencyLevel getConsistencyLevel() {
+        return consistencyLevel;
+    }
+
+    /**
+     * The keyword operator, or null for the server's own -- but only where the mode has one.
+     * A spec demoted to a vector mode keeps the setting so switching back restores it; this is
+     * what stops it being sent meanwhile.
+     */
+    @Nullable
+    public WeaviateSearchOperator getSearchOperator() {
+        return mode.supportsSearchOperator() ? searchOperator : null;
+    }
+
+    @Nullable
+    public Integer getMinimumOrTokens() {
+        return minimumOrTokens;
+    }
+
+    /** The MMR request, or null -- and null on any mode that cannot diversify. */
+    @Nullable
+    public WeaviateDiversitySpec getDiversity() {
+        return mode.supportsDiversity() ? diversity : null;
+    }
+
+    public boolean isWithQueryProfile() {
+        return withQueryProfile;
+    }
+
     /**
      * Whether this spec will actually group.
      * <p>
@@ -352,7 +404,12 @@ public final class WeaviateQuerySpec {
             .withCertainty(withCertainty)
             .targets(targets)
             .combination(combination)
-            .groupBy(groupBy);
+            .groupBy(groupBy)
+            .consistencyLevel(consistencyLevel)
+            .searchOperator(searchOperator)
+            .minimumOrTokens(minimumOrTokens)
+            .diversity(diversity)
+            .withQueryProfile(withQueryProfile);
     }
 
     /**
@@ -429,6 +486,11 @@ public final class WeaviateQuerySpec {
         private List<WeaviateVectorTarget> targets;
         private WeaviateVectorCombination combination;
         private WeaviateGroupBySpec groupBy;
+        private WeaviateConsistencyLevel consistencyLevel;
+        private WeaviateSearchOperator searchOperator;
+        private Integer minimumOrTokens;
+        private WeaviateDiversitySpec diversity;
+        private boolean withQueryProfile;
 
         private Builder(@NotNull WeaviateQueryMode mode) {
             this.mode = mode;
@@ -536,6 +598,31 @@ public final class WeaviateQuerySpec {
 
         public Builder groupBy(@Nullable WeaviateGroupBySpec groupBy) {
             this.groupBy = groupBy;
+            return this;
+        }
+
+        public Builder consistencyLevel(@Nullable WeaviateConsistencyLevel consistencyLevel) {
+            this.consistencyLevel = consistencyLevel;
+            return this;
+        }
+
+        public Builder searchOperator(@Nullable WeaviateSearchOperator searchOperator) {
+            this.searchOperator = searchOperator;
+            return this;
+        }
+
+        public Builder minimumOrTokens(@Nullable Integer minimumOrTokens) {
+            this.minimumOrTokens = minimumOrTokens;
+            return this;
+        }
+
+        public Builder diversity(@Nullable WeaviateDiversitySpec diversity) {
+            this.diversity = diversity;
+            return this;
+        }
+
+        public Builder withQueryProfile(boolean withQueryProfile) {
+            this.withQueryProfile = withQueryProfile;
             return this;
         }
 
