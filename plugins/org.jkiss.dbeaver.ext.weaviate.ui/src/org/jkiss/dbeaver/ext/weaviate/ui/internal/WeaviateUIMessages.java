@@ -111,6 +111,10 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_diversify_balance;
     public static String query_diversify_balance_tip;
     public static String query_profile_enable;
+    public static String query_profile;
+    public static String query_profile_tip;
+    public static String query_profile_none;
+    public static String query_profile_shard_anonymous;
     public static String query_profile_enable_tip;
     public static String query_distance_hint;
     public static String query_failed;

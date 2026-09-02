@@ -50,6 +50,7 @@ import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateGenerativeSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateGroupBySection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryBanner;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryPanelContext;
+import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateQueryProfileSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateRerankSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateSearchOptionsSection;
 import org.jkiss.dbeaver.ext.weaviate.ui.query.WeaviateTargetSection;
@@ -140,6 +141,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     private final WeaviateFilterSection filterSection = new WeaviateFilterSection(this);
     private final WeaviateSearchOptionsSection searchOptionsSection =
         new WeaviateSearchOptionsSection(this);
+    private final WeaviateQueryProfileSection queryProfileSection =
+        new WeaviateQueryProfileSection(this);
     private final WeaviateGroupBySection groupBySection = new WeaviateGroupBySection(this);
     /** The property label and combo, hidden together where grouping does not apply. */
 
@@ -253,6 +256,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         searchOptionsSection.createControls(content);
         filterSection.createControls(content);
         groupBySection.createControls(content);
+        queryProfileSection.createControls(content);
 
         // Must run here as well as in activatePanel(): the row starts hidden, and on first
         // display of the panel activatePanel() has not necessarily fired yet, so without this
@@ -1144,6 +1148,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
 
     private void refreshStatusFromCollection() {
         generativeSection.refreshResult();
+        queryProfileSection.refresh();
         WeaviateCollection collection = currentCollection();
         if (collection == null) {
             banner.hide();

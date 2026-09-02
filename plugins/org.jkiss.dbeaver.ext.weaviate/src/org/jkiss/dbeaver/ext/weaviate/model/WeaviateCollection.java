@@ -133,6 +133,11 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
      */
     private volatile String lastGenerativeGroupedResult;
     /**
+     * The last read's query profile, or null when none was asked for. Like the grouped generative
+     * text it belongs to the run rather than to any row, so the panel polls it after each read.
+     */
+    private volatile WeaviateQueryProfile lastQueryProfile;
+    /**
      * Rerank scores of the last read, by uuid. Filled only by a reranked near_* search; the row
      * mapper reads it because the score reaches us outside the typed object.
      */
@@ -688,12 +693,17 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
             // Cleared per read: a stale map would decorate the next query's rows with the last
             // one's scores wherever a uuid happened to repeat.
             lastRerankScores = Collections.emptyMap();
+            // Cleared per read as well: a profile left over from the previous query describes work
+            // that has nothing to do with the rows now on screen.
+            lastQueryProfile = null;
             if (exec.isGrouped()) {
                 appendGroupedRows(exec, filter, sortBy, limit, offset,
                     columnNames, defaultVectorName, rows);
             } else if (exec.getGenerative() != null) {
                 GenerativeResponse<Map<String, Object>> response =
                     executeGenerativeQuery(exec, filter, sortBy, limit, offset);
+                // No profile on this path: GenerativeResponse exposes no queryProfile(), though
+                // the reply carries one. See WeaviateQueryProfile.
                 lastGenerativeGroupedResult =
                     response.generative() == null ? null : response.generative().text();
                 for (GenerativeObject<Map<String, Object>> obj : response.objects()) {
@@ -704,6 +714,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
                 lastGenerativeGroupedResult = null;
                 QueryResponse<Map<String, Object>> response =
                     executeQuery(exec, filter, sortBy, limit, offset);
+                lastQueryProfile = WeaviateQueryProfile.from(response.queryProfile());
                 for (WeaviateObject<Map<String, Object>> obj : response.objects()) {
                     rows.add(WeaviateRowMapper.toRow(columnNames, obj, defaultVectorName,
                         lastRerankScores.get(obj.uuid())));
@@ -978,6 +989,7 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
             lastGenerativeGroupedResult = null;
             QueryResponseGrouped<Map<String, Object>> response =
                 executeGroupedQuery(spec, filter, sortBy, limit, offset, groupBy);
+            lastQueryProfile = WeaviateQueryProfile.from(response.queryProfile());
             Map<String, QueryResponseGroup<Map<String, Object>>> groups = response.groups();
             for (QueryObjectGrouped<Map<String, Object>> obj : response.objects()) {
                 QueryResponseGroup<Map<String, Object>> group =
@@ -1631,6 +1643,12 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
 
     public void clearLastQueryError() {
         this.lastQueryError = null;
+    }
+
+    /** The last read's query profile, or null when none was requested or none came back. */
+    @Nullable
+    public WeaviateQueryProfile getLastQueryProfile() {
+        return lastQueryProfile;
     }
 
     @Nullable
