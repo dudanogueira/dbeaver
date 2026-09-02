@@ -390,6 +390,33 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         return WeaviateRecordIntrospect.toFields(this, config.replication());
     }
 
+    /**
+     * How many copies of each shard this collection asks for, or null when the server never said.
+     * <p>
+     * Read straight off the config already in memory, so it costs nothing and can be asked while
+     * building a menu or a panel. Null is not one: a server that omits the block has not told us
+     * the factor is one, and a control hidden on a guess is worse than one shown needlessly --
+     * the same direction {@link WeaviateVersions} guesses in.
+     */
+    @Nullable
+    public Integer getReplicationFactor() {
+        return config.replication() == null ? null : config.replication().replicationFactor();
+    }
+
+    /**
+     * Whether each shard has more than one copy, which is the condition under which a read
+     * consistency level means anything at all.
+     * <p>
+     * The factor rather than the cluster's node count, which is the other way to ask it. A
+     * three-node cluster holding an unreplicated collection has exactly one copy of every shard,
+     * so ONE, QUORUM and ALL are the same read there too -- and the node count would say
+     * otherwise. It is also free, where the node list is a request that walks every shard.
+     */
+    public boolean isReplicated() {
+        Integer factor = getReplicationFactor();
+        return factor == null || factor > 1;
+    }
+
     @Association
     public List<WeaviateMetadataField> getShardingFields(@NotNull DBRProgressMonitor monitor) {
         return WeaviateRecordIntrospect.toFields(this, config.sharding());

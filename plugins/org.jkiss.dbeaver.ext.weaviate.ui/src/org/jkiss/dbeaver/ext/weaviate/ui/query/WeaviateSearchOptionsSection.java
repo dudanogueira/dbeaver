@@ -28,6 +28,7 @@ import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Spinner;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateConsistencyLevel;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDiversitySpec;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQuerySpec;
@@ -41,15 +42,16 @@ import java.util.List;
  * The Search options section: consistency level, keyword operator, MMR and the query profile.
  * <p>
  * Shared rather than per mode, because each of these is a single value on the spec -- there is one
- * consistency level, not one per search. What differs per mode is only whether a control applies
- * at all, and that is decided by the mode's own capability methods, which in turn mirror the
- * client builders that accept each option:
+ * consistency level, not one per search. What differs is only whether a control applies at all:
  * <pre>
- * consistency level   every mode           BaseQueryOptions.Builder
- * query profile       every mode           opt-in metadata
- * search operator     BM25, Hybrid         Bm25/Hybrid.Builder only
- * MMR diversity       Hybrid, near_*       BaseVectorSearchBuilder + Hybrid
+ * query profile       every mode                     opt-in metadata
+ * search operator     BM25, Hybrid                   Bm25/Hybrid.Builder only
+ * MMR diversity       Hybrid, near_*                 BaseVectorSearchBuilder + Hybrid
+ * consistency level   replicated collections only    BaseQueryOptions.Builder
  * </pre>
+ * Three of those are decided by the mode's own capability methods, which mirror the client
+ * builders that accept each option. Consistency is the exception: every mode takes it, but it can
+ * only mean something where a shard has more than one copy, so the collection decides.
  * A control that does not apply is taken out of the layout rather than disabled, the same choice
  * the group-by section makes: a greyed row invites someone to work out why.
  * <p>
@@ -86,6 +88,7 @@ public class WeaviateSearchOptionsSection {
     private final List<Control> whenMinimum = new ArrayList<>();
     /** The MMR settings, hidden until MMR is switched on. */
     private final List<Control> whenDiversifying = new ArrayList<>();
+    private final List<Control> whenReplicated = new ArrayList<>();
 
     public WeaviateSearchOptionsSection(@NotNull WeaviateQueryPanelContext context) {
         this.context = context;
@@ -95,8 +98,9 @@ public class WeaviateSearchOptionsSection {
         group = context.createSection(
             parent, WeaviateUIMessages.query_options, "searchOptions", 2, false);
 
-        // -- consistency level: every mode -----------------------------------------------------
-        new Label(group, SWT.NONE).setText(WeaviateUIMessages.query_consistency);
+        // -- consistency level: every mode, replicated collections only ------------------------
+        Label consistencyLabel = new Label(group, SWT.NONE);
+        consistencyLabel.setText(WeaviateUIMessages.query_consistency);
         consistencyCombo = new Combo(group, SWT.READ_ONLY);
         consistencyCombo.add(WeaviateUIMessages.query_server_default);
         for (WeaviateConsistencyLevel level : WeaviateConsistencyLevel.values()) {
@@ -105,6 +109,8 @@ public class WeaviateSearchOptionsSection {
         consistencyCombo.select(0);
         consistencyCombo.setToolTipText(WeaviateUIMessages.query_consistency_tip);
         consistencyCombo.addSelectionListener(onChange());
+        whenReplicated.add(consistencyLabel);
+        whenReplicated.add(consistencyCombo);
 
         // -- keyword operator: BM25 and hybrid --------------------------------------------------
         Label operatorLabel = new Label(group, SWT.NONE);
@@ -189,6 +195,10 @@ public class WeaviateSearchOptionsSection {
         if (group == null || group.isDisposed()) {
             return;
         }
+        // Consistency is the one option gated on the collection rather than the mode. With a
+        // single copy of each shard, ONE, QUORUM and ALL are the same read, so the control can
+        // only mislead -- and it is the read a single-node cluster always performs.
+        WeaviateSectionWidgets.setVisible(whenReplicated, isReplicated());
         WeaviateSectionWidgets.setVisible(whenKeyword, context.currentMode().supportsSearchOperator());
         WeaviateSectionWidgets.setVisible(whenVector, context.currentMode().supportsDiversity());
         // Within those, two more rows depend on a choice rather than on the mode.
@@ -206,7 +216,7 @@ public class WeaviateSearchOptionsSection {
     /** How many options are set to something other than "leave it to the server". */
     public void updateCount() {
         int count = 0;
-        if (selectedConsistency() != null) count++;
+        if (currentConsistencyLevel() != null) count++;
         if (selectedOperator() != null && context.currentMode().supportsSearchOperator()) count++;
         if (currentDiversity() != null) count++;
         if (isWithQueryProfile()) count++;
@@ -215,7 +225,22 @@ public class WeaviateSearchOptionsSection {
 
     @Nullable
     public WeaviateConsistencyLevel currentConsistencyLevel() {
-        return selectedConsistency();
+        // Null while the row is hidden, so a level chosen on a replicated collection cannot ride
+        // along into a query against an unreplicated one. The combo keeps its selection; only the
+        // spec stops carrying it, which is how the mode-gated options behave too.
+        return isReplicated() ? selectedConsistency() : null;
+    }
+
+    /**
+     * Whether this collection has more than one copy of each shard.
+     * <p>
+     * Unknown counts as replicated: hiding a working control on a guess is the worse failure, and
+     * it is the direction the version gate guesses in as well. No collection bound yet means the
+     * panel is between viewers, where nothing is being asked of the server anyway.
+     */
+    private boolean isReplicated() {
+        WeaviateCollection collection = context.currentCollection();
+        return collection == null || collection.isReplicated();
     }
 
     @Nullable
