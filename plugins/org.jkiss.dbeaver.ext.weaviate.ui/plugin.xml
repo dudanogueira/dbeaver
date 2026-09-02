@@ -216,6 +216,14 @@
                 name="Create Alias..."
                 description="Point a new name at a collection"
                 categoryId="org.jkiss.dbeaver.core.navigator"/>
+        <!-- Not contributed to any menu. It exists to be named by a handler="open" on the
+             shard-group node in the model bundle's tree, which is how the navigator's
+             double-click is redirected for that row. -->
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.openCollectionData"
+                name="Open Collection Data"
+                description="Open the data of the collection these shards belong to"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
         <!-- One command with a parameter, unlike replication's one-per-action split. That split
              existed because enablement differed between the actions; here both apply to any alias
              row, and only the label and icon differ, which updateElement sets per entry. -->
@@ -241,6 +249,9 @@
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.createAlias"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateAliasFolderHandler"/>
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.openCollectionData"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateOpenCollectionDataHandler"/>
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageAlias"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateAliasHandler"/>

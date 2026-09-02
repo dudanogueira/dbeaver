@@ -85,6 +85,14 @@
                                 description="Node shards, grouped by collection">
                             <items label="Collection" itemLabel="Collection"
                                    path="shardCollection" property="shardGroups" icon="#folder_table">
+                                <!-- Double-clicking a collection here opens its data rather than a
+                                     properties editor for the grouping row. The navigator's
+                                     double-click is hard-coded in NavigatorViewBase and ends at
+                                     executeNodeAction, which consults this handler before falling
+                                     back to the platform's open command, so one row is redirected
+                                     without competing for that command. -->
+                                <handler action="open"
+                                         command="org.jkiss.dbeaver.ext.weaviate.ui.openCollectionData"/>
                                 <!-- An explicit icon so the per-status colour has something to
                                      sit on: the state overlay is composited onto the node icon,
                                      and a row with no icon of its own has nothing to overlay. -->

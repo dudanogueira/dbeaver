@@ -52,18 +52,6 @@ public class WeaviateShardGroup implements DBSObject, DBPStatefulObject, DBPUniq
     }
 
     /**
-     * The collection, with how its shards are doing: {@code MyCollection (4 READY, 1 READONLY)}.
-     * <p>
-     * The breakdown is in the label because that is the question this node exists to answer. A
-     * node hosting a multi-tenant collection has a shard per tenant, so the list underneath can
-     * run to thousands, and "are they all healthy" is not a thing anyone should have to scroll to
-     * find out. It is also where the individual shards already put their own status, so the two
-     * levels read the same way.
-     * <p>
-     * Ordered by count, largest first, so the dominant state leads and the exceptions sit at the
-     * end where they stand out.
-     */
-    /**
      * A name that stays put while the label changes.
      * <p>
      * The navigator reuses a tree node only when the object's class and <em>unique</em>
@@ -80,6 +68,18 @@ public class WeaviateShardGroup implements DBSObject, DBPStatefulObject, DBPUniq
         return collection;
     }
 
+    /**
+     * The collection, with how its shards are doing: {@code MyCollection (4 READY, 1 READONLY)}.
+     * <p>
+     * The breakdown is in the label because that is the question this node exists to answer. A
+     * node hosting a multi-tenant collection has a shard per tenant, so the list underneath can
+     * run to thousands, and "are they all healthy" is not a thing anyone should have to scroll to
+     * find out. It is also where the individual shards already put their own status, so the two
+     * levels read the same way.
+     * <p>
+     * Ordered by count, largest first, so the dominant state leads and the exceptions sit at the
+     * end where they stand out.
+     */
     @NotNull
     @Override
     @Property(viewable = true, order = 1)
