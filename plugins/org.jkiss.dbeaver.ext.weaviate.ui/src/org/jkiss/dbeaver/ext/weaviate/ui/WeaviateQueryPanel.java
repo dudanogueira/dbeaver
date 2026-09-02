@@ -80,6 +80,9 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     public static final String PANEL_ID = "weaviate-query";
 
     private static final Log log = Log.getLog(WeaviateQueryPanel.class);
+    /** Lines of room for a query box. Three fits a sentence-long query without dwarfing the panel. */
+    private static final int QUERY_BOX_LINES = 3;
+
     private static final String NO_FUSION = "(default)";
 
     private IResultSetPresentation presentation;
@@ -418,10 +421,13 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         c.setLayout(twoColumnLayout());
 
         new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_query);
-        bm25QueryField = new Text(c, SWT.BORDER);
+        bm25QueryField = new Text(c, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
         bm25QueryField.setLayoutData(fillFieldData());
         bm25QueryField.setMessage(WeaviateUIMessages.query_search_hint);
-        runOnEnter(bm25QueryField);
+        WeaviateSectionWidgets.setVisibleLines(bm25QueryField, QUERY_BOX_LINES);
+        bm25QueryField.setToolTipText(NLS.bind(WeaviateUIMessages.query_multiline_tip,
+            WeaviateSectionWidgets.modEnterLabel()));
+        WeaviateSectionWidgets.runOnModEnter(bm25QueryField, this::runQuery);
 
         Label lbl = new Label(c, SWT.NONE);
         lbl.setText(WeaviateUIMessages.query_properties);
@@ -444,10 +450,13 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         c.setLayout(twoColumnLayout());
 
         new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_query);
-        nearTextQueryField = new Text(c, SWT.BORDER);
+        nearTextQueryField = new Text(c, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
         nearTextQueryField.setLayoutData(fillFieldData());
         nearTextQueryField.setMessage(WeaviateUIMessages.query_search_hint);
-        runOnEnter(nearTextQueryField);
+        WeaviateSectionWidgets.setVisibleLines(nearTextQueryField, QUERY_BOX_LINES);
+        nearTextQueryField.setToolTipText(NLS.bind(WeaviateUIMessages.query_multiline_tip,
+            WeaviateSectionWidgets.modEnterLabel()));
+        WeaviateSectionWidgets.runOnModEnter(nearTextQueryField, this::runQuery);
 
         new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_distance);
         nearTextDistanceField = new Text(c, SWT.BORDER);
@@ -471,6 +480,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         nearVectorLabel.setText(WeaviateUIMessages.query_vector);
         nearVectorLabel.setLayoutData(labelTopData());
         nearVectorField = new Text(c, SWT.BORDER | SWT.MULTI | SWT.V_SCROLL | SWT.WRAP);
+        WeaviateSectionWidgets.runOnModEnter(nearVectorField, this::runQuery);
         GridData vgd = new GridData(SWT.FILL, SWT.FILL, true, true);
         vgd.heightHint = 80;
         nearVectorField.setLayoutData(vgd);
@@ -519,10 +529,13 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         c.setLayout(twoColumnLayout());
 
         new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_query);
-        hybridQueryField = new Text(c, SWT.BORDER);
+        hybridQueryField = new Text(c, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
         hybridQueryField.setLayoutData(fillFieldData());
         hybridQueryField.setMessage(WeaviateUIMessages.query_search_hint);
-        runOnEnter(hybridQueryField);
+        WeaviateSectionWidgets.setVisibleLines(hybridQueryField, QUERY_BOX_LINES);
+        hybridQueryField.setToolTipText(NLS.bind(WeaviateUIMessages.query_multiline_tip,
+            WeaviateSectionWidgets.modEnterLabel()));
+        WeaviateSectionWidgets.runOnModEnter(hybridQueryField, this::runQuery);
 
         new Label(c, SWT.NONE).setText(WeaviateUIMessages.query_alpha);
         // A slider rather than a number box: alpha is a blend between two named extremes, and
@@ -711,8 +724,16 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
      * multi-line field -- the near-vector box -- Enter is how you add a line, so hijacking it
      * would stop you typing a vector across lines.
      */
+    /**
+     * Run the query from a single-line field, on Enter or on the commit chord.
+     * <p>
+     * Both, so the chord means the same thing in every box. A multi-line query box cannot take
+     * Enter -- it needs it to break the line -- and a shortcut that works in some fields and not
+     * others is worse than one that always works.
+     */
     private void runOnEnter(@NotNull Text field) {
         field.addListener(SWT.DefaultSelection, e -> runQuery());
+        WeaviateSectionWidgets.runOnModEnter(field, this::runQuery);
     }
 
     @Override

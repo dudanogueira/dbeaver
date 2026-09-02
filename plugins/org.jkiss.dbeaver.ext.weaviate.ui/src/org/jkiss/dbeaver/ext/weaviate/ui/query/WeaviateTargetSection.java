@@ -456,6 +456,7 @@ public class WeaviateTargetSection {
             weightField.setLayoutData(wGd);
             weightField.setMessage(WeaviateUIMessages.query_target_weight_hint);
             weightField.addListener(SWT.DefaultSelection, e -> context.runQuery());
+            WeaviateSectionWidgets.runOnModEnter(weightField, context::runQuery);
 
             Button remove = new Button(container, SWT.PUSH | SWT.FLAT);
             remove.setText("✕");

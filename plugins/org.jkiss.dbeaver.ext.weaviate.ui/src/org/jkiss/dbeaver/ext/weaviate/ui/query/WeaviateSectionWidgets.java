@@ -16,11 +16,14 @@
  */
 package org.jkiss.dbeaver.ext.weaviate.ui.query;
 
+import org.eclipse.swt.SWT;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Text;
 import org.jkiss.code.Nullable;
+
+import org.jkiss.code.NotNull;
 
 import java.util.List;
 
@@ -39,6 +42,45 @@ public final class WeaviateSectionWidgets {
 
     private WeaviateSectionWidgets() {
         // Utility class.
+    }
+
+    /**
+     * Run something on the platform's "commit" chord rather than on Enter.
+     * <p>
+     * A multi-line box has to keep Enter for what Enter does everywhere else -- break the line.
+     * MOD1 is Command on macOS and Ctrl elsewhere, so this reads as Cmd+Enter or Ctrl+Enter
+     * without either being hard-coded.
+     * <p>
+     * {@code doit = false} matters: without it the newline is inserted as well as the query run,
+     * leaving a stray blank line in the box every time it is used.
+     */
+    public static void runOnModEnter(@NotNull Text field, @NotNull Runnable run) {
+        field.addListener(SWT.KeyDown, e -> {
+            boolean enter = e.keyCode == SWT.CR || e.keyCode == SWT.KEYPAD_CR;
+            if (enter && (e.stateMask & SWT.MOD1) != 0) {
+                e.doit = false;
+                run.run();
+            }
+        });
+    }
+
+    /**
+     * Give a multi-line field room for {@code lines} lines of its own font, rather than a pixel
+     * count that is wrong on the next display.
+     */
+    public static void setVisibleLines(@NotNull Text field, int lines) {
+        Object data = field.getLayoutData();
+        GridData gd = data instanceof GridData existing
+            ? existing
+            : new GridData(SWT.FILL, SWT.CENTER, true, false);
+        gd.heightHint = field.getLineHeight() * lines;
+        field.setLayoutData(gd);
+    }
+
+    /** How the commit chord is written on this platform, for a hint or tooltip. */
+    @NotNull
+    public static String modEnterLabel() {
+        return (SWT.MOD1 & SWT.COMMAND) != 0 ? "\u2318\u21A9" : "Ctrl+Enter";
     }
 
     public static void setText(@Nullable Text field, @Nullable String value) {

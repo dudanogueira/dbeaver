@@ -95,6 +95,7 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_dismiss;
     public static String query_remove_filter;
     public static String query_search_hint;
+    public static String query_multiline_tip;
     public static String query_distance_hint;
     public static String query_failed;
     public static String query_not_weaviate;

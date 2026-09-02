@@ -87,6 +87,7 @@ public class WeaviateRerankSection {
         queryField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         queryField.setMessage(WeaviateUIMessages.query_rerank_query_hint);
         queryField.addListener(SWT.DefaultSelection, e -> context.runQuery());
+        WeaviateSectionWidgets.runOnModEnter(queryField, context::runQuery);
 
         Label moduleLabel = new Label(group, SWT.WRAP);
         GridData mlGd = new GridData(SWT.FILL, SWT.CENTER, true, false);
