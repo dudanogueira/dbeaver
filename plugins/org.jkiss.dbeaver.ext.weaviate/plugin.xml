@@ -199,7 +199,30 @@
                             <items label="Field" itemLabel="Field"
                                    path="objectTtlField" property="objectTtlFields"/>
                         </folder>
+                        <!-- The names that resolve to this collection. A filtered view of the
+                             connection-wide list below, not a second one: an alias belongs to the
+                             server, and two caches for the same objects can disagree. Empty is a
+                             real answer here, so unlike Backups and Security there is no advisory
+                             row: it means nothing points at this collection yet. -->
+                        <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateAlias"
+                                id="collectionAliases" label="Aliases" icon="#folder_link"
+                                description="Names that resolve to this collection"
+                                visibleIf="object.dataSource.aliasSupported">
+                            <items label="Alias" itemLabel="Alias"
+                                   path="collectionAlias" property="aliases" icon="#synonym"/>
+                        </folder>
                     </items>
+                </folder>
+                <!-- Alternate collection names, server-wide. Also shown per collection above;
+                     one cache, filtered two ways, so the two views cannot disagree. Hidden rather
+                     than explained on a server too old to have them, per the standing policy:
+                     hide what can never apply, explain what merely does not apply yet. -->
+                <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateAlias"
+                        id="aliases" label="Aliases" icon="#folder_link"
+                        description="Alternate names, each resolving to one collection"
+                        visibleIf="object.aliasSupported">
+                    <items label="Alias" itemLabel="Alias"
+                           path="alias" property="aliases" icon="#synonym"/>
                 </folder>
                 <!-- No visibleIf: this folder appears on every Weaviate connection, including
                      one with no backup module at all. That case is the reason it exists. An

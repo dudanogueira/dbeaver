@@ -23,11 +23,10 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Maps a collection config folder in the navigator tree to the Weaviate documentation
- * page that explains it.
+ * Maps a navigator folder to the Weaviate documentation page that explains it.
  * <p>
- * Keys are the {@code id} attributes of the {@code <folder>} elements under the
- * collection node in {@code plugin.xml}. They are declared explicitly there so this map
+ * Keys are the {@code id} attributes of {@code <folder>} elements in {@code plugin.xml} --
+ * mostly the ones under a collection, plus the connection-wide Aliases folder. They are declared explicitly there so this map
  * does not depend on {@code DBXTreeFolder.getHumanReadableId()}'s fallback of joining
  * child {@code <items path=...>} values, which would change if a path were renamed.
  * {@code WeaviateDocTopicsTest} asserts that the two sets stay in sync.
@@ -53,7 +52,11 @@ public class WeaviateDocTopics {
         // Not documented in the collection-definition reference.
         Map.entry("rerankers", DOCS_BASE + "/weaviate/concepts/reranking"),
         Map.entry("objectTtl", DOCS_BASE + "/weaviate/concepts/data#time-to-live-ttl"),
-        Map.entry("generative", DOCS_BASE + "/weaviate/model-providers"));
+        Map.entry("generative", DOCS_BASE + "/weaviate/model-providers"),
+        // The two Aliases folders -- the connection-wide one and a collection's own -- share an
+        // id-less topic because they explain the same thing from either end.
+        Map.entry("aliases", DOCS_BASE + "/weaviate/manage-collections/collection-aliases"),
+        Map.entry("collectionAliases", DOCS_BASE + "/weaviate/manage-collections/collection-aliases"));
 
     private WeaviateDocTopics() {
         // Utility class

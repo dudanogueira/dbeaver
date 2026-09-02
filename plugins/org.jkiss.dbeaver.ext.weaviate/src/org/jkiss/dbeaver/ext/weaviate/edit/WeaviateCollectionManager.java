@@ -289,6 +289,11 @@ public class WeaviateCollectionManager extends AbstractObjectManager<WeaviateCol
                             throw new DBCException("Failed to delete Weaviate collection '" + name + "'", e);
                         }
                         ds.invalidateCollections();
+                        // Weaviate leaves an alias behind when its target is dropped, so the
+                        // Aliases folder now holds one that points at nothing. Dropping the cache
+                        // is what lets it be re-read and marked as dangling rather than going on
+                        // claiming a collection that has just gone.
+                        ds.resetAliasCache();
                         DBUtils.fireObjectRemove(collection);
                     })
             };
