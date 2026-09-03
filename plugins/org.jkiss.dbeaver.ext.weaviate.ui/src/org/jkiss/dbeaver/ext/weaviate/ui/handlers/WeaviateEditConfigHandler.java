@@ -23,6 +23,7 @@ import org.eclipse.ui.handlers.HandlerUtil;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateConfigSetting;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseFolder;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
 import org.jkiss.dbeaver.model.navigator.DBNNode;
@@ -58,12 +59,12 @@ public class WeaviateEditConfigHandler extends AbstractHandler {
     /**
      * Folder meta ids whose settings the tab can change.
      * <p>
-     * Kept in step with {@code WeaviateConfigSetting} by hand, which is a small enough surface to
-     * be worth the directness: each folder here has at least one setting the server accepted when
-     * the mutability probe asked it.
+     * Derived from the settings themselves rather than listed here. It was a hand-kept list and it
+     * drifted twice -- once when multi-tenancy joined the tab, once when object TTL did -- each
+     * time leaving a folder full of editable settings with no way to reach the editor from it.
      */
     private static final Set<String> EDITABLE_FOLDERS =
-        Set.of("invertedIndex", "replication", "vectorizers");
+        WeaviateConfigSetting.Group.editableFolderIds();
 
     @Override
     public void setEnabled(Object evaluationContext) {

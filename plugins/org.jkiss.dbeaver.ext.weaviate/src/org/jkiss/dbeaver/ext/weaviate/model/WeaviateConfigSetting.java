@@ -225,19 +225,50 @@ public enum WeaviateConfigSetting {
 
     /** Which part of the definition a setting belongs to, and so which box it is drawn in. */
     public enum Group {
-        GENERAL("General"),
-        INVERTED_INDEX("Inverted index"),
-        REPLICATION("Replication"),
+        GENERAL("General", null),
+        INVERTED_INDEX("Inverted index", "invertedIndex"),
+        REPLICATION("Replication", "replication"),
         /** Shown only on a collection that has tenants; see {@link #AUTO_TENANT_CREATION}. */
-        MULTI_TENANCY("Multi-tenancy"),
-        OBJECT_TTL("Object TTL"),
+        MULTI_TENANCY("Multi-tenancy", "multiTenancy"),
+        OBJECT_TTL("Object TTL", "objectTtl"),
         /** Repeated once per vector, since a collection may have several with separate indexes. */
-        VECTOR_INDEX("Vector index");
+        VECTOR_INDEX("Vector index", "vectorizers");
 
         private final String label;
+        private final String folderId;
 
-        Group(String label) {
+        Group(String label, String folderId) {
             this.label = label;
+            this.folderId = folderId;
+        }
+
+        /**
+         * The navigator folder this group edits the contents of, or null when it has none.
+         * <p>
+         * What lets "Change Collection Configuration..." appear on exactly the folders the tab can
+         * do something about, without a second list to keep in step. That list was maintained by
+         * hand and drifted twice -- once when multi-tenancy joined the tab and once when object
+         * TTL did -- each time leaving a folder whose settings were editable with no way to reach
+         * the editor. Adding a group now forces the question.
+         * <p>
+         * Null for {@link #GENERAL}, whose one setting is the collection's own description and so
+         * belongs to the collection row rather than to any folder under it.
+         */
+        @Nullable
+        public String getFolderId() {
+            return folderId;
+        }
+
+        /** Every folder id a group edits. */
+        @NotNull
+        public static java.util.Set<String> editableFolderIds() {
+            java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+            for (Group group : values()) {
+                if (group.folderId != null) {
+                    ids.add(group.folderId);
+                }
+            }
+            return ids;
         }
 
         @NotNull

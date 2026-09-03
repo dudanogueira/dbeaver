@@ -455,9 +455,18 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
             return null;
         }
         String text = ((Text) control).getText().strip();
-        // A field emptied by hand is not a request to delete the setting -- there is no way to
-        // express that here, and the server would take the absence as "leave it alone" anyway.
-        return text.isEmpty() ? null : text;
+        if (!text.isEmpty()) {
+            return text;
+        }
+        // Emptying a field means different things by type, and treating them alike was wrong.
+        // A description or a word list has an empty value the server will store, so clearing one
+        // is an edit and has to be sent. A number does not: there is no empty integer, blank is
+        // how an unset one is displayed, and parsing "" would throw. So text clears and numbers
+        // are left alone.
+        return switch (entry.setting().getKind()) {
+            case TEXT, WORD_LIST -> "";
+            default -> null;
+        };
     }
 
     /**
