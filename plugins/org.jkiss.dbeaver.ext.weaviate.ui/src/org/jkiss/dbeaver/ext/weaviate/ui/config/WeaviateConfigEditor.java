@@ -329,9 +329,38 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
      * anything written here.
      */
     private void onEdit() {
-        if (populating || getDatabaseObject() == null) {
+        if (populating) {
             return;
         }
+        if (getDatabaseObject() == null) {
+            say("No collection bound: changes cannot be queued.");
+            return;
+        }
+        try {
+            queue();
+        } catch (RuntimeException e) {
+            // Queueing runs from an SWT listener, where a thrown exception reaches the display's
+            // handler and is logged out of sight. Silence there looks exactly like a form that
+            // decided nothing had changed, which is the worst way to lose an edit.
+            log.error("Cannot queue the configuration change", e);
+            say("Cannot queue this change: " + e);
+        }
+    }
+
+    /**
+     * What the tab believes is pending, on its own status line.
+     * <p>
+     * Save lives on the workbench and lights up from the command queue, several objects away from
+     * here. When it does not light up, this line is what says whether the queue was the problem or
+     * the form was.
+     */
+    private void say(@NotNull String message) {
+        if (pageControl != null && !pageControl.isDisposed()) {
+            pageControl.setInfo(message);
+        }
+    }
+
+    private void queue() {
         List<WeaviateConfigScript.Change> changes = collectChanges();
         if (lastCommand != null) {
             try {
@@ -349,6 +378,7 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
             // Back to what the server holds. Tell the workbench, or Save stays lit with nothing
             // behind it.
             firePropertyChange(PROP_DIRTY);
+            say("No changes.");
             return;
         }
         lastCommand = new WeaviateConfigUpdateCommand(getDatabaseObject(), changes);
@@ -368,6 +398,9 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
         // is commented out in that class -- so without it the command sits on the queue and the
         // workbench never learns the editor is dirty. No dirty marker, and no Save.
         firePropertyChange(PROP_DIRTY);
+        say(changes.size() == 1
+            ? "1 pending change. Save to send it."
+            : changes.size() + " pending changes. Save to send them.");
     }
 
     /**
@@ -405,6 +438,14 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
         }
         if (control instanceof Combo combo) {
             return combo.getText();
+        }
+        if (!(control instanceof Text)) {
+            // A setting shown but not offered: a quantizer that is already set is a Label, because
+            // the server has no way back to uncompressed. Casting it blindly threw from inside an
+            // SWT listener, where the exception is logged out of sight -- so on any collection with
+            // a quantizer, every edit anywhere on the form died before it could be queued, and the
+            // Save button never lit for anything.
+            return null;
         }
         String text = ((Text) control).getText().strip();
         // A field emptied by hand is not a request to delete the setting -- there is no way to
