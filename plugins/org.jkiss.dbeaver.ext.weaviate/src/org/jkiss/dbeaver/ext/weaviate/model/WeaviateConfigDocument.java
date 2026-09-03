@@ -180,6 +180,41 @@ public class WeaviateConfigDocument {
             : "vectorConfig." + vectorName + ".vectorIndexConfig";
     }
 
+    /**
+     * The names of this collection's {@code date} properties, in the order the server lists them.
+     * <p>
+     * For the one setting whose choices come from the collection rather than from a fixed list:
+     * object TTL can expire objects by a date property of their own, as well as by their creation
+     * or update time. Offering the wrong property is refused by the server naming the type, so the
+     * list is filtered here rather than left open.
+     */
+    @NotNull
+    public List<String> getDateProperties() {
+        List<String> names = new ArrayList<>();
+        JsonElement properties = find("properties");
+        if (properties == null || !properties.isJsonArray()) {
+            return names;
+        }
+        for (JsonElement element : properties.getAsJsonArray()) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
+            JsonObject property = element.getAsJsonObject();
+            JsonElement types = property.get("dataType");
+            JsonElement name = property.get("name");
+            if (types == null || !types.isJsonArray() || name == null || !name.isJsonPrimitive()) {
+                continue;
+            }
+            for (JsonElement type : types.getAsJsonArray()) {
+                if (type.isJsonPrimitive() && "date".equals(type.getAsString())) {
+                    names.add(name.getAsString());
+                    break;
+                }
+            }
+        }
+        return names;
+    }
+
     public void setString(@NotNull String path, @Nullable String value) {
         plant(path, value == null ? null : new JsonPrimitive(value));
     }

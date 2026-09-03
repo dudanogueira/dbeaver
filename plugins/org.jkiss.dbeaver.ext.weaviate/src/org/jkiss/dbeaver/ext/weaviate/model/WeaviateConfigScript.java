@@ -84,6 +84,7 @@ public final class WeaviateConfigScript {
         appendInvertedIndex(changes, lines);
         appendReplication(changes, lines);
         appendMultiTenancy(changes, lines);
+        appendObjectTtl(changes, lines);
         appendVectors(changes, lines);
 
         sb.append(String.join("\n", lines)).append(");\n");
@@ -145,6 +146,32 @@ public final class WeaviateConfigScript {
         sb.append(".enabled(true)");
         if (creation != null) sb.append(".autoTenantCreation(").append(creation).append(")");
         if (activation != null) sb.append(".autoTenantActivation(").append(activation).append(")");
+        lines.add(sb.append(")").toString());
+    }
+
+    private static void appendObjectTtl(List<Change> changes, List<String> lines) {
+        String enabled = valueOf(changes, WeaviateConfigSetting.TTL_ENABLED);
+        String ttl = valueOf(changes, WeaviateConfigSetting.TTL_DEFAULT);
+        String deleteOn = valueOf(changes, WeaviateConfigSetting.TTL_DELETE_ON);
+        String filter = valueOf(changes, WeaviateConfigSetting.TTL_FILTER_EXPIRED);
+        if (enabled == null && ttl == null && deleteOn == null && filter == null) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder("        .objectTtl(t -> t");
+        if (enabled != null) sb.append(".enabled(").append(enabled).append(")");
+        if (ttl != null) sb.append(".defaultTtlSeconds(").append(asInt(ttl)).append(")");
+        if (filter != null) sb.append(".filterExpiredObjects(").append(filter).append(")");
+        if (deleteOn != null) {
+            // The client writes deleteOn through three constrained helpers and offers no
+            // deleteOn(String), so a date property is only expressible by name through one of
+            // them. The plugin writes the field directly, which is one more place the snippet is
+            // a reading of the change rather than the change itself.
+            sb.append(switch (deleteOn) {
+                case WeaviateConfigSetting.CREATION_TIME -> ".deleteByCreationTime()";
+                case WeaviateConfigSetting.UPDATE_TIME -> ".deleteByUpdateTime()";
+                default -> ".deleteByDateProperty(\"" + escape(deleteOn) + "\")";
+            });
+        }
         lines.add(sb.append(")").toString());
     }
 

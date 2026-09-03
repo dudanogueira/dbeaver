@@ -119,6 +119,45 @@ public enum WeaviateConfigSetting {
         "Reading an inactive tenant wakes it, instead of being refused. Off, an inactive tenant "
             + "refuses reads until something activates it."),
 
+    /**
+     * Expiring objects by age, the one group here whose settings the server may refuse for a
+     * reason that is not about the collection.
+     * <p>
+     * {@code objectTtlConfig} needs a background scheduler the server only runs when
+     * {@code OBJECTS_TTL_DELETE_SCHEDULE} is set, and nothing in a collection's definition, or in
+     * {@code /v1/meta}, says whether it is. So unlike multi-tenancy this group is always shown:
+     * the alternative is hiding a working feature on every cluster that has it, to spare a refusal
+     * on the ones that do not. The refusal is legible anyway -- the server answers <em>enabling
+     * objectTTL requires a running background scheduler. Set OBJECTS_TTL_DELETE_SCHEDULE to
+     * activate it</em>, which names the fix.
+     * <p>
+     * The section is absent from a definition until something enables it, which is why
+     * {@link WeaviateConfigDocument} creates the objects on the way to a path.
+     */
+    TTL_ENABLED(
+        Group.OBJECT_TTL, Kind.BOOLEAN, "objectTtlConfig.enabled", "Expire objects",
+        "Delete objects once they are older than their time to live. Needs the server to be "
+            + "running its TTL scheduler; without it the save is refused, and the refusal names "
+            + "the environment variable to set."),
+    TTL_DEFAULT(
+        Group.OBJECT_TTL, Kind.INTEGER, "objectTtlConfig.defaultTtl", "Time to live (s)",
+        "How long an object lives, in seconds, unless it carries its own expiry.",
+        1d, null),
+    TTL_DELETE_ON(
+        Group.OBJECT_TTL, Kind.CHOICE, "objectTtlConfig.deleteOn", "Measured from",
+        "Which timestamp the age is counted from. The two underscore options are the object's own "
+            + "creation and update times; a date property of the collection can be used instead, "
+            + "and only date properties are offered because the server refuses any other type.",
+        // Spelled out rather than naming the constants: an enum constant cannot refer to a
+        // static field of its own class in its arguments.
+        List.of("_creationTimeUnix", "_lastUpdateTimeUnix")),
+    TTL_FILTER_EXPIRED(
+        Group.OBJECT_TTL, Kind.BOOLEAN, "objectTtlConfig.filterExpiredObjects",
+        "Hide expired before deletion",
+        "Leave an expired object out of query results from the moment it expires, rather than "
+            + "from whenever the scheduler next runs. Without it, an object stays visible until "
+            + "the next sweep."),
+
     EF(
         Group.VECTOR_INDEX, Kind.INTEGER, "ef", "ef",
         "How wide the search beam is at query time. Higher finds more and costs more. -1 hands it "
@@ -179,6 +218,11 @@ public enum WeaviateConfigSetting {
      */
     public static final String NO_QUANTIZER = "none";
 
+    /** The object's own creation time, as {@code deleteOn} spells it. */
+    public static final String CREATION_TIME = "_creationTimeUnix";
+    /** The object's own last-update time. */
+    public static final String UPDATE_TIME = "_lastUpdateTimeUnix";
+
     /** Which part of the definition a setting belongs to, and so which box it is drawn in. */
     public enum Group {
         GENERAL("General"),
@@ -186,6 +230,7 @@ public enum WeaviateConfigSetting {
         REPLICATION("Replication"),
         /** Shown only on a collection that has tenants; see {@link #AUTO_TENANT_CREATION}. */
         MULTI_TENANCY("Multi-tenancy"),
+        OBJECT_TTL("Object TTL"),
         /** Repeated once per vector, since a collection may have several with separate indexes. */
         VECTOR_INDEX("Vector index");
 
@@ -287,6 +332,23 @@ public enum WeaviateConfigSetting {
     @NotNull
     public List<String> getChoices() {
         return choices;
+    }
+
+    /**
+     * The choices to offer for a particular collection.
+     * <p>
+     * The same as {@link #getChoices()} everywhere but object TTL, whose expiry can be measured
+     * from a date property of the collection as well as from the object's own timestamps. A list
+     * that came only from this enum could not know those.
+     */
+    @NotNull
+    public List<String> choicesIn(@NotNull WeaviateConfigDocument document) {
+        if (this != TTL_DELETE_ON) {
+            return choices;
+        }
+        List<String> all = new java.util.ArrayList<>(choices);
+        all.addAll(document.getDateProperties());
+        return all;
     }
 
     @Nullable

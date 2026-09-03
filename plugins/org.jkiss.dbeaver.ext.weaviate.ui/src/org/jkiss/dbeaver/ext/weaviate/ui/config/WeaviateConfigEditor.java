@@ -300,7 +300,9 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
         }
         if (setting.getKind() == WeaviateConfigSetting.Kind.CHOICE) {
             Combo combo = new Combo(parent, SWT.READ_ONLY | SWT.BORDER);
-            List<String> choices = new ArrayList<>(setting.getChoices());
+            // From the collection, not only from the enum: object TTL can expire objects by one of
+            // their own date properties, which no fixed list could know.
+            List<String> choices = new ArrayList<>(setting.choicesIn(document));
             if (!current.isEmpty() && !choices.contains(current)) {
                 // The server is allowed to hold a value this build has never heard of, and a combo
                 // that silently reset it to its first entry would change a setting nobody touched.
