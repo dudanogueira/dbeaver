@@ -257,7 +257,6 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_generative_provider;
     public static String query_generative_provider_none;
     public static String query_generative_provider_default;
-    public static String query_generative_provider_default_none;
     public static String query_generative_model;
     public static String query_generative_temperature;
     public static String query_generative_max_tokens;

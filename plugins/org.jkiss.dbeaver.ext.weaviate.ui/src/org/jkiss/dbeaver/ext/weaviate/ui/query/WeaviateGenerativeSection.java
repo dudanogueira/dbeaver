@@ -79,6 +79,9 @@ public class WeaviateGenerativeSection {
     private final Map<WeaviateQueryMode, List<Control>> generativeWhenGenerating = new EnumMap<>(WeaviateQueryMode.class);
     private final Map<WeaviateQueryMode, List<Control>> generativeWhenProviderNamed = new EnumMap<>(WeaviateQueryMode.class);
 
+    /** Whether the collection names a generative module, and so whether a default is on offer. */
+    private boolean collectionHasGenerative;
+
     public WeaviateGenerativeSection(@NotNull WeaviateQueryPanelContext context) {
         this.context = context;
     }
@@ -221,23 +224,33 @@ public class WeaviateGenerativeSection {
                 log.debug("Failed to read the generative module", e);
             }
         }
-        String defaultEntry = moduleKind == null
-            ? WeaviateUIMessages.query_generative_provider_default_none
-            : NLS.bind(WeaviateUIMessages.query_generative_provider_default, moduleKind);
+        // No module on the collection means there is no default to fall back to, so the entry is
+        // not offered. It used to read "(collection default)" with nothing behind it: choosing it
+        // sent a generative request naming no provider, which the server refuses. An option whose
+        // only outcome is a refusal is worse than an absent one.
+        collectionHasGenerative = moduleKind != null;
+        String defaultEntry = collectionHasGenerative
+            ? NLS.bind(WeaviateUIMessages.query_generative_provider_default, moduleKind)
+            : null;
         List<String> properties = context.currentPropertyNames();
         for (WeaviateQueryMode mode : generativeProviderCombos.keySet()) {
             Combo combo = generativeProviderCombos.get(mode);
             if (combo == null || combo.isDisposed()) {
                 continue;
             }
-            int selected = combo.getSelectionIndex();
+            // Restored by text, not by index: the default entry comes and goes with the
+            // collection, so the same index can mean a different provider between refreshes.
+            String selected = combo.getText();
             combo.removeAll();
             combo.add(WeaviateUIMessages.query_generative_provider_none);
-            combo.add(defaultEntry);
+            if (defaultEntry != null) {
+                combo.add(defaultEntry);
+            }
             for (WeaviateGenerativeProvider provider : WeaviateGenerativeProvider.values()) {
                 combo.add(provider.getLabel());
             }
-            combo.select(Math.max(0, selected));
+            int restored = combo.indexOf(selected);
+            combo.select(restored < 0 ? 0 : restored);
             org.eclipse.swt.widgets.List list = generativePropertyLists.get(mode);
             if (list != null && !list.isDisposed()) {
                 List<String> keep = List.of(list.getSelection());
@@ -265,12 +278,24 @@ public class WeaviateGenerativeSection {
     public void syncVisibility(@NotNull WeaviateQueryMode mode) {
         int idx = providerIndex(mode);
         WeaviateSectionWidgets.setVisible(generativeWhenGenerating.get(mode), idx > 0);
-        WeaviateSectionWidgets.setVisible(generativeWhenProviderNamed.get(mode), idx > 1);
+        WeaviateSectionWidgets.setVisible(
+            generativeWhenProviderNamed.get(mode), idx >= providerOffset());
         Composite group = generativeGroups.get(mode);
         if (group != null && !group.isDisposed()) {
             group.layout(true, true);
         }
         context.reflow();
+    }
+
+    /**
+     * How many entries sit before the named providers.
+     * <p>
+     * One, or two when the collection has a generative module of its own and the "collection
+     * default" entry is therefore offered. Everything that reads the combo goes through this
+     * rather than assuming a fixed number, which is what the index arithmetic used to do.
+     */
+    private int providerOffset() {
+        return collectionHasGenerative ? 2 : 1;
     }
 
     public int providerIndex(@NotNull WeaviateQueryMode mode) {
@@ -288,7 +313,9 @@ public class WeaviateGenerativeSection {
     @Nullable
     public WeaviateGenerativeProvider selectedProvider(@NotNull WeaviateQueryMode mode) {
         int idx = providerIndex(mode);
-        return idx <= 1 ? null : WeaviateGenerativeProvider.values()[idx - 2];
+        return idx < providerOffset()
+            ? null
+            : WeaviateGenerativeProvider.values()[idx - providerOffset()];
     }
 
     /** Count = prompts filled in (0-2), so the folded title says whether anything will generate. */
@@ -429,8 +456,12 @@ public class WeaviateGenerativeSection {
         Combo providerCombo = generativeProviderCombos.get(mode);
         if (providerCombo != null && !providerCombo.isDisposed()) {
             WeaviateGenerativeProvider provider = task == null ? null : task.getProvider();
-            int idx = task == null ? 0 : provider == null ? 1 : provider.ordinal() + 2;
-            providerCombo.select(idx);
+            int idx = task == null
+                ? 0
+                : provider == null ? 1 : provider.ordinal() + providerOffset();
+            // A spec remembered against a collection that has since lost its generative module
+            // would land on the wrong entry, or past the end.
+            providerCombo.select(idx < providerCombo.getItemCount() ? idx : 0);
         }
         WeaviateSectionWidgets.setText(generativeModelFields.get(mode), task == null ? null : task.getModel());
         WeaviateSectionWidgets.setText(generativeTemperatureFields.get(mode),

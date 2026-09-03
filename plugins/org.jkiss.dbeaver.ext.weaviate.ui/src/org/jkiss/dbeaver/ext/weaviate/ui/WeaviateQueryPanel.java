@@ -86,7 +86,8 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     /** Lines of room for a query box. Three fits a sentence-long query without dwarfing the panel. */
     private static final int QUERY_BOX_LINES = 3;
 
-    private static final String NO_FUSION = "(default)";
+    /** The escape hatch: send no fusion type and let the server pick. Not the default. */
+    private static final String NO_FUSION = "(leave to the server)";
 
     private IResultSetPresentation presentation;
 
@@ -603,9 +604,13 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         hybridFusionCombo = new Combo(c, SWT.READ_ONLY);
         hybridFusionCombo.add(NO_FUSION);
         for (WeaviateHybridFusion ft : WeaviateHybridFusion.values()) {
-            hybridFusionCombo.add(ft.name());
+            hybridFusionCombo.add(ft.getLabel());
         }
-        hybridFusionCombo.select(0);
+        // Opinionated, unlike the search options, which all default to "leave it to the server".
+        // Those are settings someone reaches for deliberately; fusion is on screen for every
+        // hybrid search, and a blank there tells the reader nothing about what their query does.
+        // Naming the server's own default costs nothing and makes the panel describe the query.
+        hybridFusionCombo.setText(WeaviateHybridFusion.SERVER_DEFAULT.getLabel());
         hybridFusionCombo.setLayoutData(fillFieldData());
         addIncludeVectorField(c, WeaviateQueryMode.HYBRID);
         addMetadataFields(c, WeaviateQueryMode.HYBRID);
@@ -961,7 +966,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
             updateAlphaLabel();
         }
         if (spec.getFusionType() != null) {
-            hybridFusionCombo.setText(spec.getFusionType().name());
+            hybridFusionCombo.setText(spec.getFusionType().getLabel());
         } else {
             hybridFusionCombo.select(0);
         }
@@ -1106,12 +1111,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         if (hybridFusionCombo == null) return null;
         int idx = hybridFusionCombo.getSelectionIndex();
         if (idx <= 0) return null;
-        String name = hybridFusionCombo.getItem(idx);
-        try {
-            return WeaviateHybridFusion.valueOf(name);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
+        return WeaviateHybridFusion.byLabel(hybridFusionCombo.getItem(idx));
     }
 
     private static Float parseOptionalFloat(String raw, String label) {
