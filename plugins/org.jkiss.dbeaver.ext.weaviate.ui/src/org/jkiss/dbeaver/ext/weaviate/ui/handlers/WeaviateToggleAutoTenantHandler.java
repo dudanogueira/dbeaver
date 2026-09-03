@@ -105,9 +105,27 @@ public class WeaviateToggleAutoTenantHandler extends AbstractHandler implements 
             : WeaviateUIMessages.tenant_auto_activation_disable;
     }
 
+    /**
+     * Which collections this handler acts on, of those the selection points at.
+     * <p>
+     * The one thing the two registrations differ by. These entries are contributed twice -- in a
+     * submenu on a collection, flat under Multi-Tenancy -- and only one of the pair may be visible
+     * at a time. That cannot be done with {@code visibleWhen} alone: visibility follows enablement
+     * here, so a contribution visible where it is disabled shows as a greyed entry, and one keyed
+     * on an expression instead of on enablement shows up on every node in the tree. So the two
+     * registrations are two handlers that differ in this method, and each is enabled in exactly
+     * the place its entry belongs.
+     *
+     * @see WeaviateToggleAutoTenantBranchHandler
+     */
+    @NotNull
+    protected List<WeaviateCollection> inScope(@Nullable ISelection selection) {
+        return WeaviateTenancyNodes.selectedCollectionRows(selection);
+    }
+
     @Override
     public void setEnabled(Object evaluationContext) {
-        setBaseEnabled(!supported(WeaviateTenancyNodes.selectedCollections(
+        setBaseEnabled(!supported(inScope(
             WeaviateTenancyNodes.selectionOf(evaluationContext))).isEmpty());
     }
 
@@ -148,8 +166,7 @@ public class WeaviateToggleAutoTenantHandler extends AbstractHandler implements 
     @Override
     public Object execute(ExecutionEvent event) {
         ISelection selection = HandlerUtil.getCurrentSelection(event);
-        List<WeaviateCollection> collections = supported(
-            WeaviateTenancyNodes.selectedCollections(selection));
+        List<WeaviateCollection> collections = supported(inScope(selection));
         if (collections.isEmpty()) {
             return null;
         }
@@ -237,8 +254,8 @@ public class WeaviateToggleAutoTenantHandler extends AbstractHandler implements 
         if (window == null || window.getSelectionService() == null) {
             return;
         }
-        List<WeaviateCollection> collections = supported(
-            WeaviateTenancyNodes.selectedCollections(window.getSelectionService().getSelection()));
+        List<WeaviateCollection> collections =
+            supported(inScope(window.getSelectionService().getSelection()));
         if (collections.isEmpty()) {
             return;
         }

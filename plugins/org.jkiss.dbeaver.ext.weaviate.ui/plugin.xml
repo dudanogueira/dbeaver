@@ -257,21 +257,6 @@
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateAliasHandler"/>
     </extension>
 
-    <extension point="org.eclipse.core.expressions.definitions">
-        <!-- "the selection is collection rows, not something underneath one". Defined once
-             because it is used and negated, and two copies of an expression drift. -->
-        <definition id="org.jkiss.dbeaver.ext.weaviate.ui.selectionIsCollection">
-            <with variable="selection">
-                <count value="+"/>
-                <iterate operator="and">
-                    <adapt type="org.jkiss.dbeaver.model.struct.DBSObject">
-                        <instanceof value="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"/>
-                    </adapt>
-                </iterate>
-            </with>
-        </definition>
-    </extension>
-
     <extension point="org.eclipse.ui.menus">
         <menuContribution allPopups="false" locationURI="popup:org.eclipse.ui.popup.any?after=navigator_additions_end">
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.exportSchema">
@@ -318,31 +303,26 @@
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleTenantState">
                 <visibleWhen checkEnabled="true"/>
             </command>
-            <!-- The same two entries, contributed twice, and which pair you get depends on where
-                 you clicked.
+            <!-- The same two entries, contributed twice, and which pair you get depends on
+                 where you clicked.
 
                  On a collection they sit in a submenu. That menu is long (backups, aliases,
                  tenants, shards, docs) and two more collection-wide settings at the top of it
-                 read as more of the same.
+                 read as more of the same. On Multi-Tenancy and below they sit flat: getting
+                 there already said what they are about, so a submenu named after multi-tenancy
+                 inside the multi-tenancy branch is a level that carries nothing.
 
-                 On Multi-Tenancy or anything under it they sit flat. Getting there already said
-                 what they are about, so a submenu named after multi-tenancy inside the
-                 multi-tenancy branch is a level that carries nothing.
+                 The two are told apart by which handler is enabled where, not by a visibleWhen
+                 expression. Visibility follows enablement, so an entry visible where it is
+                 disabled shows as a greyed row, and keying visibility on an expression instead
+                 put both entries on every node in the tree, greyed, including nodes belonging to
+                 other extensions. Each command is therefore enabled in exactly one place.
 
-                 The split is by expression rather than by enablement: checkEnabled cannot tell
-                 the two cases apart, since the handler is enabled in both. A collection row
-                 adapts to WeaviateCollection and a tenancy folder or setting row does not, which
-                 is a question a core expression can answer, unlike "is this collection
-                 multi-tenant", which is why enablement still lives in the handler.
-
-                 Both entries are one command told apart by its option parameter. Labels and icons
-                 are set per selection in updateElement, so each names the change it will make
-                 rather than carrying a tick to interpret. -->
+                 Within each pair, one command told apart by its option parameter. Labels and
+                 icons are set per selection in updateElement, so each names the change it will
+                 make rather than carrying a tick to interpret. -->
             <menu id="weaviate-multi-tenant-options" label="Multi-Tenant Options"
                   icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/tools.svg">
-                <visibleWhen>
-                    <reference definitionId="org.jkiss.dbeaver.ext.weaviate.ui.selectionIsCollection"/>
-                </visibleWhen>
                 <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenant"
                          id="weaviate.autoTenantCreation">
                     <parameter name="option" value="creation"/>
@@ -354,23 +334,15 @@
                     <visibleWhen checkEnabled="true"/>
                 </command>
             </menu>
-            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenant"
-                     id="weaviate.autoTenantCreationFlat">
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenantHere"
+                     id="weaviate.autoTenantCreationHere">
                 <parameter name="option" value="creation"/>
-                <visibleWhen checkEnabled="true">
-                    <not>
-                        <reference definitionId="org.jkiss.dbeaver.ext.weaviate.ui.selectionIsCollection"/>
-                    </not>
-                </visibleWhen>
+                <visibleWhen checkEnabled="true"/>
             </command>
-            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenant"
-                     id="weaviate.autoTenantActivationFlat">
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenantHere"
+                     id="weaviate.autoTenantActivationHere">
                 <parameter name="option" value="activation"/>
-                <visibleWhen checkEnabled="true">
-                    <not>
-                        <reference definitionId="org.jkiss.dbeaver.ext.weaviate.ui.selectionIsCollection"/>
-                    </not>
-                </visibleWhen>
+                <visibleWhen checkEnabled="true"/>
             </command>
             <!-- checkEnabled hides the item on a property that is not tokenized at all, which
                  is a permanent fact about that property. A server merely being too old is not
@@ -602,15 +574,29 @@
                  set per element by the handler, so the command name above is never displayed. -->
             <commandParameter id="option" name="Option" optional="false"/>
         </command>
+        <!-- The same two settings again, for the flat entries under Multi-Tenancy. A second
+             command rather than a second contribution of the first, because the two have to be
+             enabled in different places and a handler cannot see which contribution is asking. -->
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenantHere"
+                name="Automatic Tenants"
+                description="Turn automatic tenant creation or activation on and off"
+                categoryId="org.jkiss.dbeaver.core.navigator">
+            <commandParameter id="option" name="Option" optional="false"/>
+        </command>
     </extension>
 
     <extension point="org.eclipse.ui.handlers">
         <!-- No <enabledWhen>: the condition is a folder meta id, which no built-in property
              tester exposes, and a tester from this lazily-activated bundle evaluates as
-             NOT_LOADED before the bundle starts. setEnabled() computes it. -->
+             NOT_LOADED before the bundle starts. setEnabled() computes it.
+             The two handlers differ only in which nodes they answer to. -->
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenant"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateToggleAutoTenantHandler"/>
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.toggleAutoTenantHere"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateToggleAutoTenantBranchHandler"/>
     </extension>
 
     <extension point="org.eclipse.ui.commands">

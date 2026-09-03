@@ -152,6 +152,40 @@ final class WeaviateTenancyNodes {
         return distinctCollections(selection, WeaviateTenancyNodes::multiTenantCollection);
     }
 
+    /**
+     * The multi-tenant collections the selection names <em>directly</em>, as collection rows.
+     * <p>
+     * Where the collection-level entries belong. A node under a collection resolves to nothing
+     * here, which is what keeps those entries off the tenancy branch, where the flat pair is
+     * shown instead.
+     */
+    @NotNull
+    static List<WeaviateCollection> selectedCollectionRows(@Nullable ISelection selection) {
+        return distinctCollections(selection,
+            node -> isCollectionRow(node) ? multiTenantCollection(node) : null);
+    }
+
+    /**
+     * The multi-tenant collections reached through a tenancy node rather than named directly.
+     * <p>
+     * Where the flat pair belongs: the Multi-Tenancy folder, a setting row inside it, or the
+     * Tenants folder. Not a tenant row -- "Enable Automatic Tenant Creation" offered on one tenant
+     * reads as though it were about that tenant, and a tenant already has its own
+     * Activate/Deactivate entry to be confused with. That exclusion lives in
+     * {@link #collectionScoped}.
+     */
+    @NotNull
+    static List<WeaviateCollection> selectedTenancyBranch(@Nullable ISelection selection) {
+        return distinctCollections(selection,
+            node -> isCollectionRow(node) ? null : collectionScoped(node));
+    }
+
+    /** Whether the node is a collection itself, rather than something underneath one. */
+    private static boolean isCollectionRow(@Nullable DBNNode node) {
+        return node instanceof DBNDatabaseNode databaseNode
+            && databaseNode.getObject() instanceof WeaviateCollection;
+    }
+
     @NotNull
     private static List<WeaviateCollection> distinctCollections(
         @Nullable ISelection selection, @NotNull Function<DBNNode, WeaviateCollection> resolver
