@@ -28,11 +28,8 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenant;
 import org.jkiss.dbeaver.ext.weaviate.ui.WeaviateTenantSelectDialog;
 import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
-import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
-import org.jkiss.dbeaver.model.navigator.DBNNode;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.ui.UIUtils;
-import org.jkiss.dbeaver.ui.navigator.NavigatorUtils;
 
 import java.lang.reflect.InvocationTargetException;
 import java.text.MessageFormat;
@@ -50,16 +47,37 @@ public class WeaviateSelectTenantHandler extends AbstractHandler {
 
     private static final Log log = Log.getLog(WeaviateSelectTenantHandler.class);
 
+    /**
+     * Offered only where there is a tenant to pick.
+     * <p>
+     * This used to be an {@code <enabledWhen>} testing {@code instanceof WeaviateCollection}, which
+     * put the entry on every collection and left "this one has no tenants" to a message box after
+     * the click. Whether a collection is multi-tenant is a permanent fact about it, so the entry
+     * belongs to the standing rule the rest of this branch follows: hide what can never apply, and
+     * explain only what merely does not apply yet. A core expression cannot ask the question --
+     * it has no way to call {@code isMultiTenant()} -- so the test moves here, where the other
+     * tenancy handlers already make theirs.
+     */
+    @Override
+    public void setEnabled(Object evaluationContext) {
+        setBaseEnabled(WeaviateTenancyNodes.selectedCollections(
+            WeaviateTenancyNodes.selectionOf(evaluationContext)).size() == 1);
+    }
+
     @Override
     public Object execute(ExecutionEvent event) {
         ISelection selection = HandlerUtil.getCurrentSelection(event);
-        DBNNode node = NavigatorUtils.getSelectedNode(selection);
-        if (!(node instanceof DBNDatabaseNode databaseNode)
-            || !(databaseNode.getObject() instanceof WeaviateCollection collection)) {
+        // Resolved the same way the enablement was, so the action works from wherever it appears:
+        // the collection row, its Multi-Tenancy folder, or one of the setting rows inside it.
+        List<WeaviateCollection> collections = WeaviateTenancyNodes.selectedCollections(selection);
+        if (collections.size() != 1) {
             return null;
         }
+        WeaviateCollection collection = collections.get(0);
         Shell shell = HandlerUtil.getActiveShell(event);
         if (!collection.isMultiTenant()) {
+            // Unreachable through the menu now that enablement asks the same question. Kept for a
+            // selection that went stale between the menu opening and the click.
             DBWorkbench.getPlatformUI().showMessageBox(
                 WeaviateUIMessages.tenant_dialog_title_plain,
                 MessageFormat.format(WeaviateUIMessages.tenant_not_multi_tenant, collection.getName()),

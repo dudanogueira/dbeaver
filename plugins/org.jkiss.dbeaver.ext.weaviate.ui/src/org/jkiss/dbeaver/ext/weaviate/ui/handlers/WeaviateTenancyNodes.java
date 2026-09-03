@@ -22,6 +22,7 @@ import org.eclipse.ui.ISources;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateMetadataField;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateTenantNode;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseFolder;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
@@ -55,7 +56,8 @@ final class WeaviateTenancyNodes {
 
     /**
      * The multi-tenant collection this node belongs to: the collection itself, its Multi-Tenancy
-     * or Tenants folder, or one of its tenants. Null for anything else, including a single-tenant
+     * or Tenants folder, a setting's row inside that folder, or one of its tenants. Null for
+     * anything else, including a single-tenant
      * collection -- whether a collection has tenants is a permanent fact about it, so an action
      * whose only outcome would be to explain that it does nothing is better absent.
      */
@@ -110,6 +112,13 @@ final class WeaviateTenancyNodes {
             }
             if (object instanceof WeaviateTenantNode tenant) {
                 return tenant.getParentObject() instanceof WeaviateCollection owner ? owner : null;
+            }
+            if (object instanceof WeaviateMetadataField) {
+                // A setting's own row -- "autoTenantCreation: false" -- is the most natural place
+                // to right-click one of these, and it used to resolve to nothing. Keep climbing:
+                // the folder above decides whether this row is a tenancy setting or, say, an
+                // inverted-index one, and the check on the next turn of the loop makes it.
+                continue;
             }
             return null;
         }
