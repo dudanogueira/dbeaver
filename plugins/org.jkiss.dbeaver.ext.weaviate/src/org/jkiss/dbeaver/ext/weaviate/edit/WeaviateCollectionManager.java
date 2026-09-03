@@ -183,7 +183,7 @@ public class WeaviateCollectionManager extends AbstractObjectManager<WeaviateCol
         DBECommand<WeaviateCollection> command,
         DBEPersistAction action
     ) throws DBException {
-        if (action instanceof WeaviateAction wa) {
+        if (action instanceof WeaviateEditAction wa) {
             wa.run();
         } else {
             super.executePersistAction(session, command, action);
@@ -213,7 +213,7 @@ public class WeaviateCollectionManager extends AbstractObjectManager<WeaviateCol
                 + indent(json)
                 + "'";
             return new DBEPersistAction[]{
-                new WeaviateAction(
+                new WeaviateEditAction(
                     "Create collection " + collection.getName(),
                     javaCode,
                     () -> {
@@ -275,7 +275,7 @@ public class WeaviateCollectionManager extends AbstractObjectManager<WeaviateCol
             String javaCode = "// Delete a Weaviate collection using the Java client v6\n" +
                 "client.collections.delete(\"" + escape(name) + "\");";
             return new DBEPersistAction[]{
-                new WeaviateAction(
+                new WeaviateEditAction(
                     "Delete collection " + name,
                     javaCode,
                     () -> {
@@ -304,60 +304,4 @@ public class WeaviateCollectionManager extends AbstractObjectManager<WeaviateCol
         }
     }
 
-    /**
-     * Persist action that carries Java client code in {@link #getScript()} for the SQL/script preview
-     * and runs the actual operation through {@link WeaviateCollectionManager#executePersistAction}
-     * so DBeaver does not try to feed the snippet to a SQL session.
-     */
-    private static class WeaviateAction implements DBEPersistAction {
-        @FunctionalInterface
-        interface Runner {
-            void run() throws DBException;
-        }
-
-        private final String title;
-        private final String script;
-        private final Runner runner;
-
-        WeaviateAction(@NotNull String title, @NotNull String script, @NotNull Runner runner) {
-            this.title = title;
-            this.script = script;
-            this.runner = runner;
-        }
-
-        void run() throws DBException {
-            runner.run();
-        }
-
-        @NotNull
-        @Override
-        public String getTitle() {
-            return title;
-        }
-
-        @NotNull
-        @Override
-        public String getScript() {
-            return script;
-        }
-
-        @Override
-        public void beforeExecute(@NotNull DBCSession session) {
-        }
-
-        @Override
-        public void afterExecute(@NotNull DBCSession session, @Nullable Throwable error) {
-        }
-
-        @NotNull
-        @Override
-        public ActionType getType() {
-            return ActionType.NORMAL;
-        }
-
-        @Override
-        public boolean isComplex() {
-            return false;
-        }
-    }
 }

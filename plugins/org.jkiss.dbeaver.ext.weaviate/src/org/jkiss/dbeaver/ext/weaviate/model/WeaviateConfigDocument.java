@@ -153,6 +153,33 @@ public class WeaviateConfigDocument {
         return result;
     }
 
+    /**
+     * The vectors whose index can be configured, in the order the server lists them.
+     * <p>
+     * A collection has either a {@code vectorConfig} map of named vectors or, on the older shape,
+     * a single top-level {@code vectorIndexConfig} with no name at all. The unnamed one is
+     * reported as an empty string, so a caller can treat both the same way and only the label has
+     * to care. Weaviate creates the named shape now -- a self-provided vector arrives as
+     * {@code "default"} -- but collections predating it are still out there, and one is sitting on
+     * the fixture cluster.
+     */
+    @NotNull
+    public List<String> getVectorNames() {
+        List<String> named = getKeys("vectorConfig");
+        if (!named.isEmpty()) {
+            return named;
+        }
+        return has("vectorIndexConfig") ? List.of("") : List.of();
+    }
+
+    /** Where one vector's index settings live, ready for a leaf to be appended. */
+    @NotNull
+    public String vectorIndexPath(@NotNull String vectorName) {
+        return vectorName.isEmpty()
+            ? "vectorIndexConfig"
+            : "vectorConfig." + vectorName + ".vectorIndexConfig";
+    }
+
     public void setString(@NotNull String path, @Nullable String value) {
         plant(path, value == null ? null : new JsonPrimitive(value));
     }

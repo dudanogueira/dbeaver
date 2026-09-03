@@ -37,6 +37,20 @@
         <configurator class="org.jkiss.dbeaver.ext.weaviate.ui.config.WeaviateCollectionConfigurator">
             <objectType name="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"/>
         </configurator>
+        <!-- type="folder" makes this a tab inside the collection editor rather than an editor of
+             its own, which is how postgresql.ui contributes its Scheduler page. One place for the
+             settings a running server will accept a change to, instead of a hunt through context
+             menus: everything else on a collection is read-only and stays in the tree. -->
+        <editor id="org.jkiss.dbeaver.ext.weaviate.ui.config.WeaviateConfigEditor"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.config.WeaviateConfigEditor"
+                objectType="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"
+                label="Configuration"
+                description="Collection settings this server allows changing"
+                icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/config_table.svg"
+                position="additions_middle"
+                type="folder">
+            <objectType name="org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection"/>
+        </editor>
     </extension>
 
     <extension point="org.eclipse.ui.commands">

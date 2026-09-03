@@ -497,22 +497,44 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
         return definitionNodes;
     }
 
+    /**
+     * The definition as the server stores it, verbatim.
+     * <p>
+     * The source for both the Raw Definition folder and the configuration editor, and the document
+     * an edit is applied to -- so what this build cannot model still travels back untouched.
+     * <p>
+     * Falls back to the client's narrower view on an OIDC connection, where a direct REST call
+     * cannot be authenticated. That fallback is fine for reading and not for writing: see
+     * {@link #isConfigEditable()}.
+     */
+    @NotNull
+    public String readRawDefinition() throws DBException {
+        if (dataSource.isRestApiAvailable()) {
+            return WeaviateSchemaRest.fetchCollectionSchema(dataSource, getName());
+        }
+        queryLog.debug("Direct REST unavailable on this connection; showing the definition of '"
+            + getName() + "' as understood by the client");
+        return toSchemaJson();
+    }
+
+    /**
+     * Whether configuration can be saved on this connection, as opposed to merely displayed.
+     * <p>
+     * A configuration change is a {@code PUT /v1/schema}, and REST cannot be authenticated on an
+     * OIDC connection -- the token is minted inside the client with no public accessor. Same limit
+     * RBAC and replication carry, and the same one that already makes creating a collection refuse
+     * there.
+     */
+    public boolean isConfigEditable() {
+        return dataSource.isRestApiAvailable();
+    }
+
     @NotNull
     private List<WeaviateJsonNode> loadDefinitionNodes() throws DBException {
         if (!persisted) {
             return Collections.emptyList();
         }
-        String rawJson;
-        if (dataSource.isRestApiAvailable()) {
-            rawJson = WeaviateSchemaRest.fetchCollectionSchema(dataSource, getName());
-        } else {
-            // OIDC connections cannot authenticate a direct REST call, so fall back to the client's
-            // own view of the definition. It is narrower - fields the bundled client cannot model
-            // are absent - but showing what we can beats showing nothing.
-            queryLog.debug("Direct REST unavailable on this connection; showing the definition of '"
-                + getName() + "' as understood by the client");
-            rawJson = toSchemaJson();
-        }
+        String rawJson = readRawDefinition();
         JsonElement root;
         try {
             root = JSON.toJsonElement(rawJson);
