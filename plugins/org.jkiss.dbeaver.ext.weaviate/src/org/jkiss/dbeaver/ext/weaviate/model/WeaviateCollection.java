@@ -286,6 +286,32 @@ public class WeaviateCollection
     }
 
     /**
+     * Re-read the definition before building a result's columns.
+     * <p>
+     * The columns of a Weaviate result come from the collection's schema, not from the response --
+     * there is no statement to describe itself the way a SQL result does. So the grid shows
+     * whatever schema this object last cached, and a collection recreated by another client keeps
+     * its old columns until someone refreshes the navigator by hand. Its new properties arrive in
+     * every row and are dropped on the way to the grid, which is the worst version of the bug: the
+     * data is there and silently discarded.
+     * <p>
+     * Only on the first page. A read is one fetch per page of the same result, and re-reading the
+     * schema for each of them would put a round trip between every scroll while proving nothing --
+     * the columns were fixed when the result set was created.
+     * <p>
+     * A failure here is not swallowed. Almost every reason this call fails is a reason the read
+     * that follows will fail too, and "collection no longer exists" said plainly beats the gRPC
+     * error the query would otherwise produce.
+     */
+    private void refreshSchemaBeforeRead(@NotNull DBRProgressMonitor monitor) throws DBException {
+        if (!persisted) {
+            return;
+        }
+        monitor.subTask("Read the definition of " + getName());
+        refreshConfig();
+    }
+
+    /**
      * The collection's declared properties, without the uuid attribute.
      * Callers that need what the grid shows want {@link #getAttributes} instead.
      */
@@ -628,6 +654,9 @@ public class WeaviateCollection
         // What actually executes: on an unarmed read the generative task is stripped -- it is
         // the one thing FETCH would still fire -- while the stored spec keeps it configured.
         WeaviateQuerySpec exec = armed ? spec : spec.withoutGenerative();
+        if (firstRow <= 0) {
+            refreshSchemaBeforeRead(monitor);
+        }
         List<WeaviateProperty> attributes = getProperties(monitor);
         List<String> declaredVectors = getVectorNames();
         List<String> vectorNames = includeVectors(session, spec)
