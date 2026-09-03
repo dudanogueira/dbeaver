@@ -102,6 +102,61 @@ public final class WeaviateSchemaRest {
     }
 
     /**
+     * Replace a collection's definition with {@code rawJson}, sent byte-for-byte.
+     * <p>
+     * The update twin of {@link #createCollection}, and it exists for a stronger version of the
+     * same reason. The client's {@code config.update} is a read-modify-write of its own object
+     * model: it GETs the config, re-serializes <em>all</em> of it, and PUTs that. Two consequences
+     * make it unusable for an editor. Its nested lambda setters allocate a fresh builder rather
+     * than seeding from the current value, so changing one field of {@code invertedIndexConfig}
+     * nulls its siblings. And every tagged-union reader returns null on a value its enum does not
+     * know, so a module from a newer server is read as nothing and then removed by the next
+     * unrelated save -- changing a description could drop a reranker.
+     * <p>
+     * Sending the document the server itself returned, with only the edited paths changed, has
+     * neither problem: fields this build cannot model travel through untouched because they were
+     * never parsed.
+     *
+     * @return the server's response body
+     * @throws DBException carrying the server's own explanation when it refuses
+     */
+    @NotNull
+    public static String updateCollection(
+        @NotNull WeaviateDataSource dataSource,
+        @NotNull String collectionName,
+        @NotNull String rawJson
+    ) throws DBException {
+        URI uri = URI.create(dataSource.getRestBaseUrl() + SCHEMA_PATH + "/"
+            + encodePathSegment(collectionName));
+        HttpRequest.Builder request = HttpRequest.newBuilder(uri)
+            .timeout(TIMEOUT)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .PUT(HttpRequest.BodyPublishers.ofString(rawJson, StandardCharsets.UTF_8));
+
+        String authorization = dataSource.getRestAuthorizationHeader();
+        if (authorization != null) {
+            request.header("Authorization", authorization);
+        }
+
+        HttpResponse<String> response;
+        try (HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build()) {
+            response = client.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            throw new DBException("Cannot reach Weaviate at " + uri + ": " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DBException("Interrupted while updating " + collectionName, e);
+        }
+
+        int status = response.statusCode();
+        if (status >= 200 && status < 300) {
+            return CommonUtils.notEmpty(response.body());
+        }
+        throw new DBException(describeFailure(status, response.body()));
+    }
+
+    /**
      * Set one shard's status, over REST.
      * <p>
      * Not through the client's {@code updateShards}, which cannot be used here. It PUTs each shard
