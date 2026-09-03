@@ -331,13 +331,6 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     }
 
     /**
-     * Re-measure the whole scrollable area after anything changes height.
-     * <p>
-     * One entry point on purpose. Laying out only the composite that changed leaves its ancestors
-     * holding the old preferred size, which is how a grown mode panel came to be drawn over the
-     * section beneath it instead of pushing it down.
-     */
-    /**
      * Show how many rows a section holds alongside its title.
      * <p>
      * The point of the count is the collapsed state: folded shut, the title is all there is, and
@@ -379,6 +372,13 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
         }
     }
 
+    /**
+     * Re-measure the whole scrollable area after anything changes height.
+     * <p>
+     * One entry point on purpose. Laying out only the composite that changed leaves its ancestors
+     * holding the old preferred size, which is how a grown mode panel came to be drawn over the
+     * section beneath it instead of pushing it down.
+     */
     @Override
     public void reflow() {
         if (reflowing || content == null || content.isDisposed() || scroller == null || scroller.isDisposed()) {
@@ -400,11 +400,26 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
     }
 
     private static GridLayout twoColumnLayout() {
-        GridLayout l = new GridLayout(2, false);
-        l.marginWidth = 0;
-        l.marginHeight = 0;
-        l.verticalSpacing = 6;
-        return l;
+        return zeroMargin(new GridLayout(2, false));
+    }
+
+    /**
+     * The same layout in one column, for a mode whose panel is not a grid of label-and-field.
+     * <p>
+     * Sharing {@link #zeroMargin} is the point. Fetch's panel used a plain {@code GridLayout},
+     * which carries SWT's default five-pixel margin, and every other mode's did not -- so the
+     * sections inside it, Generative among them, sat five pixels right of the sections outside it.
+     * A margin nobody chose is the kind of difference that reads as a mistake because it is one.
+     */
+    private static GridLayout oneColumnLayout() {
+        return zeroMargin(new GridLayout(1, false));
+    }
+
+    private static GridLayout zeroMargin(@NotNull GridLayout layout) {
+        layout.marginWidth = 0;
+        layout.marginHeight = 0;
+        layout.verticalSpacing = 6;
+        return layout;
     }
 
     private static GridData fillFieldData() {
@@ -417,7 +432,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
 
     private Composite createEmptyFields(Composite parent) {
         Composite c = new Composite(parent, SWT.NONE);
-        c.setLayout(new GridLayout(1, false));
+        c.setLayout(oneColumnLayout());
         Label l = new Label(c, SWT.WRAP);
         l.setText(WeaviateUIMessages.query_fetch_hint);
         addIncludeVectorField(c, WeaviateQueryMode.FETCH);
