@@ -16,6 +16,8 @@
  */
 package org.jkiss.dbeaver.ext.weaviate.ui.config;
 
+import org.eclipse.jface.action.IContributionManager;
+import org.eclipse.jface.action.Separator;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.layout.GridData;
@@ -40,7 +42,10 @@ import org.jkiss.dbeaver.model.edit.DBECommand;
 import org.jkiss.dbeaver.model.edit.DBECommandReflector;
 import org.jkiss.dbeaver.model.navigator.DBNEvent;
 import org.jkiss.dbeaver.ui.UIUtils;
+import org.eclipse.ui.IWorkbenchSite;
 import org.jkiss.dbeaver.ui.IRefreshablePart;
+import org.jkiss.dbeaver.ui.controls.ProgressPageControl;
+import org.jkiss.dbeaver.ui.editors.DatabaseEditorUtils;
 import org.jkiss.dbeaver.ui.editors.AbstractDatabaseObjectEditor;
 
 import java.lang.reflect.InvocationTargetException;
@@ -75,16 +80,44 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
     private record Bound(WeaviateConfigSetting setting, String vectorName, Control control) {
     }
 
+    private PageControl pageControl;
     private Composite form;
     private final List<Bound> bound = new ArrayList<>();
     private final Map<String, String> loaded = new LinkedHashMap<>();
     private WeaviateConfigDocument document;
     private boolean populating;
 
+    /**
+     * A tab inside the entity editor, wrapped the way {@code PostgreScheduleEditor} wraps its own.
+     * <p>
+     * The wrapper is not decoration. Save and Revert are contributed by the tab through
+     * {@code DatabaseEditorUtils.contributeStandardEditorActions}, so a folder editor that just
+     * puts a composite on the parent gets no Save button of its own -- what appears then depends
+     * on the surrounding editor, which is why it showed sometimes and not others.
+     */
     @Override
     public void createPartControl(Composite parent) {
-        form = new Composite(parent, SWT.NONE);
+        pageControl = new PageControl(parent);
+        form = new Composite(pageControl, SWT.NONE);
         form.setLayout(new GridLayout(1, false));
+        form.setLayoutData(new GridData(GridData.FILL_BOTH));
+        pageControl.createOrSubstituteProgressPanel(getSite());
+    }
+
+    private class PageControl extends ProgressPageControl {
+        PageControl(@NotNull Composite parent) {
+            super(parent, SWT.SHEET);
+        }
+
+        @Override
+        public void fillCustomActions(@NotNull IContributionManager manager) {
+            super.fillCustomActions(manager);
+            IWorkbenchSite site = getSite();
+            if (site != null) {
+                manager.add(new Separator());
+                DatabaseEditorUtils.contributeStandardEditorActions(site, manager);
+            }
+        }
     }
 
     @Override
@@ -140,6 +173,7 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
             return;
         }
         document = holder[0];
+        lastCommand = null;
         build(collection);
     }
 
@@ -300,10 +334,21 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
         }
         List<WeaviateConfigScript.Change> changes = collectChanges();
         if (lastCommand != null) {
-            removeChangeCommand(lastCommand);
+            try {
+                removeChangeCommand(lastCommand);
+            } catch (RuntimeException e) {
+                // The queue is emptied by a save and by a revert, and neither tells this editor.
+                // A command that has already left it is not an error, and must not stop the next
+                // edit from queueing -- which is what made the Save button stop appearing after
+                // the first save.
+                log.debug("Previous configuration change was already off the queue", e);
+            }
             lastCommand = null;
         }
         if (changes.isEmpty()) {
+            // Back to what the server holds. Tell the workbench, or Save stays lit with nothing
+            // behind it.
+            firePropertyChange(PROP_DIRTY);
             return;
         }
         lastCommand = new WeaviateConfigUpdateCommand(getDatabaseObject(), changes);
@@ -319,8 +364,19 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
                 reload();
             }
         });
+        // AbstractDatabaseObjectEditor.addChangeCommand does not fire this -- the version that did
+        // is commented out in that class -- so without it the command sits on the queue and the
+        // workbench never learns the editor is dirty. No dirty marker, and no Save.
+        firePropertyChange(PROP_DIRTY);
     }
 
+    /**
+     * The change queued for this tab, or null when the form matches the server.
+     * <p>
+     * Cleared whenever the form is rebuilt, because a save or a revert empties the queue without
+     * telling the editor, and holding a reference to a command that has left it is how the next
+     * edit fails to queue.
+     */
     private WeaviateConfigUpdateCommand lastCommand;
 
     @NotNull

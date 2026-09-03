@@ -20,6 +20,7 @@ import org.eclipse.core.commands.AbstractHandler;
 import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.ui.handlers.HandlerUtil;
+import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
@@ -38,7 +39,12 @@ import org.jkiss.dbeaver.ui.navigator.actions.NavigatorHandlerObjectOpen;
 import java.lang.reflect.InvocationTargetException;
 
 /**
- * Opens a collection's data from the Shards branch, on double-click.
+ * Opens a collection's data on double-click, from the collection itself or from the Shards branch.
+ * <p>
+ * On a collection, this is about which tab you land on. The platform reopens an editor showing
+ * whatever was last active, so once someone had visited Configuration, every later double-click
+ * took them back there -- and double-clicking a table is how you ask to see its rows. Naming the
+ * Data page explicitly makes the gesture mean the same thing every time.
  * <p>
  * Under Cluster Nodes a node's shards are grouped by collection, and that grouping row is the one
  * thing in that branch someone is likely to want to act on: they have found where a collection
@@ -70,6 +76,15 @@ public class WeaviateOpenCollectionDataHandler extends AbstractHandler {
     @Override
     public Object execute(ExecutionEvent event) {
         ISelection selection = HandlerUtil.getCurrentSelection(event);
+
+        // A collection row already is the object, so there is nothing to look up and nothing that
+        // can have gone stale between the tree and the server.
+        WeaviateCollection direct = selectedCollection(selection);
+        if (direct != null) {
+            open(event, direct);
+            return null;
+        }
+
         WeaviateShardGroup group = shardGroupOf(selection);
         if (group == null) {
             return null;
@@ -116,6 +131,29 @@ public class WeaviateOpenCollectionDataHandler extends AbstractHandler {
         }
         NavigatorHandlerObjectOpen.openEntityEditor(
             target[0], DATA_PAGE_ID, HandlerUtil.getActiveWorkbenchWindow(event));
+        return null;
+    }
+
+    private static void open(@NotNull ExecutionEvent event, @NotNull WeaviateCollection collection) {
+        DBNDatabaseNode node = NavigatorHandlerObjectOpen.getNodeByObject(collection);
+        if (node != null) {
+            NavigatorHandlerObjectOpen.openEntityEditor(
+                node, DATA_PAGE_ID, HandlerUtil.getActiveWorkbenchWindow(event));
+        }
+    }
+
+    @Nullable
+    private static WeaviateCollection selectedCollection(@Nullable ISelection selection) {
+        if (selection == null) {
+            return null;
+        }
+        for (DBNNode node : NavigatorUtils.getSelectedNodes(selection)) {
+            if (node instanceof DBNDatabaseNode databaseNode
+                && databaseNode.getObject() instanceof WeaviateCollection collection
+            ) {
+                return collection;
+            }
+        }
         return null;
     }
 

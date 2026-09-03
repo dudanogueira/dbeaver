@@ -108,6 +108,14 @@
                         description="Weaviate collections">
                     <items label="Collections" itemLabel="Collection"
                            path="collection" property="collections" icon="#folder_table">
+                        <!-- Double-click always lands on Data. Without this the platform reopens
+                             the editor on whatever tab was last active, so one visit to
+                             Configuration made every later double-click go there, and
+                             double-clicking a table is how you ask to see its rows. Only the
+                             double-click is redirected: F4 and the context menu do not consult
+                             this handler. -->
+                        <handler action="open"
+                                 command="org.jkiss.dbeaver.ext.weaviate.ui.openCollectionData"/>
                         <folder type="org.jkiss.dbeaver.ext.weaviate.model.WeaviateProperty"
                                 id="properties" label="Properties"
                                 icon="#columns"
