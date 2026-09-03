@@ -492,10 +492,7 @@ public final class WeaviateReplicationRest {
             request.method(method, HttpRequest.BodyPublishers.noBody());
         }
 
-        String authorization = ds.getRestAuthorizationHeader();
-        if (authorization != null) {
-            request.header("Authorization", authorization);
-        }
+        WeaviateRestHeaders.applyTo(request, ds);
 
         HttpResponse<String> response;
         try (HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build()) {

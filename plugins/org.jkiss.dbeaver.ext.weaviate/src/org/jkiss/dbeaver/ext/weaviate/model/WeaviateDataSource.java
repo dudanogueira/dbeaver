@@ -560,6 +560,23 @@ public class WeaviateDataSource extends AbstractDataSource
     }
 
     /**
+     * The model-provider headers this connection sends, for the REST helpers.
+     * <p>
+     * The client is given the same map once, when it is built, and attaches it to every request it
+     * makes. The plugin's own REST calls have to add it per request, which is what
+     * {@code WeaviateRestHeaders} exists to make uniform -- a collection naming a vectorizer,
+     * reranker or generative provider is created and updated over REST, and the server needs the
+     * provider's key on that request to accept it.
+     * <p>
+     * Resolved per call rather than cached with the client, so a key added in connection settings
+     * takes effect on the next request instead of on the next reconnection.
+     */
+    @NotNull
+    Map<String, String> getModelHeaders() {
+        return WeaviateModelHeaders.resolve(container.getActualConnectionConfiguration());
+    }
+
+    /**
      * Add a newly created collection to the cached list, keeping that exact instance.
      * <p>
      * Deliberately not an {@code invalidateCollections()} + reload: the navigator resolves the

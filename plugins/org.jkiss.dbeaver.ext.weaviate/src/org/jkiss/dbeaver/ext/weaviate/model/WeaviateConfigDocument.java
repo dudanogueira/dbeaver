@@ -229,6 +229,49 @@ public class WeaviateConfigDocument {
         return result;
     }
 
+    /**
+     * Every leaf under a path, as dotted name to rendered value, in the order the server sent them.
+     * <p>
+     * For showing a section of the definition as rows. Unlike reflecting the client's object model,
+     * this cannot omit what it does not understand: a quantizer block the client drops because it
+     * is switched off, or a field added by a newer server, is a leaf like any other.
+     * <p>
+     * Nulls are kept and rendered as {@code null}, because in a definition an explicit null is the
+     * server saying something -- {@code stopwords.additions} is null rather than absent when there
+     * are none.
+     */
+    @NotNull
+    public Map<String, String> flatten(@NotNull String path) {
+        Map<String, String> out = new LinkedHashMap<>();
+        JsonElement root = path.isEmpty() ? this.root : find(path);
+        if (root != null) {
+            flattenInto(out, "", root);
+        }
+        return out;
+    }
+
+    private static void flattenInto(
+        @NotNull Map<String, String> out, @NotNull String prefix, @NotNull JsonElement node
+    ) {
+        if (node.isJsonObject()) {
+            for (Map.Entry<String, JsonElement> entry : node.getAsJsonObject().entrySet()) {
+                String name = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
+                flattenInto(out, name, entry.getValue());
+            }
+            return;
+        }
+        if (prefix.isEmpty()) {
+            return;
+        }
+        if (node.isJsonArray()) {
+            // Rendered inline rather than one row per element: these are short lists of names, and
+            // a row called "additions.0" reads worse than the list does.
+            out.put(prefix, node.toString());
+            return;
+        }
+        out.put(prefix, node.isJsonNull() ? "null" : node.getAsString());
+    }
+
     public void remove(@NotNull String path) {
         plant(path, null);
     }

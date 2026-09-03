@@ -120,10 +120,7 @@ public final class WeaviateNodesRest {
             .header("Accept", "application/json")
             .GET();
 
-        String authorization = dataSource.getRestAuthorizationHeader();
-        if (authorization != null) {
-            request.header("Authorization", authorization);
-        }
+        WeaviateRestHeaders.applyTo(request, dataSource);
 
         HttpResponse<String> response;
         try (HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build()) {

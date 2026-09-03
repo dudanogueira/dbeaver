@@ -79,10 +79,7 @@ public final class WeaviateSchemaRest {
             // no parsing, no re-encoding of the document itself.
             .POST(HttpRequest.BodyPublishers.ofString(rawJson, StandardCharsets.UTF_8));
 
-        String authorization = dataSource.getRestAuthorizationHeader();
-        if (authorization != null) {
-            request.header("Authorization", authorization);
-        }
+        WeaviateRestHeaders.applyTo(request, dataSource);
 
         HttpResponse<String> response;
         try (HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build()) {
@@ -134,10 +131,7 @@ public final class WeaviateSchemaRest {
             .header("Accept", "application/json")
             .PUT(HttpRequest.BodyPublishers.ofString(rawJson, StandardCharsets.UTF_8));
 
-        String authorization = dataSource.getRestAuthorizationHeader();
-        if (authorization != null) {
-            request.header("Authorization", authorization);
-        }
+        WeaviateRestHeaders.applyTo(request, dataSource);
 
         HttpResponse<String> response;
         try (HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build()) {
@@ -189,10 +183,7 @@ public final class WeaviateSchemaRest {
             .PUT(HttpRequest.BodyPublishers.ofString(
                 "{\"status\":\"" + status + "\"}", StandardCharsets.UTF_8));
 
-        String authorization = dataSource.getRestAuthorizationHeader();
-        if (authorization != null) {
-            request.header("Authorization", authorization);
-        }
+        WeaviateRestHeaders.applyTo(request, dataSource);
 
         HttpResponse<String> response;
         try (HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build()) {
@@ -244,10 +235,7 @@ public final class WeaviateSchemaRest {
             .header("Accept", "application/json")
             .GET();
 
-        String authorization = dataSource.getRestAuthorizationHeader();
-        if (authorization != null) {
-            request.header("Authorization", authorization);
-        }
+        WeaviateRestHeaders.applyTo(request, dataSource);
 
         HttpResponse<String> response;
         try (HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build()) {

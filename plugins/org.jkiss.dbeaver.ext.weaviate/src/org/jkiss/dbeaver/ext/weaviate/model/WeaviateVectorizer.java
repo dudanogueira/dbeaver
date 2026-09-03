@@ -22,16 +22,22 @@ import io.weaviate.client6.v1.api.collections.vectorindex.MultiVector;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
+import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.meta.Association;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.struct.DBSObject;
 import org.jkiss.dbeaver.model.struct.DBSObjectContainer;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class WeaviateVectorizer implements DBSObject, DBSObjectContainer {
+
+    private static final Log log = Log.getLog(WeaviateVectorizer.class);
 
     private final WeaviateCollection collection;
     private final String vectorName;
@@ -87,9 +93,66 @@ public class WeaviateVectorizer implements DBSObject, DBSObjectContainer {
     @Association
     public List<WeaviateMetadataField> getFields(@NotNull DBRProgressMonitor monitor) {
         if (fields == null) {
-            fields = WeaviateRecordIntrospect.toFields(this, vectorConfig);
+            fields = loadFields();
         }
         return fields;
+    }
+
+    /**
+     * The vector's settings as the server reports them, not as the client models them.
+     * <p>
+     * Reflecting the client's {@code VectorConfig} loses most of what is worth seeing here. Its
+     * {@code Hnsw} record models thirteen of the nineteen fields a 1.39 server sends for an index,
+     * and the quantizers are not among them: the client lifts whichever one is switched on into a
+     * separate {@code quantization} union and drops the other three entirely, so a collection with
+     * no quantizer showed nothing at all and one with PQ showed it only obliquely. It also has no
+     * field for {@code skipDefaultQuantization} or {@code trackDefaultQuantization}.
+     * <p>
+     * So this reads the definition instead, exactly as the Raw Definition folder does and for the
+     * same reason. What the client cannot model still appears, and a field added by a newer server
+     * appears without this plugin being changed.
+     * <p>
+     * Falls back to the client's view on an OIDC connection, where a REST call cannot be
+     * authenticated: narrower, and better than an empty folder.
+     */
+    @NotNull
+    private List<WeaviateMetadataField> loadFields() {
+        try {
+            WeaviateConfigDocument document =
+                WeaviateConfigDocument.of(collection.readRawDefinition());
+            String path = document.getKeys("vectorConfig").contains(vectorName)
+                ? "vectorConfig." + vectorName
+                : "";
+            Map<String, String> flat = path.isEmpty()
+                // The older shape: one unnamed index, its settings at the top level beside the
+                // vectorizer's own name. Only those keys, so the rest of the definition -- the
+                // properties, the replication config -- does not land in this folder.
+                ? legacyFields(document)
+                : document.flatten(path);
+            List<WeaviateMetadataField> result = new ArrayList<>(flat.size());
+            for (Map.Entry<String, String> entry : flat.entrySet()) {
+                result.add(new WeaviateMetadataField(this, entry.getKey(), entry.getValue()));
+            }
+            return result;
+        } catch (DBException | RuntimeException e) {
+            log.debug("Cannot read the definition of " + collection.getName()
+                + "; showing vector '" + vectorName + "' as the client models it", e);
+            return WeaviateRecordIntrospect.toFields(this, vectorConfig);
+        }
+    }
+
+    @NotNull
+    private static Map<String, String> legacyFields(@NotNull WeaviateConfigDocument document) {
+        Map<String, String> flat = new LinkedHashMap<>();
+        for (String key : List.of("vectorizer", "vectorIndexType")) {
+            String value = document.getString(key);
+            if (value != null) {
+                flat.put(key, value);
+            }
+        }
+        document.flatten("vectorIndexConfig")
+            .forEach((name, value) -> flat.put("vectorIndexConfig." + name, value));
+        return flat;
     }
 
     @Nullable
