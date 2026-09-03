@@ -129,7 +129,34 @@ public enum WeaviateConfigSetting {
     SKIP(
         Group.VECTOR_INDEX, Kind.BOOLEAN, "skip", "Skip vectorization",
         "Stop building vectors for this index. Documented immutable; the server accepts it, which "
-            + "is one of the three places the documentation and the server disagree.");
+            + "is one of the three places the documentation and the server disagree."),
+
+    /**
+     * Compression, and the one setting here that cannot be taken back.
+     * <p>
+     * All four quantizers were measured switching on against a populated collection, which is the
+     * only way to measure them: an empty one accepts the configuration and never trains, which
+     * reads as success and is not. Weaviate's own documentation is equally clear that quantization
+     * cannot be disabled once set, so this is a one-way door and the UI treats it as one.
+     * <p>
+     * Its path is the index itself rather than a leaf, because the value chooses the path:
+     * picking {@code rq} writes {@code rq.enabled}. {@code WeaviateConfigUpdateCommand} does that
+     * translation, at the one place that knows both the choice and the document.
+     */
+    QUANTIZER(
+        Group.VECTOR_INDEX, Kind.QUANTIZER, "", "Quantization",
+        "Compresses stored vectors, trading recall for memory. RQ is the one Weaviate recommends. "
+            + "This cannot be undone: the server offers no way back to uncompressed, so the only "
+            + "way out is to rebuild the collection.",
+        List.of("none", "rq", "bq", "sq", "pq"));
+
+    /**
+     * The choice standing for "not compressed".
+     * <p>
+     * Declared after the constants because an enum constant cannot reference a static field of its
+     * own class in its arguments, so the list above spells it literally.
+     */
+    public static final String NO_QUANTIZER = "none";
 
     /** Which part of the definition a setting belongs to, and so which box it is drawn in. */
     public enum Group {
@@ -157,7 +184,9 @@ public enum WeaviateConfigSetting {
 
     /** What kind of control the setting needs, and how its value is read back out of the form. */
     public enum Kind {
-        TEXT, INTEGER, LONG, DECIMAL, BOOLEAN, CHOICE, WORD_LIST
+        TEXT, INTEGER, LONG, DECIMAL, BOOLEAN, CHOICE, WORD_LIST,
+        /** A choice like {@link #CHOICE}, but one-way: see {@link WeaviateConfigSetting#QUANTIZER}. */
+        QUANTIZER
     }
 
     private final Group group;
@@ -242,9 +271,33 @@ public enum WeaviateConfigSetting {
      */
     @NotNull
     public String pathIn(@NotNull WeaviateConfigDocument document, @NotNull String vectorName) {
-        return group.isPerVector()
-            ? document.vectorIndexPath(vectorName) + "." + path
-            : path;
+        if (!group.isPerVector()) {
+            return path;
+        }
+        String index = document.vectorIndexPath(vectorName);
+        // An empty path means the index itself, which is what QUANTIZER addresses: the value it
+        // carries decides the leaf underneath.
+        return path.isEmpty() ? index : index + "." + path;
+    }
+
+    /**
+     * Which quantizer a definition currently has, or {@link #NO_QUANTIZER}.
+     * <p>
+     * Read by scanning for one that is switched on rather than by trusting a single field: the
+     * server reports all four, each with its own {@code enabled} flag, and the one that is true is
+     * the answer.
+     */
+    @NotNull
+    public static String quantizerIn(
+        @NotNull WeaviateConfigDocument document, @NotNull String vectorName
+    ) {
+        String index = document.vectorIndexPath(vectorName);
+        for (String quantizer : List.of("rq", "bq", "sq", "pq")) {
+            if (Boolean.TRUE.equals(document.getBoolean(index + "." + quantizer + ".enabled"))) {
+                return quantizer;
+            }
+        }
+        return NO_QUANTIZER;
     }
 
     /** The settings of one group, in declaration order. */

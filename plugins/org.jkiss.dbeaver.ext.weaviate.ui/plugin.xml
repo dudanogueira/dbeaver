@@ -238,6 +238,13 @@
                 name="Open Collection Data"
                 description="Open the data of the collection these shards belong to"
                 categoryId="org.jkiss.dbeaver.core.navigator"/>
+        <!-- The way into the Configuration tab from the tree. A tab is only found by someone who
+             already knows it is there, and these settings had no route at all before it. -->
+        <command
+                id="org.jkiss.dbeaver.ext.weaviate.ui.editCollectionConfig"
+                name="Change Collection Configuration..."
+                description="Open the settings of this collection that the server allows changing"
+                categoryId="org.jkiss.dbeaver.core.navigator"/>
         <!-- One command with a parameter, unlike replication's one-per-action split. That split
              existed because enablement differed between the actions; here both apply to any alias
              row, and only the label and icon differ, which updateElement sets per entry. -->
@@ -253,6 +260,8 @@
     <extension point="org.eclipse.ui.commandImages">
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.createAlias"
                icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/add.png"/>
+        <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.editCollectionConfig"
+               icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/misc/config_table.svg"/>
         <image commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageAlias"
                icon="platform:/plugin/org.jkiss.dbeaver.ui/icons/edit.svg"/>
     </extension>
@@ -266,6 +275,9 @@
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.openCollectionData"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateOpenCollectionDataHandler"/>
+        <handler
+                commandId="org.jkiss.dbeaver.ext.weaviate.ui.editCollectionConfig"
+                class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateEditConfigHandler"/>
         <handler
                 commandId="org.jkiss.dbeaver.ext.weaviate.ui.manageAlias"
                 class="org.jkiss.dbeaver.ext.weaviate.ui.handlers.WeaviateAliasHandler"/>
@@ -295,6 +307,9 @@
                 <visibleWhen checkEnabled="true"/>
             </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.setShardStatus">
+                <visibleWhen checkEnabled="true"/>
+            </command>
+            <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.editCollectionConfig">
                 <visibleWhen checkEnabled="true"/>
             </command>
             <command commandId="org.jkiss.dbeaver.ext.weaviate.ui.createAlias">

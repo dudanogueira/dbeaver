@@ -126,6 +126,14 @@ public class WeaviateConfigUpdateCommand extends DBECommandAbstract<WeaviateColl
         String path = setting.pathIn(document, change.vectorName());
         String value = change.value();
         switch (setting.getKind()) {
+            case QUANTIZER -> {
+                // The choice picks the leaf: rq writes rq.enabled. Nothing is written for "none",
+                // because there is no way back to uncompressed and the editor never offers one --
+                // an unquantized collection can only move away from that state.
+                if (!WeaviateConfigSetting.NO_QUANTIZER.equals(value)) {
+                    document.setBoolean(path + "." + value + ".enabled", true);
+                }
+            }
             case INTEGER -> document.setNumber(path, (int) Double.parseDouble(value));
             case LONG -> document.setNumber(path, (long) Double.parseDouble(value));
             case DECIMAL -> document.setNumber(path, Double.parseDouble(value));

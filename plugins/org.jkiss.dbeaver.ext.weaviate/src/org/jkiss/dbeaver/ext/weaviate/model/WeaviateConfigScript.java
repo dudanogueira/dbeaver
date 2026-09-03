@@ -169,6 +169,10 @@ public final class WeaviateConfigScript {
             case FILTER_STRATEGY -> "filterStrategy(Hnsw.FilterStrategy."
                 + change.value().toUpperCase(Locale.ROOT) + ")";
             case SKIP -> "skipVectorization(" + change.value() + ")";
+            // Not an Hnsw call at all: the client hangs quantization off the vectorizer, one level
+            // up from the index, while the server reports it inside vectorIndexConfig. Rendered
+            // here anyway so the snippet stays one readable block; see the note it carries.
+            case QUANTIZER -> "/* .quantization(Quantization." + change.value() + "()) */";
             default -> change.setting().name().toLowerCase(Locale.ROOT) + "(" + change.value() + ")";
         };
     }

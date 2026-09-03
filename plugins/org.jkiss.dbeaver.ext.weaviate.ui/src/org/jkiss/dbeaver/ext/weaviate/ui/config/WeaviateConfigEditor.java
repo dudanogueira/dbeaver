@@ -207,7 +207,7 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
 
         for (WeaviateConfigSetting setting : settings) {
             String path = setting.pathIn(document, vector);
-            String current = valueAt(setting, path);
+            String current = valueAt(setting, path, vector);
             loaded.put(key(setting, vector), current);
             UIUtils.createLabel(box, setting.getLabel());
             Control control = createControl(box, setting, current);
@@ -218,8 +218,11 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
     }
 
     @NotNull
-    private String valueAt(@NotNull WeaviateConfigSetting setting, @NotNull String path) {
+    private String valueAt(
+        @NotNull WeaviateConfigSetting setting, @NotNull String path, @NotNull String vector
+    ) {
         return switch (setting.getKind()) {
+            case QUANTIZER -> WeaviateConfigSetting.quantizerIn(document, vector);
             case BOOLEAN -> String.valueOf(Boolean.TRUE.equals(document.getBoolean(path)));
             case WORD_LIST -> String.join(", ", document.getStrings(path));
             case INTEGER, LONG -> {
@@ -252,6 +255,9 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
             check.setSelection(Boolean.parseBoolean(current));
             check.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> onEdit()));
             return check;
+        }
+        if (setting.getKind() == WeaviateConfigSetting.Kind.QUANTIZER) {
+            return createQuantizerControl(parent, setting, current);
         }
         if (setting.getKind() == WeaviateConfigSetting.Kind.CHOICE) {
             Combo combo = new Combo(parent, SWT.READ_ONLY | SWT.BORDER);
@@ -348,6 +354,50 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
         // A field emptied by hand is not a request to delete the setting -- there is no way to
         // express that here, and the server would take the absence as "leave it alone" anyway.
         return text.isEmpty() ? null : text;
+    }
+
+    /**
+     * The quantizer picker, which is not a combo like the others because the change is one-way.
+     * <p>
+     * A collection that already has one shows it and offers nothing: the server has no way back to
+     * uncompressed, and swapping one quantizer for another is the same door in a different colour.
+     * A collection that has none offers all four, and asks before queueing the change rather than
+     * only at Save -- the save confirmation lists it beside settings that are all reversible, and
+     * this one is not.
+     */
+    @NotNull
+    private Control createQuantizerControl(
+        @NotNull Composite parent, @NotNull WeaviateConfigSetting setting, @NotNull String current
+    ) {
+        if (!WeaviateConfigSetting.NO_QUANTIZER.equals(current)) {
+            Label fixed = new Label(parent, SWT.NONE);
+            fixed.setText(current + "  (cannot be changed or removed)");
+            fixed.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+            return fixed;
+        }
+        Combo combo = new Combo(parent, SWT.READ_ONLY | SWT.BORDER);
+        setting.getChoices().forEach(combo::add);
+        combo.select(0);
+        combo.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+        combo.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> {
+            String chosen = combo.getText();
+            if (!WeaviateConfigSetting.NO_QUANTIZER.equals(chosen) && !confirmQuantizer(chosen)) {
+                combo.select(0);
+                return;
+            }
+            onEdit();
+        }));
+        return combo;
+    }
+
+    private boolean confirmQuantizer(@NotNull String quantizer) {
+        return UIUtils.confirmAction(
+            form.getShell(),
+            "Enable " + quantizer.toUpperCase(java.util.Locale.ROOT) + " quantization",
+            "Compressing this collection's vectors cannot be undone. Weaviate offers no way back "
+                + "to uncompressed storage, so the only way out is to rebuild the collection and "
+                + "reload its data.\n\nEnable " + quantizer.toUpperCase(java.util.Locale.ROOT)
+                + " on save?");
     }
 
     @NotNull

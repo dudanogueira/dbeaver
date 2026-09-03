@@ -63,6 +63,7 @@ import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.DBPDataKind;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBPRefreshableObject;
+import org.jkiss.dbeaver.model.DBPToolTipObject;
 import org.jkiss.dbeaver.model.DBUtils;
 import org.jkiss.dbeaver.model.data.DBDAttributeConstraint;
 import org.jkiss.dbeaver.model.data.DBDDataFilter;
@@ -100,7 +101,8 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.TreeMap;
 
-public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRefreshableObject {
+public class WeaviateCollection
+    implements DBSEntity, DBSDataManipulator, DBPRefreshableObject, DBPToolTipObject {
 
     private static final Log log = Log.getLog(WeaviateCollection.class);
 
@@ -248,6 +250,22 @@ public class WeaviateCollection implements DBSEntity, DBSDataManipulator, DBPRef
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 2)
     public String getDescription() {
         return config.description();
+    }
+
+    /**
+     * The description, shown after the name in the tree as {@code Products (the catalogue)}.
+     * <p>
+     * Through the platform's brief-info slot rather than by decorating {@link #getName()}, which
+     * is not a label: it is the collection's identity for the navigator, and it is what every
+     * query names on the wire. A decorated name would break both.
+     * <p>
+     * Shown when the navigator's "Show object tips" preference is on, which it is by default.
+     */
+    @Nullable
+    @Override
+    public String getObjectToolTip() {
+        String description = config.description();
+        return description == null || description.isBlank() ? null : description;
     }
 
     @NotNull
