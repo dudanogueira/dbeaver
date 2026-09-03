@@ -209,6 +209,11 @@ public class WeaviateConfigEditor extends AbstractDatabaseObjectEditor<WeaviateC
                 advice.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             }
             for (WeaviateConfigSetting.Group group : WeaviateConfigSetting.Group.values()) {
+                if (!group.appliesTo(document)) {
+                    // Nothing in this group can be changed on this collection, so it is not drawn
+                    // at all. Today that is multi-tenancy on a collection without tenants.
+                    continue;
+                }
                 if (group.isPerVector()) {
                     for (String vector : document.getVectorNames()) {
                         buildGroup(collection, group, vector);

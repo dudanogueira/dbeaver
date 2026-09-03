@@ -98,6 +98,27 @@ public enum WeaviateConfigSetting {
             + "Replication branch instead.",
         List.of("NoAutomatedResolution", "DeleteOnConflict", "TimeBasedResolution")),
 
+    /**
+     * Whether writing to an unknown tenant creates it.
+     * <p>
+     * Conditional rather than mutable, and the only setting here that is. On a single-tenant
+     * collection the server refuses it outright -- <em>can't enable autoTenantCreation on a
+     * non-multi-tenant class</em> -- so the whole group is absent there rather than shown greyed.
+     * Whether a collection has tenants is a permanent fact about it, and
+     * {@code multiTenancyConfig.enabled} cannot be changed in either direction, so there is no
+     * state in which the group could become relevant while the tab is open.
+     */
+    AUTO_TENANT_CREATION(
+        Group.MULTI_TENANCY, Kind.BOOLEAN, "multiTenancyConfig.autoTenantCreation",
+        "Create tenants automatically",
+        "Writing to a tenant that does not exist creates it, instead of failing. Off, a tenant has "
+            + "to be created before anything can be written to it."),
+    AUTO_TENANT_ACTIVATION(
+        Group.MULTI_TENANCY, Kind.BOOLEAN, "multiTenancyConfig.autoTenantActivation",
+        "Activate tenants automatically",
+        "Reading an inactive tenant wakes it, instead of being refused. Off, an inactive tenant "
+            + "refuses reads until something activates it."),
+
     EF(
         Group.VECTOR_INDEX, Kind.INTEGER, "ef", "ef",
         "How wide the search beam is at query time. Higher finds more and costs more. -1 hands it "
@@ -163,6 +184,8 @@ public enum WeaviateConfigSetting {
         GENERAL("General"),
         INVERTED_INDEX("Inverted index"),
         REPLICATION("Replication"),
+        /** Shown only on a collection that has tenants; see {@link #AUTO_TENANT_CREATION}. */
+        MULTI_TENANCY("Multi-tenancy"),
         /** Repeated once per vector, since a collection may have several with separate indexes. */
         VECTOR_INDEX("Vector index");
 
@@ -179,6 +202,19 @@ public enum WeaviateConfigSetting {
 
         public boolean isPerVector() {
             return this == VECTOR_INDEX;
+        }
+
+        /**
+         * Whether this group has anything to offer for a given collection.
+         * <p>
+         * Only multi-tenancy answers no, and only on a collection without tenants, where every
+         * setting in it is refused. Absent rather than disabled: a greyed control invites someone
+         * to work out why, and the answer here is a fact about the collection that will not change
+         * while they look at it.
+         */
+        public boolean appliesTo(@NotNull WeaviateConfigDocument document) {
+            return this != MULTI_TENANCY
+                || Boolean.TRUE.equals(document.getBoolean("multiTenancyConfig.enabled"));
         }
     }
 

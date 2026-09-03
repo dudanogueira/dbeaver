@@ -83,6 +83,7 @@ public final class WeaviateConfigScript {
         }
         appendInvertedIndex(changes, lines);
         appendReplication(changes, lines);
+        appendMultiTenancy(changes, lines);
         appendVectors(changes, lines);
 
         sb.append(String.join("\n", lines)).append(");\n");
@@ -128,6 +129,23 @@ public final class WeaviateConfigScript {
         }
         lines.add("        .replication(r -> r.deletionStrategy("
             + "Replication.DeletionStrategy." + constant(strategy) + "))");
+    }
+
+    private static void appendMultiTenancy(List<Change> changes, List<String> lines) {
+        String creation = valueOf(changes, WeaviateConfigSetting.AUTO_TENANT_CREATION);
+        String activation = valueOf(changes, WeaviateConfigSetting.AUTO_TENANT_ACTIVATION);
+        if (creation == null && activation == null) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder("        .multiTenancy(m -> m");
+        // enabled is restated because the client's nested lambda setter starts from a fresh
+        // builder, so a call that names only one field sends the rest as null -- and multi-tenancy
+        // arriving as null would ask the server to switch it off, which it refuses anyway. The
+        // plugin does not send this call, but the snippet has to be one someone could run.
+        sb.append(".enabled(true)");
+        if (creation != null) sb.append(".autoTenantCreation(").append(creation).append(")");
+        if (activation != null) sb.append(".autoTenantActivation(").append(activation).append(")");
+        lines.add(sb.append(")").toString());
     }
 
     private static void appendVectors(List<Change> changes, List<String> lines) {
