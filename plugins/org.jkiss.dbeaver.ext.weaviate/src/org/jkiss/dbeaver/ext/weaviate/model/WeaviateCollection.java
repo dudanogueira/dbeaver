@@ -75,7 +75,6 @@ import org.jkiss.dbeaver.model.edit.DBEPersistAction;
 import org.jkiss.dbeaver.model.exec.DBCExecutionSource;
 import org.jkiss.dbeaver.model.exec.DBCSession;
 import org.jkiss.dbeaver.model.exec.DBCStatistics;
-import org.jkiss.dbeaver.model.impl.local.LocalResultSet;
 import org.jkiss.dbeaver.model.impl.local.LocalStatement;
 import org.jkiss.dbeaver.model.meta.Association;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
@@ -864,7 +863,7 @@ public class WeaviateCollection
 
         try (LocalStatement statement = new LocalStatement(session, queryText)) {
             statement.setStatementSource(source);
-            LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
+            WeaviateResultSet resultSet = new WeaviateResultSet(session, statement);
             populateColumns(resultSet, attributes, vectorNames, singleVector, exec);
             for (Object[] row : rows) {
                 resultSet.addRow(row);
@@ -904,7 +903,7 @@ public class WeaviateCollection
 
         try (LocalStatement statement = new LocalStatement(session, queryText)) {
             statement.setStatementSource(source);
-            LocalResultSet<LocalStatement> resultSet = new LocalResultSet<>(session, statement);
+            WeaviateResultSet resultSet = new WeaviateResultSet(session, statement);
             populateColumns(resultSet, attributes, vectorNames, singleVector, spec);
             try {
                 Paginator<Map<String, Object>> paginator =
@@ -1405,20 +1404,25 @@ public class WeaviateCollection
     }
 
     private static void populateColumns(
-        @NotNull LocalResultSet<LocalStatement> rs,
+        @NotNull WeaviateResultSet rs,
         @NotNull List<WeaviateProperty> attributes,
         @NotNull List<String> vectorNames,
         boolean singleVector,
         @NotNull WeaviateQuerySpec spec
     ) {
         WeaviateQueryMode mode = spec.getMode();
+        // The id addresses the object rather than living in it, so it stays read-only: on an
+        // existing row, changing it would be a move. A new row is exempt from the check anyway,
+        // so a client-chosen id can still be typed when adding one.
         rs.addColumn(WeaviateColumns.UUID, DBPDataKind.STRING);
         for (WeaviateProperty p : attributes) {
-            rs.addColumn(p.getName(), p.getDataKind());
+            rs.addStoredColumn(p.getName(), p.getDataKind());
         }
         for (String vectorName : vectorNames) {
-            // Rendered as text - see WeaviateRowMapper#readVector.
-            rs.addColumn(WeaviateColumns.vectorColumn(vectorName, singleVector), DBPDataKind.STRING);
+            // Rendered as text - see WeaviateRowMapper#readVector. Editable because the text the
+            // grid shows is the text a Near Vector search accepts, so it round-trips.
+            rs.addStoredColumn(
+                WeaviateColumns.vectorColumn(vectorName, singleVector), DBPDataKind.STRING);
         }
         // Must mirror the columnNames list built in readData, or the row mapper writes values
         // into the wrong columns.
@@ -1746,7 +1750,8 @@ public class WeaviateCollection
         return new WeaviateInsertBatch(
             this,
             WeaviateWriteColumns.of(this, attributes, session.getProgressMonitor()),
-            requireTenantForWrite());
+            requireTenantForWrite(),
+            keysReceiver);
     }
 
     @NotNull
