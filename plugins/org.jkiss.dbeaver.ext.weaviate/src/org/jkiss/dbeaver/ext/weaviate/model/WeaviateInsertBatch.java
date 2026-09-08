@@ -26,6 +26,7 @@ import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.DBPDataKind;
 import org.jkiss.dbeaver.model.data.DBDDataReceiver;
 import org.jkiss.dbeaver.model.edit.DBEPersistAction;
+import org.jkiss.dbeaver.model.impl.edit.SQLDatabasePersistAction;
 import org.jkiss.dbeaver.model.exec.DBCException;
 import org.jkiss.dbeaver.model.exec.DBCSession;
 import org.jkiss.dbeaver.model.exec.DBCStatistics;
@@ -65,6 +66,9 @@ final class WeaviateInsertBatch implements DBSDataManipulator.ExecuteBatch {
     private final List<WeaviateObject<Map<String, Object>>> pending = new ArrayList<>();
     /** The id of each pending row, in the order they were added. Never null once added. */
     private final List<String> ids = new ArrayList<>();
+    /** The properties and vectors of each pending row, kept for the generated script. */
+    private final List<Map<String, Object>> properties = new ArrayList<>();
+    private final List<Map<String, float[]>> vectors = new ArrayList<>();
 
     WeaviateInsertBatch(
         @NotNull WeaviateCollection collection,
@@ -106,6 +110,8 @@ final class WeaviateInsertBatch implements DBSDataManipulator.ExecuteBatch {
             throw new DBCException("A new row needs at least one value");
         }
         ids.add(id);
+        this.properties.add(properties);
+        this.vectors.add(vectors);
         pending.add(WeaviateObject.<Map<String, Object>>of(o -> {
             o.properties(properties);
             o.uuid(id);
@@ -151,6 +157,8 @@ final class WeaviateInsertBatch implements DBSDataManipulator.ExecuteBatch {
             statistics.addExecuteTime(System.currentTimeMillis() - started);
             pending.clear();
             ids.clear();
+            properties.clear();
+            vectors.clear();
         }
         return statistics;
     }
@@ -194,15 +202,19 @@ final class WeaviateInsertBatch implements DBSDataManipulator.ExecuteBatch {
         @NotNull List<DBEPersistAction> actions,
         @NotNull Map<String, Object> options
     ) {
-        actions.add(new org.jkiss.dbeaver.model.impl.edit.SQLDatabasePersistActionComment(
-            session.getDataSource(),
-            "// Add " + pending.size() + " object(s) to " + collection.getName()
-                + " using the Java client v6\n"
-                + "client.collections.use(\"" + collection.getName() + "\").data.insertMany(objects);"));
+        if (pending.isEmpty()) {
+            return;
+        }
+        actions.add(new SQLDatabasePersistAction(
+            "Add to " + collection.getName(),
+            WeaviateDataScript.renderInsert(collection.getName(), tenant, ids, properties, vectors)));
     }
 
     @Override
     public void close() {
         pending.clear();
+        ids.clear();
+        properties.clear();
+        vectors.clear();
     }
 }

@@ -21,6 +21,7 @@ import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.edit.DBEPersistAction;
+import org.jkiss.dbeaver.model.impl.edit.SQLDatabasePersistAction;
 import org.jkiss.dbeaver.model.exec.DBCException;
 import org.jkiss.dbeaver.model.exec.DBCSession;
 import org.jkiss.dbeaver.model.exec.DBCStatistics;
@@ -143,13 +144,20 @@ final class WeaviateUpdateBatch implements DBSDataManipulator.ExecuteBatch {
         @NotNull List<DBEPersistAction> actions,
         @NotNull Map<String, Object> options
     ) {
-        actions.add(new org.jkiss.dbeaver.model.impl.edit.SQLDatabasePersistActionComment(
-            session.getDataSource(),
-            "// Merge " + pending.size() + " object(s) in " + collection.getName()
-                + " using the Java client v6.\n"
-                + "// update() PATCHes the named fields; replace() would blank the rest.\n"
-                + "client.collections.use(\"" + collection.getName()
-                + "\").data.update(id, u -> u.properties(changed));"));
+        if (pending.isEmpty()) {
+            return;
+        }
+        List<String> ids = new ArrayList<>(pending.size());
+        List<Map<String, Object>> properties = new ArrayList<>(pending.size());
+        List<Map<String, float[]>> vectors = new ArrayList<>(pending.size());
+        for (Edit edit : pending) {
+            ids.add(edit.id());
+            properties.add(edit.properties());
+            vectors.add(edit.vectors());
+        }
+        actions.add(new SQLDatabasePersistAction(
+            "Update " + collection.getName(),
+            WeaviateDataScript.renderUpdate(collection.getName(), tenant, ids, properties, vectors)));
     }
 
     @Override

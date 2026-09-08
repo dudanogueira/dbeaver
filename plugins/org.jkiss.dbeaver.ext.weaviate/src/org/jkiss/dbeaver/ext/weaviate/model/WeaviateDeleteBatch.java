@@ -26,7 +26,7 @@ import org.jkiss.dbeaver.model.edit.DBEPersistAction;
 import org.jkiss.dbeaver.model.exec.DBCException;
 import org.jkiss.dbeaver.model.exec.DBCSession;
 import org.jkiss.dbeaver.model.exec.DBCStatistics;
-import org.jkiss.dbeaver.model.impl.edit.SQLDatabasePersistActionComment;
+import org.jkiss.dbeaver.model.impl.edit.SQLDatabasePersistAction;
 import org.jkiss.dbeaver.model.struct.DBSDataManipulator;
 
 import java.util.ArrayList;
@@ -128,13 +128,15 @@ final class WeaviateDeleteBatch implements DBSDataManipulator.ExecuteBatch {
         @NotNull List<DBEPersistAction> actions,
         @NotNull Map<String, Object> options
     ) {
-        // "Generate SQL" for the pending changes. There is no SQL dialect behind Weaviate,
-        // so the best that can be offered is a readable description of what would be sent.
-        for (String id : ids) {
-            actions.add(new SQLDatabasePersistActionComment(
-                collection.getDataSource(),
-                "Delete object " + id + " from " + collection.getName()));
+        if (ids.isEmpty()) {
+            return;
         }
+        // "Generate SQL" for the pending changes. There is no SQL behind Weaviate, so this is the
+        // Java client call the batch is about to make -- see WeaviateDataScript for why it is not
+        // a line of prose per row any more.
+        actions.add(new SQLDatabasePersistAction(
+            "Delete from " + collection.getName(),
+            WeaviateDataScript.renderDelete(collection.getName(), tenant, ids)));
     }
 
     @Override
