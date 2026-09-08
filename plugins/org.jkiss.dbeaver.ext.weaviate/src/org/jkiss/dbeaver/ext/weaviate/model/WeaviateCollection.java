@@ -97,7 +97,9 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.TreeMap;
 
@@ -1462,7 +1464,7 @@ public class WeaviateCollection
      * Names of the vectors declared by this collection, sorted for stable column ordering.
      */
     @NotNull
-    private List<String> getVectorNames() {
+    List<String> getVectorNames() {
         Map<String, VectorConfig> vectors = config.vectors();
         if (vectors == null || vectors.isEmpty()) {
             return Collections.emptyList();
@@ -1685,6 +1687,23 @@ public class WeaviateCollection
 
     // ---- DBSDataManipulator ----------------------------------------------------------------
 
+    /**
+     * The tenant a write must name, or null on a single-tenant collection.
+     * <p>
+     * A multi-tenant collection partitions its objects, and a write that names no tenant does not
+     * fail -- it reaches nothing and reports success. The read path already makes the choice
+     * explicit in the query panel, so the write borrows it rather than inventing a second one.
+     */
+    @Nullable
+    private String requireTenantForWrite() throws DBException {
+        String tenant = getQuerySpec().getTenant();
+        if (isMultiTenant() && CommonUtils.isEmpty(tenant)) {
+            throw new DBException(
+                "Select a tenant in the Weaviate Query panel before editing a multi-tenant collection");
+        }
+        return tenant;
+    }
+
     @NotNull
     @Override
     public ExecuteBatch deleteData(
@@ -1724,7 +1743,10 @@ public class WeaviateCollection
         @NotNull DBCExecutionSource source,
         @NotNull Map<String, Object> options
     ) throws DBException {
-        throw new DBException("Adding objects from the data grid is not supported yet");
+        return new WeaviateInsertBatch(
+            this,
+            WeaviateWriteColumns.of(this, attributes, session.getProgressMonitor()),
+            requireTenantForWrite());
     }
 
     @NotNull
@@ -1736,7 +1758,21 @@ public class WeaviateCollection
         @Nullable DBDDataReceiver keysReceiver,
         @NotNull DBCExecutionSource source
     ) throws DBException {
-        throw new DBException("Editing objects from the data grid is not supported yet");
+        // The values arrive as the edited columns followed by the key columns, so the batch is
+        // built over both and told which of them were actually changed. Anything not named here
+        // is left out of the merge and keeps its stored value.
+        DBSAttributeBase[] all = new DBSAttributeBase[updateAttributes.length + keyAttributes.length];
+        System.arraycopy(updateAttributes, 0, all, 0, updateAttributes.length);
+        System.arraycopy(keyAttributes, 0, all, updateAttributes.length, keyAttributes.length);
+        Set<String> changed = new LinkedHashSet<>();
+        for (DBSAttributeBase attribute : updateAttributes) {
+            changed.add(attribute.getName());
+        }
+        return new WeaviateUpdateBatch(
+            this,
+            WeaviateWriteColumns.of(this, all, session.getProgressMonitor()),
+            changed,
+            requireTenantForWrite());
     }
 
     @NotNull
@@ -1745,7 +1781,30 @@ public class WeaviateCollection
         @NotNull DBCSession session,
         @NotNull DBCExecutionSource source
     ) throws DBException {
-        throw new DBException("Truncating a Weaviate collection is not supported yet");
+        // Deliberately not implemented as a delete-everything, and the reason is worth stating
+        // where someone will read it. Weaviate has no truncate: emptying a collection means
+        // deleting its objects, and deleting objects from a vector index does not reclaim what
+        // they cost. Each one leaves a tombstone in the HNSW graph, the graph keeps the shape a
+        // now-absent dataset gave it, and a quantizer stays trained on vectors that are gone. The
+        // result is an empty collection that is slower and larger than a new one.
+        //
+        // Dropping and recreating gives a genuinely fresh index, which is what "truncate" means
+        // to anyone typing it. That is destructive in ways deleting rows is not -- tenants,
+        // aliases pointing here, and shard placement all go with it -- so it is offered as an
+        // explicit choice rather than done silently behind this call.
+        throw new DBException(
+            "Weaviate has no truncate, and emptying " + getName() + " by deleting its objects "
+                + "would leave the index worse than a new one: every deleted vector leaves a "
+                + "tombstone behind, the graph keeps the shape the old data gave it, and any "
+                + "quantizer stays trained on vectors that are gone.\n\n"
+                + "Drop and recreate the collection instead, which gives a genuinely empty index:\n"
+                + "  1. open Raw Definition and copy it, or use Export Schema, so the "
+                + "configuration is kept;\n"
+                + "  2. delete " + getName() + ";\n"
+                + "  3. create it again from that definition.\n\n"
+                + "Recreating loses more than the objects: tenants, and the placement of shards "
+                + "across nodes. Any alias pointing at " + getName() + " keeps pointing at the "
+                + "name, so it will resolve to the new collection once it exists.");
     }
 
     @Nullable

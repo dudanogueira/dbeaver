@@ -95,6 +95,20 @@ public class WeaviateProperty implements DBSEntityAttribute, DBPToolTipObject {
         return String.join("|", dataTypes);
     }
 
+    /**
+     * The single Weaviate type this property declares, e.g. {@code text} or {@code int[]}.
+     * <p>
+     * {@link #getTypeName()} joins them with a pipe for display, which reads well and cannot be
+     * given to {@code WeaviateValueCoercion}. A property carries one type in practice; a
+     * cross-reference is the exception, and its "type" is the list of collections it points at,
+     * which is not a value type at all.
+     */
+    @Nullable
+    public String getWeaviateType() {
+        List<String> dataTypes = property.dataTypes();
+        return dataTypes == null || dataTypes.isEmpty() ? null : dataTypes.get(0);
+    }
+
     @Nullable
     @org.jkiss.dbeaver.model.meta.Property(viewable = true, order = 10)
     public String getTokenization() {
