@@ -107,10 +107,25 @@ public class WeaviateCollection
 
     private static final Log log = Log.getLog(WeaviateCollection.class);
 
+    /**
+     * What the grid may do with a result, and the only thing that decides it.
+     * <p>
+     * {@code DBExecUtils#getAttributeReadOnlyStatus} reads this before it looks at anything else,
+     * so an operation missing here is refused no matter what the collection implements: with
+     * UPDATE absent, every cell in an existing row is greyed out and
+     * {@link #updateData} is never called. Adding a row hides the omission, because
+     * {@code ResultSetViewer} skips the attribute check entirely for a row it is inserting.
+     * <p>
+     * TRUNCATE is deliberately not here. There is no truncate in Weaviate, and offering the action
+     * so that pressing it can explain that is a worse answer than not offering it; the explanation
+     * in {@link #truncateData} is for the callers that reach it anyway, data transfer above all.
+     */
     private static final String[] SUPPORTED_FEATURES = new String[]{
         FEATURE_DATA_SELECT,
         FEATURE_DATA_COUNT,
         FEATURE_DATA_FILTER,
+        FEATURE_DATA_INSERT,
+        FEATURE_DATA_UPDATE,
         FEATURE_DATA_DELETE,
     };
 
