@@ -109,6 +109,15 @@ final class WeaviateInsertBatch implements DBSDataManipulator.ExecuteBatch {
         if (properties.isEmpty() && vectors.isEmpty()) {
             throw new DBCException("A new row needs at least one value");
         }
+        // A column the classifier did not recognise is dropped, which is correct -- a stray
+        // _score must never reach the server -- but dropping it in silence is not: a vector typed
+        // into a column this build cannot match would simply not arrive, with nothing said. The
+        // grid has no place for a per-save warning, so this goes to the log, where it is the only
+        // record that a value was deliberately not sent.
+        if (!columns.ignored().isEmpty()) {
+            log.debug("Not sent to " + collection.getName() + ", no matching property or vector: "
+                + String.join(", ", columns.ignored()));
+        }
         ids.add(id);
         this.properties.add(properties);
         this.vectors.add(vectors);
