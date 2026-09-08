@@ -19,12 +19,14 @@ package org.jkiss.dbeaver.ext.weaviate.ui.query;
 import org.eclipse.osgi.util.NLS;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.layout.GridData;
+import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Text;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateCollection;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQueryProfile;
+import org.jkiss.dbeaver.ext.weaviate.model.WeaviateQuerySpec;
 import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
 
 /**
@@ -34,8 +36,11 @@ import org.jkiss.dbeaver.ext.weaviate.ui.internal.WeaviateUIMessages;
  * generative section's grouped-result box, and for the same reason: a profile belongs to the whole
  * result set, so it has no row in the grid to live on.
  * <p>
- * Switched on from Search options. Off, the box says so rather than sitting empty, because an
- * empty box after a query that ran looks like a failure.
+ * Switched on by the checkbox at the top of this section. It used to live in Search options,
+ * two sections away from the box it fills and from the explanation of what it does -- so the
+ * section that says "not requested" had to name a control somewhere else for the reader to go and
+ * find. Off, the box says so rather than sitting empty, because an empty box after a query that
+ * ran looks like a failure.
  */
 public class WeaviateQueryProfileSection {
 
@@ -44,6 +49,7 @@ public class WeaviateQueryProfileSection {
     private final WeaviateQueryPanelContext context;
 
     private Composite group;
+    private Button enableCheck;
     private Text profileField;
 
     public WeaviateQueryProfileSection(@NotNull WeaviateQueryPanelContext context) {
@@ -55,9 +61,25 @@ public class WeaviateQueryProfileSection {
             parent, WeaviateUIMessages.query_profile, "queryProfile", 1, false);
         group.setToolTipText(WeaviateUIMessages.query_profile_tip);
 
+        enableCheck = new Button(group, SWT.CHECK);
+        enableCheck.setText(WeaviateUIMessages.query_profile_enable);
+        enableCheck.setToolTipText(WeaviateUIMessages.query_profile_enable_tip);
+
         profileField = new Text(group, SWT.BORDER | SWT.MULTI | SWT.READ_ONLY | SWT.V_SCROLL | SWT.H_SCROLL);
         profileField.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         WeaviateSectionWidgets.setVisibleLines(profileField, PROFILE_BOX_LINES);
+    }
+
+    /** Whether the next run should ask the server for a profile. */
+    public boolean isEnabled() {
+        return enableCheck != null && !enableCheck.isDisposed() && enableCheck.getSelection();
+    }
+
+    public void loadFrom(@NotNull WeaviateQuerySpec spec) {
+        if (enableCheck == null || enableCheck.isDisposed()) {
+            return;
+        }
+        enableCheck.setSelection(spec.isWithQueryProfile());
     }
 
     /** Re-read the profile the last run left on the collection. */

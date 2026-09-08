@@ -39,21 +39,26 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The Search options section: consistency level, keyword operator, MMR and the query profile.
+ * The Search options section: consistency level, keyword operator and MMR.
  * <p>
  * Shared rather than per mode, because each of these is a single value on the spec -- there is one
  * consistency level, not one per search. What differs is only whether a control applies at all:
  * <pre>
- * query profile       every mode                     opt-in metadata
  * search operator     BM25, Hybrid                   Bm25/Hybrid.Builder only
  * MMR diversity       Hybrid, near_*                 BaseVectorSearchBuilder + Hybrid
  * consistency level   replicated collections only    BaseQueryOptions.Builder
  * </pre>
- * Three of those are decided by the mode's own capability methods, which mirror the client
+ * Two of those are decided by the mode's own capability methods, which mirror the client
  * builders that accept each option. Consistency is the exception: every mode takes it, but it can
  * only mean something where a shard has more than one copy, so the collection decides.
  * A control that does not apply is taken out of the layout rather than disabled, the same choice
  * the group-by section makes: a greyed row invites someone to work out why.
+ * <p>
+ * Hiding it silently has its own failure, though, and it is the one that actually got reported:
+ * an option that is not on screen is indistinguishable from one that was never built, so someone
+ * looking for the consistency level on a single-replica collection concludes it is missing rather
+ * than inapplicable. {@link #syncVisibility} therefore leaves a line saying which options are not
+ * shown here and what would bring them back.
  * <p>
  * Every control has an explicit "leave it to the server" position, and that is the default. Unset
  * is not the same as a default value -- sending no {@code searchOperator} lets the server choose
@@ -78,7 +83,7 @@ public class WeaviateSearchOptionsSection {
     private Button mmrCheck;
     private Spinner mmrLimitSpinner;
     private Spinner mmrBalanceSpinner;
-    private Button profileCheck;
+    private Label hiddenNote;
 
     /** Rows that only a keyword search can use. */
     private final List<Control> whenKeyword = new ArrayList<>();
@@ -174,12 +179,12 @@ public class WeaviateSearchOptionsSection {
         whenDiversifying.add(mmrBalanceLabel);
         whenDiversifying.add(mmrBalanceSpinner);
 
-        // -- query profile: every mode ----------------------------------------------------------
-        new Label(group, SWT.NONE);
-        profileCheck = new Button(group, SWT.CHECK);
-        profileCheck.setText(WeaviateUIMessages.query_profile_enable);
-        profileCheck.setToolTipText(WeaviateUIMessages.query_profile_enable_tip);
-        profileCheck.addSelectionListener(onChange());
+        // -- why a row is missing ---------------------------------------------------------------
+        // Spans both columns: it is a sentence about the section, not a labelled field.
+        hiddenNote = new Label(group, SWT.WRAP);
+        GridData noteLayout = new GridData(SWT.FILL, SWT.TOP, true, false);
+        noteLayout.horizontalSpan = 2;
+        hiddenNote.setLayoutData(noteLayout);
 
         syncVisibility();
     }
@@ -208,9 +213,35 @@ public class WeaviateSearchOptionsSection {
         if (context.currentMode().supportsDiversity()) {
             WeaviateSectionWidgets.setVisible(whenDiversifying, mmrCheck.getSelection());
         }
+        showHiddenNote();
         group.layout(true, true);
         context.reflow();
         updateCount();
+    }
+
+    /**
+     * Say which options this collection and mode do not offer, and why.
+     * <p>
+     * Without it the section is simply shorter, and a reader who came looking for one of these
+     * has no way to tell "does not apply here" from "not implemented". Empty and hidden when
+     * everything applies, so the ordinary case carries no extra text.
+     */
+    private void showHiddenNote() {
+        if (hiddenNote == null || hiddenNote.isDisposed()) {
+            return;
+        }
+        List<String> missing = new ArrayList<>();
+        if (!isReplicated()) {
+            missing.add(WeaviateUIMessages.query_options_no_consistency);
+        }
+        if (!context.currentMode().supportsSearchOperator()) {
+            missing.add(WeaviateUIMessages.query_options_no_operator);
+        }
+        if (!context.currentMode().supportsDiversity()) {
+            missing.add(WeaviateUIMessages.query_options_no_diversity);
+        }
+        hiddenNote.setText(String.join("\n", missing));
+        WeaviateSectionWidgets.setVisible(List.of(hiddenNote), !missing.isEmpty());
     }
 
     /** How many options are set to something other than "leave it to the server". */
@@ -219,7 +250,6 @@ public class WeaviateSearchOptionsSection {
         if (currentConsistencyLevel() != null) count++;
         if (selectedOperator() != null && context.currentMode().supportsSearchOperator()) count++;
         if (currentDiversity() != null) count++;
-        if (isWithQueryProfile()) count++;
         context.setSectionCount(group, WeaviateUIMessages.query_options, count);
     }
 
@@ -265,10 +295,6 @@ public class WeaviateSearchOptionsSection {
         return new WeaviateDiversitySpec(mmrLimitSpinner.getSelection(), balance);
     }
 
-    public boolean isWithQueryProfile() {
-        return profileCheck != null && !profileCheck.isDisposed() && profileCheck.getSelection();
-    }
-
     public void loadFrom(@NotNull WeaviateQuerySpec spec) {
         if (consistencyCombo == null || consistencyCombo.isDisposed()) {
             return;
@@ -290,7 +316,6 @@ public class WeaviateSearchOptionsSection {
                 mmrBalanceSpinner.setSelection(Math.round(diversity.balance() * 100));
             }
         }
-        profileCheck.setSelection(spec.isWithQueryProfile());
         syncVisibility();
     }
 

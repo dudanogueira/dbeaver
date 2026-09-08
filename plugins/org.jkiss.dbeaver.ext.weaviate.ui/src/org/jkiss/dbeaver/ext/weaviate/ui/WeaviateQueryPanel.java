@@ -925,6 +925,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
 
 
         searchOptionsSection.loadFrom(spec);
+        queryProfileSection.loadFrom(spec);
         boostSection.loadFrom(spec);
         filterSection.loadFrom(spec);
 
@@ -1098,7 +1099,7 @@ public class WeaviateQueryPanel extends ResultSetPanelBase implements WeaviateQu
             .searchOperator(searchOptionsSection.currentSearchOperator())
             .minimumOrTokens(searchOptionsSection.currentMinimumOrTokens())
             .diversity(searchOptionsSection.currentDiversity())
-            .withQueryProfile(searchOptionsSection.isWithQueryProfile())
+            .withQueryProfile(queryProfileSection.isEnabled())
             .boost(boostSection.currentBoost())
             .targets(targets)
             // Only sent when there is more than one target to join; with one there is nothing

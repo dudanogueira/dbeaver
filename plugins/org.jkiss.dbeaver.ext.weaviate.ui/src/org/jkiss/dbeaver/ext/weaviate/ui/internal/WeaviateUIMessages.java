@@ -104,6 +104,9 @@ public final class WeaviateUIMessages extends NLS {
     public static String query_operator_tip;
     public static String query_operator_minimum;
     public static String query_operator_minimum_tip;
+    public static String query_options_no_consistency;
+    public static String query_options_no_operator;
+    public static String query_options_no_diversity;
     public static String query_diversify;
     public static String query_diversify_tip;
     public static String query_diversify_limit;
