@@ -23,7 +23,9 @@ import org.jkiss.dbeaver.ext.weaviate.model.WeaviateBackup;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateBackupStatus;
 import org.jkiss.dbeaver.ext.weaviate.model.WeaviateDataSource;
 import org.jkiss.dbeaver.model.DBPDataSourceContainer;
+import org.jkiss.dbeaver.model.navigator.DBNDatabaseFolder;
 import org.jkiss.dbeaver.model.navigator.DBNDatabaseNode;
+import org.jkiss.dbeaver.model.navigator.DBNNode;
 import org.jkiss.dbeaver.model.navigator.DBNUtils;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.runtime.DBRRunnableContext;
@@ -64,6 +66,9 @@ public abstract class WeaviateBackupHandler implements DBTTaskHandler {
      * backup look like it did nothing at all until it finished.
      */
     private static final long POLL_INTERVAL_MS = 1000;
+
+    /** The Backups folder's node id, as declared in {@code plugin.xml}. */
+    private static final String BACKUPS_FOLDER = "backups";
 
     /** Whether this handler restores rather than creates. */
     protected abstract boolean isRestore();
@@ -160,8 +165,19 @@ public abstract class WeaviateBackupHandler implements DBTTaskHandler {
             if (isRestore()) {
                 // A restore puts collections back, so the tree is now wrong. Refreshing the
                 // connection re-reads them in place -- WeaviateDataSource is a DBPRefreshableObject,
-                // so this no longer means a reconnect.
+                // so this no longer means a reconnect. It takes the Backups folder with it, so
+                // there is nothing further to do here.
                 refreshConnection(monitor, dataSource);
+            } else {
+                // A backup adds a row to the Backups folder. Clearing the model cache above is
+                // only half of it: the navigator holds its own list of child nodes, so without
+                // this the tree keeps showing the backups it read before, and the one just
+                // created appears only after a manual refresh.
+                //
+                // Just the folder, not the connection: a backup changes what is listed under
+                // Backups and nothing else, and refreshing the connection would throw away every
+                // collection's cached definition to show one new row.
+                refreshBackups(monitor, dataSource);
             }
             return verb + " " + id + ": " + current.status().getLabel();
         } finally {
@@ -183,6 +199,36 @@ public abstract class WeaviateBackupHandler implements DBTTaskHandler {
             }
         } catch (Exception e) {
             log.debug("Cannot refresh the connection after a restore", e);
+        }
+    }
+
+    /**
+     * Reloads the Backups folder, so a backup that has just finished is listed.
+     * <p>
+     * Best-effort for the same reason as {@link #refreshConnection}: the backup is on the server
+     * whether or not the tree caught up, and reporting the task as failed because a repaint did
+     * not happen would be a worse answer than a stale folder.
+     */
+    private static void refreshBackups(
+        @NotNull DBRProgressMonitor monitor, @NotNull WeaviateDataSource dataSource
+    ) {
+        try {
+            DBNDatabaseNode node = DBNUtils.getNodeByObject(dataSource.getContainer());
+            if (node == null) {
+                return;
+            }
+            // Backups is a direct child of the connection node, so this does not descend into
+            // Collections -- which would load every collection to find a sibling folder.
+            for (DBNNode child : node.getChildren(monitor)) {
+                if (child instanceof DBNDatabaseFolder folder
+                    && BACKUPS_FOLDER.equals(folder.getNodeId())
+                ) {
+                    folder.refreshNode(monitor, WeaviateBackupHandler.class);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Cannot refresh the Backups folder after a backup", e);
         }
     }
 
